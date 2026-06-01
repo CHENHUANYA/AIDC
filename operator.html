@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Operator Issue Board</title>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/alarm_app.css">
+</head>
+<body data-page="operator">
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">OP</div>
+    <div class="logo-text">
+      <h1>OPERATOR ISSUE BOARD</h1>
+      <p>產線人員問題回報與未處理問題清單</p>
+    </div>
+  </div>
+  <div class="status-pill">
+    <div class="status-dot"></div>
+    <span id="operatorUserLabel">operator01</span>
+    <button class="auth-logout" onclick="AlarmApp.logout()">Logout</button>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="operator-board" onclick="switchTab('operator-board', this)">問題看板</button>
+  <button class="tab-btn" data-tab="operator-resolved" onclick="switchTab('operator-resolved', this)">已解決日曆</button>
+</div>
+
+<div class="panel active" id="panel-operator-board">
+  <div class="container">
+    <div class="section-label">產線目前狀態</div>
+    <div class="wo-header">
+      <div class="wo-stat"><div class="label">未處理問題</div><div class="val" id="issueOpenCount">--</div><div class="sub">待處理與處理中</div></div>
+      <div class="wo-stat"><div class="label">今日新增</div><div class="val" id="issueTodayCount">--</div><div class="sub">人工回報與機器事件</div></div>
+      <div class="wo-stat"><div class="label">已通知維修</div><div class="val" id="issueWorkOrderCount">--</div><div class="sub">已建立維修工單</div></div>
+      <div class="wo-stat"><div class="label">目前產線</div><div class="val" id="issueLineLabel">LINE-A</div><div class="sub">未來由帳號權限帶入</div></div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">Key In 問題</div>
+      <div class="wo-form-grid">
+        <div class="wo-field"><label class="wo-field-label">使用者</label><input class="wo-input" id="issueUser" value="operator01"></div>
+        <div class="wo-field"><label class="wo-field-label">產線</label><input class="wo-input" id="issueLine" value="LINE-A"></div>
+        <div class="wo-field"><label class="wo-field-label">機台 *</label><input class="wo-input" id="issueMachine" placeholder="例如 CNC-LINE-01"></div>
+        <div class="wo-field"><label class="wo-field-label">警報代碼</label><input class="wo-input" id="issueAlarmCode" placeholder="不知道可留空"></div>
+        <div class="wo-field"><label class="wo-field-label">手冊</label><select class="wo-select" id="issueManual"><option value="808d">808D</option><option value="840d">840D</option><option value="840dsl">840D sl</option></select></div>
+        <div class="wo-field"><label class="wo-field-label">嚴重度</label><select class="wo-select" id="issueSeverity"><option value="medium">中</option><option value="low">低</option><option value="high">高</option><option value="critical">緊急</option></select></div>
+        <div class="wo-field wo-field-full"><label class="wo-field-label">問題描述 *</label><textarea class="wo-text" id="issueDescription" placeholder="描述看到的異常、機台狀態、正在執行的作業"></textarea></div>
+      </div>
+      <div class="wo-actions">
+        <button class="wo-btn alt" onclick="lookupOperatorSuggestion()">查詢初步建議</button>
+        <button class="wo-btn" onclick="createOperatorIssue(false)">送出問題</button>
+        <button class="wo-btn alt" onclick="createOperatorIssue(true)">送出並通知維修</button>
+        <button class="wo-btn alt" onclick="loadOperatorIssues()">重新整理</button>
+      </div>
+      <div class="upload-result" id="issueResult"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">LLM 初步建議</div>
+      <div id="operatorSuggestionBox" class="wo-empty">輸入警報代碼或問題描述後，可先查詢初步處理建議。</div>
+      <div class="wo-actions" id="operatorSuggestionFeedback" style="display:none">
+        <button class="wo-btn alt" onclick="sendOperatorSuggestionFeedback('good')">有幫助</button>
+        <button class="wo-btn alt" onclick="sendOperatorSuggestionFeedback('bad')">沒幫助</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">目前未處理問題</div>
+      <div id="issueList"><div class="wo-empty">載入中...</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="panel-operator-resolved">
+  <div class="container">
+    <div class="card">
+      <div class="section-label" style="justify-content:space-between;display:flex;align-items:center">
+        <span>已解決問題日曆</span>
+        <button class="wo-btn alt" onclick="loadOperatorIssues()">重新整理</button>
+      </div>
+      <div id="operatorResolvedCalendar"></div>
+      <div id="operatorResolvedList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="wo-modal" id="operatorIssueModal">
+  <div class="wo-modal-card operator-modal-card">
+    <div class="wo-modal-head">
+      <div>
+        <div class="wo-modal-title" id="operatorModalTitle">問題詳細</div>
+        <div class="operator-modal-sub" id="operatorModalSub"></div>
+      </div>
+      <button class="close-x" onclick="closeOperatorIssueModal()">×</button>
+    </div>
+    <div id="operatorIssueDetail"></div>
+  </div>
+</div>
+
+<script src="/static/js/core/api.js"></script>
+<script src="/static/js/core/storage.js"></script>
+<script src="/static/alarm_app.js"></script>
+<script src="/static/js/modules/audit.js"></script>
+<script src="/static/js/pages/operator.js?v=resolved-calendar-1"></script>
+</body>
+</html>

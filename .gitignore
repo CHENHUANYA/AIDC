@@ -1,0 +1,11 @@
+hf_cache/
+alarm_db/
+vector_store/
+backups/
+exports/
+data/
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/

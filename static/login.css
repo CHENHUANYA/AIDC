@@ -1,0 +1,436 @@
+/* ═══ LOGIN PAGE — Consistent Light Industrial Theme ═══ */
+
+/* --- Background --- */
+.lg-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.lg-grid {
+  position: absolute;
+  inset: -50%;
+  background-image:
+    linear-gradient(rgba(26, 111, 212, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(26, 111, 212, 0.05) 1px, transparent 1px);
+  background-size: 60px 60px;
+  animation: lgGridDrift 40s linear infinite;
+}
+
+@keyframes lgGridDrift {
+  to { transform: translate(60px, 60px); }
+}
+
+.lg-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(140px);
+  opacity: 0.18;
+  animation: lgFloat 20s ease-in-out infinite;
+}
+
+.lg-glow--1 {
+  width: 500px;
+  height: 500px;
+  background: var(--acc);
+  top: -10%;
+  left: -8%;
+  animation-duration: 22s;
+}
+
+.lg-glow--2 {
+  width: 400px;
+  height: 400px;
+  background: #7c3aed;
+  bottom: -5%;
+  right: -5%;
+  animation-duration: 18s;
+  animation-delay: -6s;
+}
+
+.lg-glow--3 {
+  width: 300px;
+  height: 300px;
+  background: var(--grn);
+  top: 40%;
+  right: 30%;
+  opacity: 0.1;
+  animation-duration: 25s;
+  animation-delay: -12s;
+}
+
+@keyframes lgFloat {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(30px, -20px) scale(1.05); }
+  66%      { transform: translate(-20px, 15px) scale(0.95); }
+}
+
+/* --- Shell override --- */
+body[data-page="login"] .login-shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+
+/* --- Card --- */
+body[data-page="login"] .login-panel {
+  width: min(460px, 100%);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 36px 32px 28px;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 12px 50px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(26, 111, 212, 0.04);
+  animation: lgCardIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes lgCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.97);
+  }
+}
+
+/* --- Brand --- */
+.lg-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+.lg-brand-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--acc), var(--acc-dk));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(26, 111, 212, 0.3);
+  animation: lgIconPulse 3s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes lgIconPulse {
+  0%, 100% { box-shadow: 0 4px 16px rgba(26, 111, 212, 0.3); }
+  50%      { box-shadow: 0 4px 24px rgba(26, 111, 212, 0.5); }
+}
+
+.lg-title {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 2px;
+}
+
+.lg-subtitle {
+  font-size: 12px;
+  color: var(--dim);
+  margin-top: 2px;
+  letter-spacing: 0.5px;
+}
+
+/* --- Dividers --- */
+.lg-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 24px 0 18px;
+}
+
+.lg-divider::before,
+.lg-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.lg-divider span {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* --- Form --- */
+.lg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lg-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text2);
+}
+
+.lg-label svg {
+  opacity: 0.5;
+}
+
+.lg-input {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  outline: none;
+  transition: all 0.25s;
+}
+
+.lg-input::placeholder {
+  color: var(--dim);
+  font-family: var(--sans);
+  font-weight: 400;
+}
+
+.lg-input:focus {
+  border-color: var(--acc);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px rgba(26, 111, 212, 0.1), 0 0 16px rgba(26, 111, 212, 0.04);
+}
+
+/* --- Submit --- */
+.lg-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 13px 20px;
+  margin-top: 4px;
+  background: linear-gradient(135deg, var(--acc), var(--acc-dk));
+  border: none;
+  border-radius: 12px;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.25s;
+  box-shadow: 0 4px 16px rgba(26, 111, 212, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+.lg-submit::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%);
+  transform: translateX(-100%);
+  transition: transform 0.5s;
+}
+
+.lg-submit:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(26, 111, 212, 0.4);
+}
+
+.lg-submit:hover::before {
+  transform: translateX(100%);
+}
+
+.lg-submit:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 10px rgba(26, 111, 212, 0.25);
+}
+
+.lg-submit:disabled {
+  cursor: wait;
+  opacity: 0.78;
+  transform: none;
+  box-shadow: 0 2px 10px rgba(26, 111, 212, 0.18);
+}
+
+.lg-submit svg {
+  transition: transform 0.2s;
+}
+
+.lg-submit:hover svg {
+  transform: translateX(3px);
+}
+
+/* --- Result feedback --- */
+body[data-page="login"] .upload-result {
+  border-radius: 10px;
+  font-size: 13px;
+  padding: 12px 16px;
+  margin-top: 0;
+}
+
+body[data-page="login"] .upload-result:not(.show) {
+  display: none;
+}
+
+body[data-page="login"] .upload-result.loading {
+  background: var(--acc-lt);
+  border: 1px solid #bfdbfe;
+  color: var(--acc-dk);
+}
+
+body[data-page="login"] .upload-result.success {
+  background: var(--grn-lt);
+  border: 1px solid #bbf7d0;
+  color: var(--grn);
+}
+
+body[data-page="login"] .upload-result.error {
+  background: var(--red-lt);
+  border: 1px solid #fecaca;
+  color: var(--red);
+}
+
+/* --- Quick accounts --- */
+.lg-accounts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.lg-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all 0.25s;
+}
+
+.lg-account:hover {
+  border-color: var(--acc);
+  background: var(--acc-lt);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
+}
+
+.lg-account:active {
+  transform: translateY(0);
+}
+
+.lg-account-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.lg-account-icon--blue {
+  background: var(--acc-lt);
+  color: var(--acc);
+  border: 1px solid #bfdbfe;
+}
+
+.lg-account-icon--green {
+  background: var(--grn-lt);
+  color: var(--grn);
+  border: 1px solid #bbf7d0;
+}
+
+.lg-account-icon--amber {
+  background: var(--org-lt);
+  color: var(--org);
+  border: 1px solid #fde68a;
+}
+
+.lg-account-icon--purple {
+  background: #f5f3ff;
+  color: #7c3aed;
+  border: 1px solid #ddd6fe;
+}
+
+.lg-account-info b {
+  display: block;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.lg-account-info span {
+  display: block;
+  font-size: 11px;
+  color: var(--text2);
+  margin-top: 2px;
+}
+
+/* --- Hint --- */
+.lg-hint {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.lg-hint code {
+  font-family: var(--mono);
+  color: var(--acc);
+  background: var(--acc-lt);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #bfdbfe;
+  font-weight: 600;
+}
+
+/* --- Responsive --- */
+@media (max-width: 520px) {
+  body[data-page="login"] .login-panel {
+    padding: 28px 20px 22px;
+    border-radius: 16px;
+  }
+
+  .lg-accounts {
+    grid-template-columns: 1fr;
+  }
+
+  .lg-brand-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .lg-title {
+    font-size: 17px;
+  }
+}

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maintenance Workbench</title>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/alarm_app.css?v=workboard-fill-1">
+</head>
+<body data-page="maintenance">
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">MT</div>
+    <div class="logo-text">
+      <h1>MAINTENANCE WORKBENCH</h1>
+      <p>維修人員問題佇列、工單處理與 LLM 回饋</p>
+    </div>
+  </div>
+  <div class="status-pill">
+    <div class="status-dot"></div>
+    <span id="maintenanceUserLabel">maintenance01</span>
+    <button class="auth-logout" onclick="AlarmApp.logout()">Logout</button>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="workbench" onclick="switchTab('workbench', this)">Workbench</button>
+  <button class="tab-btn" data-tab="resolved" onclick="switchTab('resolved', this)">已解決日曆</button>
+  <button class="tab-btn" data-tab="lookup" onclick="switchTab('lookup', this)">Lookup</button>
+  <button class="tab-btn" data-tab="chat" onclick="switchTab('chat', this)">Chat</button>
+</div>
+
+<div class="panel active" id="panel-workbench">
+  <div class="container">
+    <div class="section-label">維修目前狀態</div>
+    <div class="wo-header">
+      <div class="wo-stat"><div class="label">未處理問題</div><div class="val" id="mtIssueOpen">--</div><div class="sub">等待維修判斷</div></div>
+      <div class="wo-stat"><div class="label">未指派工單</div><div class="val" id="mtUnassigned">--</div><div class="sub">需要接手</div></div>
+      <div class="wo-stat"><div class="label">處理中</div><div class="val" id="mtInProgress">--</div><div class="sub">assigned / in progress</div></div>
+      <div class="wo-stat"><div class="label">LLM 評估數</div><div class="val" id="mtFeedbackCount">--</div><div class="sub">技師回饋</div></div>
+    </div>
+
+    <div class="card">
+      <div class="section-label" style="justify-content:space-between;display:flex;align-items:center">
+        <span>問題佇列</span>
+        <button class="wo-btn alt" onclick="loadMaintenanceData()">重整</button>
+      </div>
+      <div class="maintenance-filter-row">
+        <input class="wo-input" id="mtIssueFilter" placeholder="Filter issue, machine, line, alarm">
+      </div>
+      <div id="maintenanceIssueList"><div class="wo-empty">載入中...</div></div>
+    </div>
+
+    <div class="card">
+      <div class="section-label" style="justify-content:space-between;display:flex;align-items:center">
+        <span>工單看板</span>
+        <button class="wo-btn alt" onclick="loadMaintenanceData()">重整</button>
+      </div>
+      <div class="maintenance-filter-row">
+        <select class="wo-select" id="mtWorkView">
+          <option value="active">進行中 / 待驗證</option>
+          <option value="verified">已驗證封存</option>
+          <option value="all">全部未封存</option>
+          <option value="unassigned">未指派</option>
+          <option value="mine">我的工單</option>
+        </select>
+        <select class="wo-select" id="mtPriorityFilter">
+          <option value="">All priorities</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <input class="wo-input" id="mtWorkFilter" placeholder="Filter work order, machine, alarm">
+      </div>
+      <div class="wo-board" id="maintenanceWorkBoard"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="panel-resolved">
+  <div class="container">
+    <div class="card">
+      <div class="section-label" style="justify-content:space-between;display:flex;align-items:center">
+        <span>已解決工單日曆</span>
+        <button class="wo-btn alt" onclick="loadMaintenanceData()">重新整理</button>
+      </div>
+      <div id="maintenanceResolvedCalendar"></div>
+      <div id="maintenanceResolvedList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="panel-lookup">
+  <div class="container">
+    <div class="section-label">維修查詢</div>
+    <div class="manual-grid">
+      <button class="manual-btn active" data-name="808d" onclick="selectManual(this)">
+        <div class="mb-code">808D</div>
+      </button>
+      <button class="manual-btn" data-name="840d" onclick="selectManual(this)">
+        <div class="mb-code">840D / 840Di / 810D</div>
+      </button>
+      <button class="manual-btn" data-name="840dsl" onclick="selectManual(this)">
+        <div class="mb-code">840D sl</div>
+      </button>
+      <button class="manual-btn" data-name="furnace_b85t" onclick="selectManual(this)">
+        <div class="mb-code">FURNACE B85T</div>
+      </button>
+    </div>
+
+    <div class="section-label">輸入警報代碼或問題描述</div>
+    <div class="search-wrap">
+      <input class="search-box" id="searchInput" type="text" placeholder="例如：5000 或 communication job not executable" autocomplete="off" spellcheck="false">
+      <button class="search-btn" id="searchBtn" onclick="doSearch()">查詢</button>
+    </div>
+
+    <div class="timer-row" id="timerRow">
+      <div class="timer-seg"><span class="timer-label">Retrieval</span><span class="timer-val" id="timerRetrieval">--</span></div>
+      <div class="timer-seg"><span class="timer-label">AI</span><span class="timer-val" id="timerAI">--</span></div>
+      <div class="timer-seg"><span class="timer-label">Total</span><span class="timer-val" id="timerTotal">--</span></div>
+    </div>
+
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <div class="loading-text">正在查詢維修資料...</div>
+    </div>
+
+    <div class="error-box" id="errorBox">
+      <div class="error-title">查詢發生錯誤</div>
+      <div class="error-msg" id="errorMsg"></div>
+    </div>
+
+    <div class="result-card" id="resultCard">
+      <div class="result-header">
+        <div>
+          <div class="alarm-id" id="resCode">--</div>
+          <div class="alarm-title" id="resTitle">--</div>
+        </div>
+        <div class="page-badge">
+          <div class="pb-label">Manual Page</div>
+          <div class="pb-num" id="resPage">--</div>
+        </div>
+      </div>
+      <div class="result-body" id="resBody"></div>
+      <div class="feedback-row">
+        <span class="feedback-label">這個查詢結果是否有幫助？</span>
+        <div class="feedback-btns">
+          <button class="fb-btn good" onclick="sendFeedback('good')">有幫助</button>
+          <button class="fb-btn bad" onclick="sendFeedback('bad')">沒幫助</button>
+        </div>
+        <span class="fb-thanks" id="fbThanks">已記錄回饋</span>
+      </div>
+    </div>
+
+    <div class="history-section" id="histSection" style="display:none">
+      <div class="section-label">查詢紀錄</div>
+      <div id="histGrid"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="panel-chat">
+  <div class="container" style="max-width:820px">
+    <div class="chat-manual-bar">
+      <button class="chat-manual-btn active" data-col="808d" onclick="selectChatManual(this)">808D</button>
+      <button class="chat-manual-btn" data-col="840d" onclick="selectChatManual(this)">840D / 840Di / 810D</button>
+      <button class="chat-manual-btn" data-col="840dsl" onclick="selectChatManual(this)">840D sl</button>
+      <button class="chat-manual-btn" data-col="furnace_b85t" onclick="selectChatManual(this)">FURNACE B85T</button>
+      <span class="chat-mode-badge">RAG + LLM</span>
+    </div>
+
+    <div class="chat-suggestions" id="chatSuggestions">
+      <span class="ex-label">常用問題</span>
+      <button class="chat-sug" onclick="chatSuggest('請協助判斷這個警報的可能原因與維修步驟')">維修步驟</button>
+      <button class="chat-sug" onclick="chatSuggest('請解釋警報代碼 5000 的原因和處理方式')">警報 5000</button>
+      <button class="chat-sug" onclick="chatSuggest('如果通訊作業無法執行，現場應該先檢查哪些項目？')">通訊異常</button>
+    </div>
+
+    <div class="chat-layout">
+      <div class="chat-messages" id="chatMessages">
+        <div class="chat-empty" id="chatEmpty">
+          <div class="chat-empty-icon">AI</div>
+          <div class="chat-empty-text">輸入現場狀況或警報代碼<br>可用多輪對話追問維修方向</div>
+        </div>
+      </div>
+      <div class="chat-input-area">
+        <textarea class="chat-input" id="chatInput" rows="1" placeholder="輸入維修問題，例如：Alarm 5000 出現後 HMI 無法載入 NC 程式" oninput="autoResize(this)" onkeydown="chatKeydown(event)"></textarea>
+        <button class="chat-clear-btn" onclick="clearChat()" title="清除對話">清除</button>
+        <button class="chat-send-btn" id="chatSendBtn" onclick="sendChat()" title="傳送">➤</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="wo-modal" id="maintenanceModal">
+  <div class="wo-modal-card">
+    <div class="wo-modal-head">
+      <div><div class="wo-modal-title" id="mtModalTitle">工單</div><div class="wo-note" id="mtModalId"></div></div>
+      <button class="close-x" onclick="closeMaintenanceModal()">x</button>
+    </div>
+    <div class="maintenance-context" id="mtIssueContext"></div>
+    <div class="maintenance-timeline" id="mtWorkTimeline"></div>
+    <div class="wo-modal-grid">
+      <div><div class="wo-note">狀態</div><select class="wo-select" id="mtEditStatus"><option value="pending">待處理</option><option value="assigned">已指派</option><option value="in_progress">處理中</option><option value="completed">已完成</option><option value="verified">已驗證</option></select></div>
+      <div><div class="wo-note">優先等級</div><select class="wo-select" id="mtEditPriority"><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">緊急</option></select></div>
+      <div><div class="wo-note">負責人</div><input class="wo-input" id="mtEditAssignee"></div>
+      <div><div class="wo-note">機台</div><input class="wo-input" id="mtEditMachine"></div>
+    </div>
+    <div class="wo-note" style="margin-top:10px">問題描述</div><textarea class="wo-text" id="mtEditDesc"></textarea>
+    <div class="wo-note" style="margin-top:10px">產線端 LLM 初步建議</div><textarea class="wo-text" id="mtEditRagSuggestion" readonly></textarea>
+    <div class="wo-note" style="margin-top:10px">處理結果 / 解決方案</div><textarea class="wo-text" id="mtEditResolution"></textarea>
+    <div class="wo-note" style="margin-top:10px">備註</div><textarea class="wo-text" id="mtEditNotes"></textarea>
+    <div class="wo-modal-grid" style="margin-top:10px">
+      <div><div class="wo-note">接受人員</div><input class="wo-input" id="mtEditAcceptedBy"></div>
+      <div><div class="wo-note">完成人員</div><input class="wo-input" id="mtEditCompletedBy"></div>
+      <div><div class="wo-note">驗證人員（Operator / Supervisor）</div><input class="wo-input" id="mtEditVerifiedBy" placeholder="例如 supervisor01"></div>
+      <div><div class="wo-note">根本原因</div><input class="wo-input" id="mtEditRootCause"></div>
+      <div><div class="wo-note">故障分類</div><input class="wo-input" id="mtEditFailureCategory"></div>
+      <div><div class="wo-note">LLM 正確率回饋</div><select class="wo-select" id="mtEditLlmCorrectness"><option value="">未評估</option><option value="correct">正確</option><option value="partially_correct">部分正確</option><option value="incorrect">不正確</option><option value="unknown">未知</option></select></div>
+      <div><div class="wo-note">LLM 覆蓋率回饋</div><select class="wo-select" id="mtEditLlmCoverage"><option value="">未評估</option><option value="complete">完整</option><option value="missing_steps">缺步驟</option><option value="missing_source">缺來源</option><option value="not_applicable">不適用</option></select></div>
+    </div>
+    <div class="wo-note" style="margin-top:10px">實際維修動作</div><textarea class="wo-text" id="mtEditRepairAction"></textarea>
+    <div class="wo-note" style="margin-top:10px">LLM 缺漏 / 建議修正</div><textarea class="wo-text" id="mtEditLlmMissingInfo"></textarea>
+    <div class="maintenance-verify-note">
+      閉環規則：維修完成時需填寫根本原因與實際維修動作；工單需由 Operator 或 Supervisor 驗證後才會正式關閉。
+    </div>
+    <div class="wo-actions">
+      <button class="wo-btn" onclick="saveMaintenanceWorkOrder()">儲存</button>
+      <button class="wo-btn danger" onclick="deleteMaintenanceWorkOrder()">刪除</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/core/api.js"></script>
+<script src="/static/js/core/storage.js"></script>
+<script src="/static/alarm_app.js"></script>
+<script src="/static/js/modules/chat.js"></script>
+<script src="/static/js/modules/lookup.js"></script>
+<script src="/static/js/modules/audit.js"></script>
+<script src="/static/js/pages/maintenance.js?v=workboard-fill-1"></script>
+</body>
+</html>

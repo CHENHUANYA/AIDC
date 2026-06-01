@@ -1,0 +1,162 @@
+[
+  {
+    "alarm_code": "3000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-01",
+    "source": "n8n-mock",
+    "severity": "high",
+    "description": "NC start is blocked during the demo production cycle."
+  },
+  {
+    "alarm_code": "5000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-02",
+    "source": "n8n-mock",
+    "severity": "medium",
+    "description": "Operator reports an intermittent channel or axis alarm."
+  },
+  {
+    "alarm_code": "emergency stop",
+    "manual": "808d",
+    "machine_id": "DEMO-STATION",
+    "source": "opcua-mock",
+    "severity": "critical",
+    "description": "Emergency stop chain is active and requires reset verification."
+  },
+  {
+    "alarm_code": "3000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-01",
+    "source": "n8n-mock",
+    "severity": "high",
+    "description": "Repeated alarm used to validate BI trend aggregation."
+  },
+  {
+    "alarm_code": "7000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-03",
+    "source": "manual-test",
+    "severity": "medium",
+    "description": "Program start interlock appeared after fixture setup."
+  },
+  {
+    "alarm_code": "12000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-04",
+    "source": "n8n-mock",
+    "severity": "medium",
+    "description": "Channel state alarm during warm-up."
+  },
+  {
+    "alarm_code": "20010",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-02",
+    "source": "n8n-mock",
+    "severity": "high",
+    "description": "Axis enable check failed after restart."
+  },
+  {
+    "alarm_code": "25000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-05",
+    "source": "manual-test",
+    "severity": "high",
+    "description": "Spindle alarm used for work-order priority validation."
+  },
+  {
+    "alarm_code": "30010",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-01",
+    "source": "n8n-mock",
+    "severity": "medium",
+    "description": "Cycle alarm after operator program edit."
+  },
+  {
+    "alarm_code": "400100",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-06",
+    "source": "opcua-mock",
+    "severity": "medium",
+    "description": "PLC diagnostic event for future gateway mapping."
+  },
+  {
+    "alarm_code": "300000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-07",
+    "source": "n8n-mock",
+    "severity": "high",
+    "description": "Drive-related event for high-priority routing."
+  },
+  {
+    "alarm_code": "feed hold",
+    "manual": "808d",
+    "machine_id": "DEMO-STATION",
+    "source": "manual-test",
+    "severity": "low",
+    "description": "Natural-language lookup path for operator training."
+  },
+  {
+    "alarm_code": "3000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-01",
+    "source": "n8n-mock",
+    "severity": "high",
+    "description": "Second repeated NC start alarm for trend testing."
+  },
+  {
+    "alarm_code": "3000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-01",
+    "source": "n8n-mock",
+    "severity": "high",
+    "description": "Third repeated NC start alarm for trend testing."
+  },
+  {
+    "alarm_code": "5000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-02",
+    "source": "n8n-mock",
+    "severity": "medium",
+    "description": "Second warm-up event for channel-state BI distribution."
+  },
+  {
+    "alarm_code": "operator acknowledgement",
+    "manual": "808d",
+    "machine_id": "DEMO-STATION",
+    "source": "manual-test",
+    "severity": "info",
+    "description": "Low-severity event that can be filtered in n8n."
+  },
+  {
+    "alarm_code": "20020",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-03",
+    "source": "opcua-mock",
+    "severity": "high",
+    "description": "Axis reference validation event."
+  },
+  {
+    "alarm_code": "400200",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-06",
+    "source": "n8n-mock",
+    "severity": "medium",
+    "description": "PLC acknowledgement timeout during demo shift."
+  },
+  {
+    "alarm_code": "300010",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-07",
+    "source": "n8n-mock",
+    "severity": "critical",
+    "description": "Critical drive event for notification branch testing."
+  },
+  {
+    "alarm_code": "safety door",
+    "manual": "808d",
+    "machine_id": "DEMO-STATION",
+    "source": "manual-test",
+    "severity": "medium",
+    "description": "Natural-language safety interlock event."
+  }
+]

@@ -1,0 +1,122 @@
+[
+  {
+    "alarm_code": "3000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-01",
+    "priority": "high",
+    "assigned_to": "maintenance-a",
+    "status": "completed",
+    "description": "NC start was blocked after program transfer. Operator could not resume automatic cycle.",
+    "resolution": "Verified selected part program, reset channel state, confirmed feed hold was released, then restarted NC cycle successfully.",
+    "notes": "If alarm 3000 repeats on CNC-LINE-01, check recent program transfer records before replacing hardware.",
+    "source": "week2-history"
+  },
+  {
+    "alarm_code": "5000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-02",
+    "priority": "medium",
+    "assigned_to": "maintenance-b",
+    "status": "verified",
+    "description": "Intermittent channel alarm appeared during warm-up. No tool collision observed.",
+    "resolution": "Checked axis enable state, cleared stale channel request, performed dry-run verification, and returned machine to production.",
+    "notes": "Keep this as a reference case for channel-state alarms after idle periods.",
+    "source": "week2-history"
+  },
+  {
+    "alarm_code": "3000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-03",
+    "priority": "medium",
+    "assigned_to": "maintenance-c",
+    "status": "in_progress",
+    "description": "Repeated NC start alarm after fixture change. Pending check of operator panel mode and program lock.",
+    "resolution": "",
+    "notes": "Open case for dashboard and work-order board demonstration.",
+    "source": "week2-history"
+  },
+  {
+    "alarm_code": "emergency stop",
+    "manual": "808d",
+    "machine_id": "DEMO-STATION",
+    "priority": "critical",
+    "assigned_to": "safety-lead",
+    "status": "assigned",
+    "description": "Emergency stop chain active during training station startup.",
+    "resolution": "",
+    "notes": "Safety lead must verify reset procedure before demo restart.",
+    "source": "week2-history"
+  },
+  {
+    "alarm_code": "20010",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-02",
+    "priority": "high",
+    "assigned_to": "maintenance-b",
+    "status": "completed",
+    "description": "Axis enable alarm appeared after power cycle.",
+    "resolution": "Confirmed drive ready signal, checked axis enable relay, reset reference state, and completed a low-speed jog test.",
+    "notes": "Use this case when axis alarms follow a full power cycle.",
+    "source": "week2-history"
+  },
+  {
+    "alarm_code": "25000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-05",
+    "priority": "high",
+    "assigned_to": "maintenance-d",
+    "status": "verified",
+    "description": "Spindle did not reach ready state before cycle start.",
+    "resolution": "Inspected spindle enable chain, cleaned connector, verified encoder feedback, and ran spindle warm-up.",
+    "notes": "Connector cleaning resolved the recurring symptom on CNC-LINE-05.",
+    "source": "week2-history"
+  },
+  {
+    "alarm_code": "30010",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-01",
+    "priority": "medium",
+    "assigned_to": "maintenance-a",
+    "status": "completed",
+    "description": "Cycle alarm after operator edited a subprogram.",
+    "resolution": "Restored approved subprogram, performed syntax check, and restarted dry run.",
+    "notes": "Compare active program hash before deeper electrical checks.",
+    "source": "week2-history"
+  },
+  {
+    "alarm_code": "400100",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-06",
+    "priority": "medium",
+    "assigned_to": "controls-a",
+    "status": "in_progress",
+    "description": "PLC diagnostic bit stayed active after pallet change.",
+    "resolution": "",
+    "notes": "Controls team is checking interlock timing.",
+    "source": "week2-history"
+  },
+  {
+    "alarm_code": "300000",
+    "manual": "808d",
+    "machine_id": "CNC-LINE-07",
+    "priority": "high",
+    "assigned_to": "drive-specialist",
+    "status": "assigned",
+    "description": "Drive alarm appeared during acceleration test.",
+    "resolution": "",
+    "notes": "Reserve for demo of assigned high-priority work.",
+    "source": "week2-history"
+  },
+  {
+    "alarm_code": "safety door",
+    "manual": "808d",
+    "machine_id": "DEMO-STATION",
+    "priority": "medium",
+    "assigned_to": "safety-lead",
+    "status": "completed",
+    "description": "Safety door interlock was open during training startup.",
+    "resolution": "Verified door switch alignment, reset safety relay, and documented the operator acknowledgement.",
+    "notes": "Training station cases should keep the safety verification notes visible.",
+    "source": "week2-history"
+  }
+]

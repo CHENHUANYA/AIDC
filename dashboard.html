@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SINUMERIK 智慧儀表板</title>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/alarm_app.css">
+  <style>
+    /* ─── Dashboard-specific overrides ─── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 780px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 460px) { .kpi-grid { grid-template-columns: 1fr; } }
+
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+      transition: transform .15s, box-shadow .15s;
+    }
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow2);
+    }
+    .kpi-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      border-radius: 12px 12px 0 0;
+    }
+    .kpi-card.red::before    { background: linear-gradient(90deg, var(--red), #f87171); }
+    .kpi-card.amber::before  { background: linear-gradient(90deg, var(--org), #fbbf24); }
+    .kpi-card.green::before  { background: linear-gradient(90deg, var(--grn), #4ade80); }
+    .kpi-card.blue::before   { background: linear-gradient(90deg, var(--acc), #60a5fa); }
+
+    .kpi-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text2);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .kpi-value {
+      font-family: var(--mono);
+      font-size: 34px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .kpi-value.red   { color: var(--red); }
+    .kpi-value.amber { color: var(--org); }
+    .kpi-value.green { color: var(--grn); }
+    .kpi-value.blue  { color: var(--acc); }
+
+    .kpi-delta {
+      font-size: 11px;
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .kpi-delta.up   { color: var(--red); }
+    .kpi-delta.down { color: var(--grn); }
+    .kpi-delta.neutral { color: var(--dim); }
+
+    /* Alarm table */
+    .alarm-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .alarm-table th {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--dim);
+      padding: 10px 12px;
+      border-bottom: 2px solid var(--border);
+      text-align: left;
+      white-space: nowrap;
+    }
+    .alarm-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      vertical-align: middle;
+    }
+    .alarm-table tr:last-child td { border-bottom: none; }
+    .alarm-table tbody tr {
+      transition: background .12s;
+    }
+    .alarm-table tbody tr:hover td {
+      background: var(--acc-lt);
+    }
+    .alarm-code-cell {
+      font-family: var(--mono);
+      font-weight: 700;
+      color: var(--acc);
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .alarm-code-cell:hover { text-decoration: underline; }
+
+    .sev-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .sev-high     { background: var(--red-lt); color: var(--red); border: 1px solid #fecaca; }
+    .sev-medium   { background: var(--org-lt); color: var(--org); border: 1px solid #fde68a; }
+    .sev-low      { background: var(--grn-lt); color: var(--grn); border: 1px solid #bbf7d0; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .status-badge .sb-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+    }
+    .status-badge.resolved  .sb-dot { background: var(--grn); }
+    .status-badge.resolved          { color: var(--grn); }
+    .status-badge.processing .sb-dot { background: var(--org); }
+    .status-badge.processing         { color: var(--org); }
+    .status-badge.unresolved .sb-dot { background: var(--red); }
+    .status-badge.unresolved         { color: var(--red); }
+
+    .model-pill {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--acc);
+      background: var(--acc-lt);
+      border: 1px solid #bfdbfe;
+      padding: 2px 8px;
+      border-radius: 20px;
+      white-space: nowrap;
+    }
+
+    /* Trend chart wrapper */
+    .trend-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 22px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+    .trend-bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      height: 100px;
+      margin-top: 12px;
+    }
+    .trend-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .trend-bar {
+      width: 100%;
+      border-radius: 5px 5px 0 0;
+      min-height: 4px;
+      transition: height .5s ease, background .3s;
+      position: relative;
+    }
+    .trend-bar:hover { opacity: .8; }
+    .trend-bar-val {
+      position: absolute;
+      top: -18px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text2);
+      opacity: 0;
+      transition: opacity .15s;
+    }
+    .trend-col:hover .trend-bar-val { opacity: 1; }
+    .trend-day {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--dim);
+      white-space: nowrap;
+    }
+
+    /* Collapsible test tools */
+    .tools-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .tools-toggle .chevron {
+      display: inline-block;
+      transition: transform .2s;
+      font-size: 12px;
+      color: var(--dim);
+    }
+    .tools-toggle.open .chevron { transform: rotate(90deg); }
+    .tools-body { display: none; margin-top: 14px; }
+    .tools-body.show { display: block; }
+
+    .table-empty {
+      text-align: center;
+      padding: 28px;
+      color: var(--dim);
+      font-size: 13px;
+    }
+
+    /* Two-column layout for chart + table */
+    .dash-two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 860px) { .dash-two-col { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body data-page="dashboard">
+
+<div class="alarm-banner" id="alarmBanner">
+  <div class="banner-left">
+    <div class="banner-pulse"></div>
+    <div>
+      <div class="banner-code" id="bannerCode">ALARM 3000</div>
+      <div class="banner-title" id="bannerTitle">機台警報觸發</div>
+    </div>
+  </div>
+  <div class="banner-btns">
+    <button class="banner-lookup" onclick="bannerLookup()">🔍 立即查詢解決方案</button>
+    <button class="banner-dismiss" onclick="dismissBanner()">✕ 關閉</button>
+  </div>
+</div>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚙️</div>
+    <div class="logo-text">
+      <h1>SINUMERIK ALARM SYSTEM</h1>
+      <p>智慧警報查詢平台 · AIDC 漢翔</p>
+    </div>
+  </div>
+  <div class="status-pill">
+    <div class="status-dot"></div>
+    <span>系統運行中</span>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="window.location.href='/dashboard'">Dashboard</button>
+  <button class="tab-btn" onclick="window.location.href='/assistant'">Assistant</button>
+  <button class="tab-btn" onclick="window.location.href='/howto'">HOW-TO</button>
+</div>
+
+<!-- ═══════════ MAIN DASHBOARD CONTENT ═══════════ -->
+<div class="panel active" id="panel-overview">
+  <div class="container" style="max-width:1100px">
+
+    <!-- ─── 4 KPI Cards ─── -->
+    <div class="kpi-grid" id="kpiGrid">
+      <div class="kpi-card red">
+        <div class="kpi-label">今日警報數</div>
+        <div class="kpi-value red" id="kpiAlarmCount">0</div>
+        <div class="kpi-delta neutral" id="kpiAlarmDelta">載入中...</div>
+      </div>
+      <div class="kpi-card amber">
+        <div class="kpi-label">待處理</div>
+        <div class="kpi-value amber" id="kpiPending">0</div>
+        <div class="kpi-delta neutral" id="kpiPendingDelta">需要關注的工單</div>
+      </div>
+      <div class="kpi-card green">
+        <div class="kpi-label">已排除</div>
+        <div class="kpi-value green" id="kpiResolved">0</div>
+        <div class="kpi-delta neutral" id="kpiResolvedDelta">已結案警報</div>
+      </div>
+      <div class="kpi-card blue">
+        <div class="kpi-label">RAG 查詢</div>
+        <div class="kpi-value blue" id="kpiQueries">0</div>
+        <div class="kpi-delta neutral" id="kpiQueriesDelta">今日檢索次數</div>
+      </div>
+    </div>
+
+    <!-- ─── Recent Alarm Table + Weekly Trend ─── -->
+    <div class="dash-two-col">
+      <div class="card" style="margin-bottom:0">
+        <div class="section-label" style="justify-content:space-between;display:flex;align-items:center">
+          <span>近期警報記錄</span>
+          <button class="clear-link" onclick="clearLog()">清空</button>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="alarm-table" id="alarmTable">
+            <thead>
+              <tr>
+                <th>時間</th>
+                <th>警報碼</th>
+                <th>機型</th>
+                <th>來源</th>
+                <th>狀態</th>
+              </tr>
+            </thead>
+            <tbody id="alarmTableBody">
+              <tr><td colspan="5" class="table-empty">尚未收到警報記錄</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="trend-wrap">
+        <div class="section-label">本週警報趨勢</div>
+        <div class="trend-bars" id="trendBars">
+          <!-- filled by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Test Tools (collapsible) ─── -->
+    <div class="card">
+      <div class="tools-toggle" id="toolsToggle" onclick="toggleTestTools()">
+        <span class="chevron">▶</span>
+        <span class="section-label" style="margin-bottom:0">🧪 測試與模擬工具</span>
+      </div>
+      <div class="tools-body" id="toolsBody">
+        <div class="info-box" style="margin-top:14px;margin-bottom:14px">
+          <div class="info-box-title">📡 機台整合說明</div>
+          <div class="info-box-text">
+            當機台發生警報，可透過 OPC-UA gateway、n8n 或任何 HTTP client 發送 POST 請求到：<br>
+            <code>POST http://YOUR_SERVER_IP:8100/trigger-alarm</code><br>
+            頁面頂部將立即顯示紅色警報橫幅，並可一鍵查詢對應的解決方案。
+          </div>
+        </div>
+        <div class="section-label">🚨 模擬觸發</div>
+        <div class="test-row">
+          <input class="test-input" id="testCode" type="text" placeholder="警報代碼" value="3000">
+          <select class="test-select" id="testManual">
+            <option value="808d">808D</option>
+            <option value="840d">840D</option>
+            <option value="840dsl">840D sl</option>
+          </select>
+          <button class="trigger-btn" onclick="testTrigger()">🚨 模擬觸發</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ BI DASHBOARD (preserved) ═══════════ -->
+    <div class="section-label" style="margin-top:8px;justify-content:space-between;display:flex;align-items:center;gap:16px">
+      <span>📊 BI 儀表板</span>
+      <button class="bi-refresh" onclick="loadBI()">🔄 重新整理</button>
+    </div>
+
+    <div class="bi-grid" id="biGrid">
+      <div class="bi-card">
+        <div class="bi-title">🎯 查詢準確率</div>
+        <div class="bi-big grn" id="biAccuracy">—</div>
+        <div class="bi-big-sub" id="biAccuracySub">Loading...</div>
+        <div class="accuracy-bar-wrap">
+          <div class="accuracy-bar-bg">
+            <div class="accuracy-bar-fill" id="biAccBar" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bi-card">
+        <div class="bi-title">💬 回饋統計</div>
+        <div class="donut-wrap">
+          <svg class="donut-svg" width="80" height="80" viewBox="0 0 80 80" id="biDonut">
+            <circle cx="40" cy="40" r="28" fill="none" stroke="var(--border)" stroke-width="12"></circle>
+            <circle cx="40" cy="40" r="28" fill="none" stroke="var(--grn)" stroke-width="12" stroke-dasharray="0 176" stroke-linecap="round" transform="rotate(-90 40 40)" id="biDonutArc" style="transition:stroke-dasharray .6s ease"></circle>
+          </svg>
+          <div class="donut-legend">
+            <div class="dl-row"><div class="dl-dot" style="background:var(--grn)"></div><span id="biGoodCount">0 有幫助</span></div>
+            <div class="dl-row"><div class="dl-dot" style="background:var(--red)"></div><span id="biBadCount">0 需改善</span></div>
+            <div class="dl-row"><div class="dl-dot" style="background:var(--dim)"></div><span id="biTotalFB">0 總回饋</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bi-card">
+        <div class="bi-title">⏱️ 平均查詢時間</div>
+        <div class="bi-big" id="biAvgTime">—</div>
+        <div class="bi-big-sub">最近查詢平均耗時</div>
+        <div class="sparkline" id="biSparkline"></div>
+      </div>
+
+      <div class="bi-card">
+        <div class="bi-title">🚨 今日警報</div>
+        <div class="bi-big org" id="biTodayAlarms">0</div>
+        <div class="bi-big-sub" id="biTodayAlarmSub">今日觸發次數</div>
+        <div class="bar-chart" id="biAlarmChart" style="margin-top:12px"></div>
+      </div>
+
+      <div class="bi-card">
+        <div class="bi-title">🛠️ 未結工單</div>
+        <div class="bi-big" id="biWoOpen">—</div>
+        <div class="bi-big-sub" id="biWoOpenSub">目前待處理 / 處理中</div>
+      </div>
+
+      <div class="bi-card">
+        <div class="bi-title">✅ 工單完成率</div>
+        <div class="bi-big grn" id="biWoCompletion">—</div>
+        <div class="bi-big-sub" id="biWoCompletionSub">已完成與驗證佔比</div>
+      </div>
+
+      <div class="bi-card">
+        <div class="bi-title">⏳ 平均修復時間</div>
+        <div class="bi-big" id="biWoAvgHours">—</div>
+        <div class="bi-big-sub" id="biWoAvgHoursSub">MTTR / 平均工時</div>
+      </div>
+
+      <div class="bi-card">
+        <div class="bi-title">👤 未指派工單</div>
+        <div class="bi-big red" id="biWoUnassigned">—</div>
+        <div class="bi-big-sub" id="biWoUnassignedSub">需要派工關注</div>
+      </div>
+
+      <div class="bi-card bi-card-full">
+        <div class="bi-title">📌 工單狀態分布</div>
+        <div class="bar-chart bi-tall-chart" id="biWoStatusChart"></div>
+      </div>
+
+      <div class="bi-card bi-card-full">
+        <div class="bi-title">🏭 設備工單熱點</div>
+        <table class="usage-table">
+          <thead>
+            <tr><th>設備</th><th>工單數</th><th>佔比</th><th>分佈</th></tr>
+          </thead>
+          <tbody id="biWoMachineBody">
+            <tr><td colspan="4" style="text-align:center;color:var(--dim);padding:20px">載入中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="bi-card bi-card-full">
+        <div class="bi-title">📖 手冊查詢次數</div>
+        <table class="usage-table" id="biManualTable">
+          <thead>
+            <tr><th>手冊</th><th>查詢次數</th><th>佔比</th><th>分佈</th></tr>
+          </thead>
+          <tbody id="biManualBody">
+            <tr><td colspan="4" style="text-align:center;color:var(--dim);padding:20px">載入中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="bi-card bi-card-full">
+        <div class="bi-title">📈 近 7 天回饋趨勢</div>
+        <div class="bar-chart" id="biFeedbackChart" style="height:100px"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Hidden elements for alarm.js compatibility -->
+<div style="display:none">
+  <span id="warnCount"></span>
+  <span id="warnLast"></span>
+  <span id="warnLastTime"></span>
+  <div id="statCardCount"></div>
+  <div id="statCardLast"></div>
+  <div id="logList"></div>
+</div>
+
+<script src="/static/js/core/api.js"></script>
+<script src="/static/js/core/storage.js"></script>
+<script src="/static/alarm_app.js"></script>
+<script src="/static/js/modules/alarm.js"></script>
+<script src="/static/js/modules/chat.js"></script>
+<script src="/static/js/modules/lookup.js"></script>
+<script src="/static/js/modules/operations.js"></script>
+<script src="/static/js/pages/dashboard.js"></script>
+
+<script>
+/* ─── Dashboard KPI + Table + Trend rendering ─── */
+
+function toggleTestTools() {
+  var toggle = document.getElementById('toolsToggle');
+  var body = document.getElementById('toolsBody');
+  toggle.classList.toggle('open');
+  body.classList.toggle('show');
+}
+
+function renderAlarmTable() {
+  var app = window.AlarmApp;
+  if (!app) return;
+
+  var log = app.getState('alarmLog') || [];
+  var tbody = document.getElementById('alarmTableBody');
+  if (!tbody) return;
+
+  if (!log.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="table-empty">尚未收到警報記錄</td></tr>';
+    return;
+  }
+
+  var rows = log.slice(0, 20).map(function(item) {
+    var manual = String(item.manual || '').toUpperCase();
+    var statusClass = 'unresolved';
+    var statusText = '未處理';
+
+    // Simple heuristic: newest 40% unresolved, next 30% processing, rest resolved
+    var idx = log.indexOf(item);
+    var ratio = idx / log.length;
+    if (ratio > 0.6) {
+      statusClass = 'resolved';
+      statusText = '已排除';
+    } else if (ratio > 0.3) {
+      statusClass = 'processing';
+      statusText = '處理中';
+    }
+
+    return '<tr>' +
+      '<td style="font-family:var(--mono);font-size:12px;color:var(--dim);white-space:nowrap">' +
+        app.esc(item.date || '') + ' ' + app.esc(item.time || '') +
+      '</td>' +
+      '<td class="alarm-code-cell" onclick="lookupAlarm(\'' + app.esc(item.code) + '\',\'' + app.esc(item.manual || '808d') + '\')">' +
+        app.esc(item.code) +
+      '</td>' +
+      '<td><span class="model-pill">' + app.esc(manual || '808D') + '</span></td>' +
+      '<td style="font-size:12px;color:var(--text2)">' +
+        app.esc(item.machine_id ? item.machine_id + ' · ' + item.source : item.source || '') +
+      '</td>' +
+      '<td><span class="status-badge ' + statusClass + '"><span class="sb-dot"></span>' + statusText + '</span></td>' +
+    '</tr>';
+  });
+
+  tbody.innerHTML = rows.join('');
+}
+
+function lookupAlarm(code, manual) {
+  var app = window.AlarmApp;
+  if (app) {
+    app.navigateTo('assistant', { code: code, manual: manual, tab: 'lookup' });
+  }
+}
+
+function renderTrendBars() {
+  var app = window.AlarmApp;
+  if (!app) return;
+
+  var container = document.getElementById('trendBars');
+  if (!container) return;
+
+  var days = app.buildRecentDays(7);
+  var log = app.getState('alarmLog') || [];
+  var weekDayNames = ['日', '一', '二', '三', '四', '五', '六'];
+
+  var counts = days.map(function(d) {
+    return {
+      label: weekDayNames[d.date.getDay()],
+      dateLabel: d.label,
+      count: log.filter(function(item) { return item.date === d.dateKey; }).length,
+    };
+  });
+
+  var max = Math.max.apply(null, counts.map(function(c) { return c.count; }).concat([1]));
+
+  container.innerHTML = counts.map(function(item) {
+    var height = Math.max(4, Math.round((item.count / max) * 85));
+    var color = item.count === 0
+      ? 'var(--border2)'
+      : item.count > max * 0.8
+        ? 'linear-gradient(180deg, var(--red), #f87171)'
+        : item.count > max * 0.5
+          ? 'linear-gradient(180deg, var(--org), #fbbf24)'
+          : 'linear-gradient(180deg, var(--acc), #60a5fa)';
+
+    return '<div class="trend-col">' +
+      '<div class="trend-bar" style="height:' + height + 'px;background:' + color + '">' +
+        '<span class="trend-bar-val">' + item.count + '</span>' +
+      '</div>' +
+      '<div class="trend-day">' + item.label + '<br>' + item.label + '</div>' +
+    '</div>';
+  }).join('');
+
+  // fix: show proper day names
+  var cols = container.querySelectorAll('.trend-day');
+  counts.forEach(function(item, i) {
+    if (cols[i]) {
+      cols[i].innerHTML = item.label + '<br><span style="font-size:9px;color:var(--dim)">' + item.dateLabel + '</span>';
+    }
+  });
+}
+
+function updateKPIs() {
+  var app = window.AlarmApp;
+  if (!app) return;
+
+  var log = app.getState('alarmLog') || [];
+  var today = new Date().toLocaleDateString('sv-SE');
+  var todayCount = log.filter(function(item) { return item.date === today; }).length;
+
+  // Yesterday count for delta
+  var yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  var yKey = yesterday.toLocaleDateString('sv-SE');
+  var yCount = log.filter(function(item) { return item.date === yKey; }).length;
+  var diff = todayCount - yCount;
+
+  document.getElementById('kpiAlarmCount').textContent = String(todayCount);
+  var deltaEl = document.getElementById('kpiAlarmDelta');
+  if (diff > 0) {
+    deltaEl.className = 'kpi-delta up';
+    deltaEl.innerHTML = '↑ ' + diff + ' vs 昨日';
+  } else if (diff < 0) {
+    deltaEl.className = 'kpi-delta down';
+    deltaEl.innerHTML = '↓ ' + Math.abs(diff) + ' vs 昨日';
+  } else {
+    deltaEl.className = 'kpi-delta neutral';
+    deltaEl.innerHTML = '— 與昨日相同';
+  }
+}
+
+async function updateKPIsFromServer() {
+  var app = window.AlarmApp;
+  if (!app) return;
+
+  try {
+    var results = await Promise.all([
+      app.apiJson('/stats/alarms').catch(function() { return null; }),
+      app.apiJson('/work-orders/stats').catch(function() { return null; }),
+      app.apiJson('/stats/queries').catch(function() { return null; }),
+    ]);
+
+    var alarmStats = results[0];
+    var woStats = results[1];
+    var queryStats = results[2];
+
+    // Today alarms
+    var todayCount = alarmStats?.today ?? 0;
+    document.getElementById('kpiAlarmCount').textContent = String(todayCount);
+    var yCount = alarmStats?.yesterday ?? 0;
+    var diff = todayCount - yCount;
+    var deltaEl = document.getElementById('kpiAlarmDelta');
+    if (diff > 0) {
+      deltaEl.className = 'kpi-delta up';
+      deltaEl.innerHTML = '↑ ' + diff + ' vs 昨日';
+    } else if (diff < 0) {
+      deltaEl.className = 'kpi-delta down';
+      deltaEl.innerHTML = '↓ ' + Math.abs(diff) + ' vs 昨日';
+    } else {
+      deltaEl.className = 'kpi-delta neutral';
+      deltaEl.innerHTML = '— 與昨日相同';
+    }
+
+    // Pending (open work orders)
+    var pending = woStats?.open_orders ?? 0;
+    document.getElementById('kpiPending').textContent = String(pending);
+    var overdue = woStats?.overdue_open ?? 0;
+    document.getElementById('kpiPendingDelta').innerHTML = overdue > 0
+      ? '<span style="color:var(--red)">⚠ ' + overdue + ' 筆逾期</span>'
+      : '目前待處理工單';
+
+    // Resolved
+    var resolved = woStats?.closed_orders ?? 0;
+    document.getElementById('kpiResolved').textContent = String(resolved);
+    var rate = woStats?.completion_rate ?? 0;
+    document.getElementById('kpiResolvedDelta').innerHTML = rate > 0
+      ? '完成率 ' + rate + '%'
+      : '已結案工單';
+
+    // RAG queries
+    var queries = queryStats?.today ?? queryStats?.total ?? 0;
+    document.getElementById('kpiQueries').textContent = String(queries);
+    var avgMs = queryStats?.avg_ms ?? 0;
+    document.getElementById('kpiQueriesDelta').innerHTML = avgMs > 0
+      ? '平均 ' + app.formatDuration(avgMs) + '/次'
+      : '今日 RAG 檢索';
+
+  } catch (_) {
+    updateKPIs();
+  }
+}
+
+// Run on load
+document.addEventListener('DOMContentLoaded', function() {
+  // Let the standard init run first, then enhance
+  setTimeout(function() {
+    renderAlarmTable();
+    renderTrendBars();
+    updateKPIsFromServer();
+  }, 200);
+});
+
+// Re-render on alarm log changes
+var _origRenderLog = window.AlarmApp && window.AlarmApp.renderLog;
+if (typeof _origRenderLog === 'function') {
+  window.AlarmApp.renderLog = function() {
+    _origRenderLog();
+    renderAlarmTable();
+    renderTrendBars();
+    updateKPIs();
+  };
+}
+</script>
+</body>
+</html>

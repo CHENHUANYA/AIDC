@@ -1,0 +1,44 @@
+[
+  {
+    "collection": "808d",
+    "code": "3000",
+    "title": "SOP: Alarm 3000 NC start blocked",
+    "source": "week2-sop",
+    "text": "Alarm 3000 SOP for 808D demo machines. Symptom: NC start is blocked or the channel does not enter cycle start. Checks: verify correct part program is selected, confirm mode group is ready, release feed hold, check emergency-stop chain, confirm no program lock is active. Recovery: reset channel state, clear the alarm, perform dry run, then resume production. Escalate if the same machine repeats the alarm more than twice in one shift."
+  },
+  {
+    "collection": "808d",
+    "code": "5000",
+    "title": "SOP: Alarm 5000 channel or axis warm-up issue",
+    "source": "week2-sop",
+    "text": "Alarm 5000 demo maintenance note. Symptom: intermittent channel or axis alarm during warm-up. Checks: inspect axis enable state, verify machine is not waiting for an operator acknowledgement, confirm reference position is valid, and check the previous shutdown record. Recovery: clear stale channel request, run low-speed dry cycle, then mark the work order verified after operator confirmation."
+  },
+  {
+    "collection": "808d",
+    "code": "emergency stop",
+    "title": "Safety bulletin: Emergency stop chain active",
+    "source": "week2-bulletin",
+    "text": "Emergency stop response bulletin. Treat every emergency stop as a safety event. Confirm the physical button state, door interlock, safety relay, and reset sequence. Do not bypass the chain for demo purposes. After reset, record machine_id, source, operator, and verification result in the work order."
+  },
+  {
+    "collection": "808d",
+    "code": "3000",
+    "title": "Technical bulletin: Repeated alarm 3000 trend",
+    "source": "week2-bulletin",
+    "text": "Repeated alarm 3000 trend guidance. If BI shows multiple alarm 3000 events for CNC-LINE-01 in a short window, compare the active program, operator shift, and fixture-change record. Use the work-order resolution field as feedback for the knowledge base so future RAG results include proven local fixes."
+  },
+  {
+    "collection": "808d",
+    "code": "20010",
+    "title": "SOP: Axis enable alarm after restart",
+    "source": "week2-sop",
+    "text": "Axis enable restart SOP. Symptom: axis alarm appears after machine power cycle or emergency reset. Checks: drive ready signal, axis enable relay, reference state, and operator mode. Recovery: reset reference state, jog at low speed, verify no mechanical obstruction, then document the ready signal result in the work order."
+  },
+  {
+    "collection": "808d",
+    "code": "300000",
+    "title": "Technical bulletin: Drive alarm escalation",
+    "source": "week2-bulletin",
+    "text": "Drive alarm escalation bulletin. For high or critical drive alarms, stop automatic cycle, capture machine_id, alarm_code, source, severity, and operator context. Assign the work order to the drive specialist and do not restart production until the dry-run and acceleration checks pass."
+  }
+]

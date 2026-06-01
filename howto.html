@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SINUMERIK HOW-TO</title>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/alarm_app.css">
+</head>
+<body data-page="howto">
+<header>
+  <div class="logo">
+    <div class="logo-icon">📘</div>
+    <div class="logo-text">
+      <h1>SINUMERIK HOW-TO</h1>
+      <p>現場操作與維修步驟</p>
+    </div>
+  </div>
+  <div class="status-pill">
+    <div class="status-dot"></div>
+    <span>操作指引</span>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn" onclick="window.location.href='/dashboard'">Dashboard</button>
+  <button class="tab-btn" onclick="window.location.href='/assistant'">Assistant</button>
+  <button class="tab-btn" onclick="window.location.href='/operations'">Operations</button>
+  <button class="tab-btn active">HOW-TO</button>
+</div>
+
+<div class="container">
+  <div class="section-label">選擇手冊</div>
+  <div class="manual-grid">
+    <button class="manual-btn active" data-col="808d" onclick="selectHowtoManual(this)"><div class="mb-code">808D</div></button>
+    <button class="manual-btn" data-col="840d" onclick="selectHowtoManual(this)"><div class="mb-code">840D / 840Di / 810D</div></button>
+    <button class="manual-btn" data-col="840dsl" onclick="selectHowtoManual(this)"><div class="mb-code">840D sl</div></button>
+    <button class="manual-btn" data-col="furnace_b85t" onclick="selectHowtoManual(this)"><div class="mb-code">FURNACE B85T</div></button>
+  </div>
+
+  <div class="card">
+    <div class="section-label">主題</div>
+    <div class="examples" id="howtoTopics"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-label" id="howtoTitle">HOW-TO 步驟</div>
+    <div id="howtoSteps"></div>
+  </div>
+</div>
+
+<script src="/static/js/core/api.js"></script>
+<script src="/static/js/modules/howto.js"></script>
+</body>
+</html>

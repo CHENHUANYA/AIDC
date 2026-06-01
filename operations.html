@@ -1,0 +1,225 @@
+﻿<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SINUMERIK Operations</title>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/alarm_app.css">
+</head>
+<body data-page="operations">
+
+<div class="alarm-banner" id="alarmBanner">
+  <div class="banner-left">
+    <div class="banner-pulse"></div>
+    <div>
+      <div class="banner-code" id="bannerCode">ALARM 3000</div>
+      <div class="banner-title" id="bannerTitle">機台警報觸發</div>
+    </div>
+  </div>
+  <div class="banner-btns">
+    <button class="banner-lookup" onclick="bannerLookup()">🔍 立即查詢解決方案</button>
+    <button class="banner-dismiss" onclick="dismissBanner()">✕ 關閉</button>
+  </div>
+</div>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚙️</div>
+    <div class="logo-text">
+      <h1>SINUMERIK ALARM SYSTEM</h1>
+      <p>智慧警報查詢平台 · AIDC 漢翔</p>
+    </div>
+  </div>
+  <div class="status-pill">
+    <div class="status-dot"></div>
+    <span>系統運行中</span>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn" onclick="window.location.href='/admin'">Admin</button>
+  <button class="tab-btn" onclick="window.location.href='/assistant'">Assistant</button>
+  <button class="tab-btn active" onclick="window.location.href='/operations'">Operations</button>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="work" onclick="switchTab('work', this)">Work Orders</button>
+  <button class="tab-btn" data-tab="kb" onclick="switchTab('kb', this)">Knowledge Base</button>
+  <button class="tab-btn" data-tab="settings" onclick="switchTab('settings', this)">System Settings</button>
+</div>
+
+<div class="panel active" id="panel-work">
+  <div class="container">
+    <div class="section-label">維修工單</div>
+    <div class="wo-header">
+      <div class="wo-stat"><div class="label">總工單數</div><div class="val" id="woTotal">--</div><div class="sub">累積維修工單</div></div>
+      <div class="wo-stat"><div class="label">今日完成數</div><div class="val" id="woDoneToday">--</div><div class="sub">今日已結案</div></div>
+      <div class="wo-stat"><div class="label">平均維修時數</div><div class="val" id="woAvg">--</div><div class="sub">單位：小時</div></div>
+      <div class="wo-stat"><div class="label">今日新增</div><div class="val" id="woToday">--</div><div class="sub">今日建立工單</div></div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">新增工單</div>
+      <div class="wo-form-grid">
+        <div class="wo-field"><label class="wo-field-label">警報代碼 *</label><input class="wo-input" id="woAlarm" placeholder="例如 3000"></div>
+        <div class="wo-field"><label class="wo-field-label">手冊</label><select class="wo-select" id="woManual"><option value="808d">808D</option><option value="840d">840D</option><option value="840dsl">840D sl</option></select></div>
+        <div class="wo-field"><label class="wo-field-label">機台 / 設備</label><input class="wo-input" id="woMachine" placeholder="例如 CNC-01"></div>
+        <div class="wo-field"><label class="wo-field-label">優先等級</label><select class="wo-select" id="woPriority"><option value="medium">中</option><option value="low">低</option><option value="high">高</option><option value="critical">緊急</option></select></div>
+        <div class="wo-field"><label class="wo-field-label">負責人員</label><input class="wo-input" id="woAssignee" placeholder="負責人員姓名"></div>
+        <div class="wo-field"><label class="wo-field-label">來源</label><input class="wo-input" id="woSource" placeholder="API / OPC / n8n"></div>
+        <div class="wo-field wo-field-full"><label class="wo-field-label">問題描述 / RAG 摘要</label><textarea class="wo-text" id="woDesc"></textarea></div>
+      </div>
+      <div class="wo-actions"><button class="wo-btn" onclick="createWorkOrder()">新增工單</button><button class="wo-btn alt" onclick="loadWorkOrders()">重新整理</button></div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">批次匯入 Excel 工單</div>
+      <div class="excel-upload-zone" id="excelZone" onclick="document.getElementById('excelFile').click()">
+        <div class="eu-icon">📁</div>
+        <div class="eu-text">點擊上傳 .xlsx 檔案，或拖曳至此</div>
+      </div>
+      <input type="file" id="excelFile" accept=".xlsx,.xls" style="display:none" onchange="uploadExcel(this)">
+      <div class="excel-result" id="excelResult"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-label" style="justify-content:space-between;display:flex;align-items:center"><span>工單看板</span><button class="wo-btn alt" onclick="loadWorkOrders()">重整</button></div>
+      <div class="wo-board" id="woBoard"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="panel-kb">
+  <div class="container">
+    <div class="section-label">📚 選擇知識庫集合</div>
+    <div class="manual-grid" style="margin-bottom:24px">
+      <button class="manual-btn active" data-kb="808d" onclick="selectKB(this)"><div class="mb-code">808D</div></button>
+      <button class="manual-btn" data-kb="840d" onclick="selectKB(this)"><div class="mb-code">840D / 840Di / 810D</div></button>
+      <button class="manual-btn" data-kb="840dsl" onclick="selectKB(this)"><div class="mb-code">840D sl</div></button>
+    </div>
+
+    <div class="card">
+      <div class="section-label">📄 上傳 PDF 至知識庫</div>
+      <div class="upload-zone" id="uploadZone" onclick="document.getElementById('pdfFile').click()">
+        <div class="upload-zone-icon">📤</div>
+        <div class="upload-zone-text">點擊上傳 PDF 檔案，或拖曳至此</div>
+      </div>
+      <input type="file" id="pdfFile" accept=".pdf" style="display:none" onchange="handlePdfUpload(this)">
+      <div class="upload-progress" id="uploadProgress">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:6px;font-weight:500" id="uploadStatus">上傳中...</div>
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="uploadBar"></div></div>
+      </div>
+      <div class="upload-result" id="uploadResult"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">✏️ 新增維修紀錄至知識庫</div>
+      <div class="text-ingest-form">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <input type="text" id="ingestCode" placeholder="警報代碼（選填）">
+          <input type="text" id="ingestTitle" placeholder="標題（選填）">
+        </div>
+        <textarea id="ingestText" placeholder="輸入維修紀錄內容"></textarea>
+        <div style="display:flex;gap:10px;align-items:center">
+          <select class="test-select" id="ingestSource"><option value="manual">手動輸入</option><option value="workorder">維修工單</option><option value="bulletin">公告</option><option value="feedback">現場回饋</option></select>
+          <button class="ingest-btn" id="ingestBtn" onclick="handleTextIngest()">⭐ 寫入知識庫</button>
+        </div>
+        <div class="upload-result" id="textResult"></div>
+      </div>
+    </div>
+
+    <div class="card"><div class="section-label">📋 最近寫入紀錄</div><div id="ingestLogList"><div class="log-empty">尚無寫入紀錄</div></div></div>
+    <div class="card"><div class="section-label">📊 知識庫統計</div><div id="kbStats" style="font-size:13px;color:var(--text2);line-height:1.8">載入中...</div></div>
+    <div class="card">
+      <div class="section-label" style="justify-content:space-between;display:flex;align-items:center;gap:12px">
+        <span>🗂️ 文件管理</span>
+        <div class="wo-actions" style="margin-top:0">
+          <button class="wo-btn alt" onclick="loadCollectionDocuments()">重新整理</button>
+          <button class="wo-btn alt" onclick="rebuildKnowledgeBase()">重建索引</button>
+        </div>
+      </div>
+      <div class="kb-summary-grid" id="kbCollectionSummary">
+        <div class="kb-summary-card"><div class="label">文件數</div><div class="value">--</div></div>
+        <div class="kb-summary-card"><div class="label">片段數</div><div class="value">--</div></div>
+        <div class="kb-summary-card"><div class="label">狀態</div><div class="value">--</div></div>
+      </div>
+      <div class="upload-result" id="kbDocResult"></div>
+      <div class="kb-doc-list" id="kbDocumentList">
+        <div class="log-empty">載入中...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="panel-settings">
+  <div class="container">
+    <div class="card">
+      <div class="section-label">系統設定</div>
+      <div class="wo-form-grid">
+        <div class="wo-field">
+          <label class="wo-field-label">預設手冊</label>
+          <select class="wo-select" id="settingsDefaultManual">
+            <option value="808d">808D</option>
+            <option value="840d">840D</option>
+            <option value="840dsl">840D sl</option>
+            <option value="furnace_b85t">FURNACE B85T</option>
+          </select>
+        </div>
+        <div class="wo-field">
+          <label class="wo-field-label">登入有效時數</label>
+          <input class="wo-input" id="settingsSessionHours" type="number" min="1" max="72" step="1">
+        </div>
+        <label class="settings-toggle">
+          <input id="settingsAllowOperatorReopen" type="checkbox">
+          <span>允許 Operator 重新開啟已完成問題</span>
+        </label>
+      </div>
+      <div class="wo-actions">
+        <button class="wo-btn" onclick="saveSystemSettings()">儲存設定</button>
+        <button class="wo-btn alt" onclick="loadSystemSettings()">重新載入</button>
+      </div>
+      <div class="upload-result" id="settingsResult"></div>
+    </div>
+  </div>
+</div>
+
+<div class="wo-modal" id="woModal">
+  <div class="wo-modal-card">
+    <div class="wo-modal-head">
+      <div><div class="wo-modal-title" id="woModalTitle">工單</div><div class="wo-note" id="woModalId"></div></div>
+      <button class="close-x" onclick="closeWoModal()">✕</button>
+    </div>
+    <div class="wo-modal-grid">
+      <div><div class="wo-note">狀態</div><select class="wo-select" id="woEditStatus"><option value="pending">待處理</option><option value="assigned">已指派</option><option value="in_progress">處理中</option><option value="completed">已完成</option><option value="verified">已驗證</option></select></div>
+      <div><div class="wo-note">優先等級</div><select class="wo-select" id="woEditPriority"><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">緊急</option></select></div>
+      <div><div class="wo-note">負責人</div><input class="wo-input" id="woEditAssignee"></div>
+      <div><div class="wo-note">機台</div><input class="wo-input" id="woEditMachine"></div>
+    </div>
+    <div class="wo-note" style="margin-top:10px">問題描述</div><textarea class="wo-text" id="woEditDesc"></textarea>
+    <div class="wo-note" style="margin-top:10px">處理結果 / 解決方案（維修紀錄）</div><textarea class="wo-text" id="woEditResolution"></textarea>
+    <div class="wo-note" style="margin-top:10px">備註</div><textarea class="wo-text" id="woEditNotes"></textarea>
+    <div class="wo-modal-grid" style="margin-top:10px">
+      <div><div class="wo-note">接受人員</div><input class="wo-input" id="woEditAcceptedBy"></div>
+      <div><div class="wo-note">完成人員</div><input class="wo-input" id="woEditCompletedBy"></div>
+      <div><div class="wo-note">根本原因</div><input class="wo-input" id="woEditRootCause"></div>
+      <div><div class="wo-note">故障分類</div><input class="wo-input" id="woEditFailureCategory"></div>
+      <div><div class="wo-note">LLM 正確率回饋</div><select class="wo-select" id="woEditLlmCorrectness"><option value="">未評估</option><option value="correct">正確</option><option value="partially_correct">部分正確</option><option value="incorrect">不正確</option><option value="unknown">未知</option></select></div>
+      <div><div class="wo-note">LLM 覆蓋率回饋</div><select class="wo-select" id="woEditLlmCoverage"><option value="">未評估</option><option value="complete">完整</option><option value="missing_steps">缺步驟</option><option value="missing_source">缺來源</option><option value="not_applicable">不適用</option></select></div>
+    </div>
+    <div class="wo-note" style="margin-top:10px">實際維修動作</div><textarea class="wo-text" id="woEditRepairAction"></textarea>
+    <div class="wo-note" style="margin-top:10px">LLM 缺漏 / 建議修正</div><textarea class="wo-text" id="woEditLlmMissingInfo"></textarea>
+    <div class="wo-actions"><button class="wo-btn" onclick="saveWorkOrder()">儲存</button><button class="wo-btn danger" onclick="deleteWorkOrder()">刪除</button></div>
+  </div>
+</div>
+
+<script src="/static/js/core/api.js"></script>
+<script src="/static/js/core/storage.js"></script>
+<script src="/static/alarm_app.js"></script>
+<script src="/static/js/modules/alarm.js"></script>
+<script src="/static/js/modules/chat.js"></script>
+<script src="/static/js/modules/lookup.js"></script>
+<script src="/static/js/modules/operations.js"></script>
+<script src="/static/js/pages/operations.js"></script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+"""
+main.py - Alarm RAG FastAPI app composition.
+
+Route implementations live under routes/ and shared runtime state lives in
+app_context.py. The public API paths are kept stable for the demo UI,
+n8n, smoke tests, and acceptance checks.
+"""
+
+import os
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from app_context import load_all_engines
+from auth import router as auth_router
+from issues import router as issue_router
+from routes.alarm_routes import router as alarm_router
+from routes.chat_lookup_routes import router as chat_lookup_router
+from routes.ingest_routes import router as ingest_router
+from routes.settings_routes import router as settings_router
+from routes.static_reference_routes import router as static_reference_router
+from routes.stats_routes import router as stats_router
+from work_orders import router as work_order_router
+
+
+app = FastAPI(title="Alarm RAG Server - Multi Manual")
+
+def cors_origins() -> list[str]:
+    raw = os.getenv("ALARM_RAG_CORS_ORIGINS", "")
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origins or ["http://localhost:8100", "http://127.0.0.1:8100"]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins(),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+load_all_engines()
+
+app.include_router(auth_router)
+app.include_router(work_order_router)
+app.include_router(issue_router)
+app.include_router(chat_lookup_router)
+app.include_router(static_reference_router)
+app.include_router(alarm_router)
+app.include_router(stats_router)
+app.include_router(ingest_router)
+app.include_router(settings_router)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")

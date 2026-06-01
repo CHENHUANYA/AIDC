@@ -1,0 +1,227 @@
+{
+  "name": "Alarm RAG Mock Trigger",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -620,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -620,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "alarm-code",
+              "name": "alarm_code",
+              "type": "string",
+              "value": "3000"
+            },
+            {
+              "id": "manual",
+              "name": "manual",
+              "type": "string",
+              "value": "808d"
+            },
+            {
+              "id": "machine-id",
+              "name": "machine_id",
+              "type": "string",
+              "value": "CNC-LINE-01"
+            },
+            {
+              "id": "source",
+              "name": "source",
+              "type": "string",
+              "value": "n8n-mock"
+            },
+            {
+              "id": "severity",
+              "name": "severity",
+              "type": "string",
+              "value": "high"
+            },
+            {
+              "id": "description",
+              "name": "description",
+              "type": "string",
+              "value": "Scheduled mock alarm from n8n for Alarm RAG MVP validation."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-mock-alarm",
+      "name": "Set Mock Alarm Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -360,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "or",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.severity }}",
+              "operator": {
+                "operation": "equals",
+                "type": "string"
+              },
+              "rightValue": "high"
+            },
+            {
+              "leftValue": "={{ $json.severity }}",
+              "operator": {
+                "operation": "equals",
+                "type": "string"
+              },
+              "rightValue": "critical"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "severity-gate",
+      "name": "IF High Or Critical",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -120,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8100/trigger-alarm",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"alarm_code\": \"{{ $json.alarm_code }}\",\n  \"manual\": \"{{ $json.manual }}\",\n  \"machine_id\": \"{{ $json.machine_id }}\",\n  \"source\": \"{{ $json.source }}\",\n  \"severity\": \"{{ $json.severity }}\",\n  \"description\": \"{{ $json.description }}\"\n}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "post-trigger-alarm",
+      "name": "POST /trigger-alarm",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        140,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "log-status",
+              "name": "demo_result",
+              "type": "string",
+              "value": "=status={{ $json.status }} order={{ $json.work_order.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-result",
+      "name": "Log Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        380,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Mock Alarm Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Mock Alarm Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Mock Alarm Payload": {
+      "main": [
+        [
+          {
+            "node": "IF High Or Critical",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF High Or Critical": {
+      "main": [
+        [
+          {
+            "node": "POST /trigger-alarm",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "POST /trigger-alarm": {
+      "main": [
+        [
+          {
+            "node": "Log Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
