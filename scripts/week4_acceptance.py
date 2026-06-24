@@ -1,13 +1,22 @@
 import argparse
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from env_utils import EnvConfigError, admin_initial_password, load_project_env
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REPORT = ROOT / "docs" / "MVP_WEEK4_ACCEPTANCE_REPORT.md"
+
+
+load_project_env()
 
 
 def load_json(path: Path) -> Any:
@@ -43,11 +52,16 @@ def request_json(
 
 
 def login(base_url: str, timeout: int) -> str:
+    try:
+        password = admin_initial_password()
+    except EnvConfigError as exc:
+        print(f"[FAIL] {exc}")
+        return ""
     code, data = request_json(
         base_url,
         "/auth/login",
         "POST",
-        {"username": "admin01", "password": "demo1234"},
+        {"username": "admin01", "password": password},
         timeout,
     )
     return data.get("token") if code == 200 and isinstance(data, dict) else ""
@@ -127,7 +141,7 @@ def live_checks(base_url: str, manual: str, alarm_code: str, timeout: int) -> li
     _, feedback_before = request_json(base_url, "/feedback/stats", timeout=timeout, token=token)
 
     lookup_path = f"/v1/{manual}/lookup?{parse.urlencode({'code': alarm_code})}"
-    code, lookup = request_json(base_url, lookup_path, timeout=timeout)
+    code, lookup = request_json(base_url, lookup_path, timeout=timeout, token=token)
     results.append(("live:lookup", pass_fail(code == 200 and "found" in lookup), f"HTTP {code}, found={lookup.get('found')}"))
 
     trigger_payload = {
@@ -157,8 +171,13 @@ def live_checks(base_url: str, manual: str, alarm_code: str, timeout: int) -> li
             "notes": "Week 4 acceptance completion path.",
         }
         code, updated = request_json(base_url, f"/work-orders/{order_id}", "PATCH", patch_payload, timeout, token)
-        feedback = updated.get("feedback") if isinstance(updated, dict) else None
-        results.append(("live:work-order-close", pass_fail(code == 200 and updated.get("status") == "ok"), f"HTTP {code}, feedback={bool(feedback)}"))
+        review = updated.get("knowledge_review") if isinstance(updated, dict) else None
+        review_pending = isinstance(review, dict) and review.get("review_status") == "pending_review"
+        results.append((
+            "live:work-order-close",
+            pass_fail(code == 200 and updated.get("status") == "ok" and review_pending),
+            f"HTTP {code}, review={review}",
+        ))
 
     feedback_payload = {
         "query": f"Week 4 acceptance lookup for alarm {alarm_code}",
@@ -211,6 +230,18 @@ def write_report(path: Path, results: list[tuple[str, str, str]], base_url: str)
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def resolve_report_path(report: str) -> Path:
+    path = Path(report)
+    if not path.is_absolute():
+        path = ROOT / path
+    resolved = path.resolve()
+    root = ROOT.resolve()
+    if root not in [resolved, *resolved.parents]:
+        raise ValueError("Report path must stay under the project root")
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
 def print_report(results: list[tuple[str, str, str]]) -> None:
     print("\nWeek 4 Acceptance")
     print("-" * 72)
@@ -234,9 +265,11 @@ def main() -> int:
         results.extend(live_checks(args.base_url, args.manual, args.alarm_code, args.timeout))
 
     print_report(results)
-    report_path = Path(args.report)
-    if not report_path.is_absolute():
-        report_path = ROOT / report_path
+    try:
+        report_path = resolve_report_path(args.report)
+    except ValueError as exc:
+        print(f"[FAIL] {exc}")
+        return 1
     write_report(report_path, results, args.base_url)
     print(f"Report written: {report_path}")
 

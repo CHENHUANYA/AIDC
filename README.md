@@ -1,105 +1,83 @@
-# Alarm RAG MVP
+# Alarm RAG
 
-Local no-vendor MVP for SINUMERIK alarm lookup, demo alarm triggers, RAG knowledge ingestion, work orders, and BI smoke checks.
+Independent FastAPI product for SINUMERIK alarm lookup, RAG ingestion, role-based maintenance workflows, n8n automation, and runtime backup/restore.
 
-## Directory Layout
+## Quick Start
+
+```bash
+copy .env.example .env
+python scripts/bootstrap_env.py --show-admin-password
+docker compose up -d
+```
+
+Open:
+
+- Alarm RAG UI: http://localhost:8100
+- n8n: http://localhost:5678
+- Qdrant: http://localhost:6333
+
+Set `ADMIN_INITIAL_PASSWORD` before the first startup. Existing `alarm_db/users.json` is not overwritten.
+
+## Services
+
+- `alarm_rag`: FastAPI app and built-in HTML UI
+- `qdrant`: vector database when `VECTOR_STORE=qdrant`
+- `n8n`: workflow automation for alarm triggers
+- Optional external Ollama via `OLLAMA_URL`
+
+## Runtime Paths
 
 | Path | Purpose |
 |---|---|
-| `main.py` | FastAPI app composition and router registration |
-| `app_context.py` | Shared runtime state, request models, prompts, and helpers |
-| `routes/` | Chat/lookup, alarm, stats, ingest, static, and reference API routes |
-| `rag_engine.py`, `vector_store.py`, `ingest.py` | RAG indexing and retrieval |
-| `work_orders.py` | Work-order API and persistence |
-| `storage.py` | JSONL and manifest storage helpers |
-| `static/` | Frontend CSS and JavaScript modules |
-| `*.html` | Demo/operator pages served by FastAPI |
-| `scripts/` | Demo replay, seed, and smoke-test helpers |
-| `mock_data/` | Versioned mock alarm, work-order, SOP, and bulletin data |
-| `docs/` | Demo scripts, smoke docs, workflow docs, and acceptance checklist |
-| `docs/plans/` | Planning documents |
-| `data/` | Local PDF inputs; ignored by Git |
-| `alarm_db/` | Local generated indexes/logs; ignored by Git |
+| `alarm_db/` | users, sessions, logs, indexes, manifests, work orders |
+| `data/` | source PDFs and field documents |
+| `mock_data/` | demo seed data and importable n8n workflow |
+| `hf_cache/` | HuggingFace model cache for offline runtime |
+| `backups/` | product backups from maintenance scripts |
+| `n8n_data/` | n8n local state |
 
-## Common Commands
-
-Start the API:
+## Validation
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8100 --reload
-```
-
-## Offline Runtime
-
-The MVP is designed for local LLM/RAG operation. Runtime defaults are offline:
-
-- `HF_HUB_OFFLINE=1`
-- `TRANSFORMERS_OFFLINE=1`
-- `RAG_HF_LOCAL_ONLY=true`
-
-Build the Docker image once in an environment that can download models, or mount a prepared HuggingFace cache at `/app/hf_cache`. If the local embedding model is missing, the API still starts and falls back to exact-code/BM25 retrieval for existing indexes; new ingest operations return a clear model-cache error until the cache is available.
-
-## LLM Provider
-
-Default generation uses local Ollama. To test a school OpenAI-compatible API for answer generation:
-
-```bash
-set LLM_PROVIDER=school
-set SCHOOL_API_BASE_URL=https://YOUR_SCHOOL_API/v1
-set SCHOOL_API_KEY=YOUR_KEY
-set SCHOOL_API_MODEL=gpt-oss-120b
-set SCHOOL_API_FALLBACK_TO_OLLAMA=true
-```
-
-Use embedding and reranker models for retrieval quality, and a chat/instruct model for the final maintenance answer.
-
-Replay week-1 demo alarms:
-
-```bash
-python scripts/replay_demo_alarms.py --base-url http://localhost:8100 --delay 1
-```
-
-Seed week-2 mock work orders and knowledge records:
-
-```bash
-python scripts/seed_week2_data.py --base-url http://localhost:8100
-```
-
-Run smoke tests:
-
-```bash
+python scripts/standalone_acceptance.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000
 python scripts/smoke_test.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000
-```
-
-Run smoke tests after week-2 seed:
-
-```bash
-python scripts/smoke_test.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --require-week2-data
-```
-
-Run focused regression checks:
-
-```bash
 python scripts/regression_checks.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000
+python scripts/role_console_smoke.py --base-url http://localhost:8100
+python scripts/runtime_soak.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --duration-seconds 60 --interval-seconds 10
+python scripts/production_boundary_check.py --base-url http://localhost:8100 --allow-http-local --skip-stream
+python scripts/browser_e2e_responsive.py
+python scripts/n8n_workflow_check.py
+python scripts/data_maintenance.py --dry-run backup-runtime --include-mock-data
+python scripts/data_maintenance.py list-backups --verify
+python scripts/data_maintenance.py backup-health --verify
+python scripts/data_maintenance.py verify-runtime-backup --backup backups/YYYY-MM-DD_HHMMSS
+python scripts/data_maintenance.py restore-smoke --backup backups/YYYY-MM-DD_HHMMSS --cleanup
+python scripts/preflight_check.py --require-model-cache
+python scripts/model_cache.py check
+python scripts/model_cache.py doctor
 ```
 
-Preview demo data cleanup:
+For a release-style pass that also creates and verifies a real runtime backup:
 
 ```bash
-python scripts/data_maintenance.py --dry-run reset-demo
+python scripts/standalone_acceptance.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --create-backup
 ```
 
-## Key Docs
+## Maintenance
 
-- `docs/README.md`
-- `docs/DEMO_SCRIPT.md`
-- `docs/MOCK_DATA_SPEC.md`
-- `docs/N8N_MOCK_WORKFLOW.md`
-- `docs/SMOKE_TEST.md`
-- `docs/DATA_MAINTENANCE.md`
-- `docs/MVP_BASELINE_STATUS.md`
-- `docs/MVP_ACCEPTANCE_CHECKLIST.md`
-- `docs/VENDOR_DATA_FIELD_CHECKLIST.md`
-- `docs/plans/ROLE_BASED_WORKFLOW_AND_FEEDBACK_PLAN.md`
-- `docs/plans/OPERATOR_MAINTENANCE_INTERFACE_PLAN.md`
-- `docs/plans/MVP_NO_VENDOR_PLAN.md`
+Create a product backup:
+
+```bash
+python scripts/data_maintenance.py backup-runtime --include-mock-data --retention-days 14
+python scripts/data_maintenance.py list-backups --verify
+python scripts/data_maintenance.py backup-health --verify
+```
+
+Restore the latest product backup:
+
+```bash
+python scripts/data_maintenance.py restore-runtime --backup backups/YYYY-MM-DD_HHMMSS
+```
+
+More deployment notes live in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Delivery closeout status lives in [docs/DELIVERY_RISK_STATUS.md](docs/DELIVERY_RISK_STATUS.md).

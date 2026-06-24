@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SINUMERIK Assistant</title>
+  <title>SINUMERIK 智慧助理</title>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/alarm_app.css">
+  <link rel="stylesheet" href="/static/css/assistant.css?v=quality-2">
 </head>
 <body data-page="assistant">
 
@@ -39,17 +39,16 @@
 </header>
 
 <div class="tabs">
-  <button class="tab-btn" onclick="window.location.href='/operator'">Operator</button>
-  <button class="tab-btn" onclick="window.location.href='/dashboard'">Dashboard</button>
-  <button class="tab-btn active" onclick="window.location.href='/assistant'">Assistant</button>
-  <button class="tab-btn" onclick="window.location.href='/operations'">Operations</button>
-  <button class="tab-btn" onclick="window.location.href='/howto'">HOW-TO</button>
+  <button class="tab-btn" onclick="window.location.href=AlarmCoreApi.roleHome(AlarmCoreApi.readAuthUser()?.role)">我的工作台</button>
+  <button class="tab-btn" onclick="window.location.href='/dashboard'">儀表板</button>
+  <button class="tab-btn active" onclick="window.location.href='/assistant'">智慧助理</button>
+  <button class="tab-btn" onclick="window.location.href='/operations'">維運管理</button>
 </div>
 
 <div class="tabs">
-  <button class="tab-btn active" data-tab="lookup" onclick="switchTab('lookup', this)">Lookup</button>
-  <button class="tab-btn" data-tab="chat" onclick="switchTab('chat', this)">Chat</button>
-  <button class="tab-btn" data-tab="reference" onclick="switchTab('reference', this)">Reference</button>
+  <button class="tab-btn active" data-tab="lookup" onclick="switchTab('lookup', this)">查詢</button>
+  <button class="tab-btn" data-tab="chat" onclick="switchTab('chat', this)">對話</button>
+  <button class="tab-btn" data-tab="reference" onclick="switchTab('reference', this)">參考資料</button>
 </div>
 
 <div class="panel active" id="panel-lookup">
@@ -99,7 +98,7 @@
           <div class="alarm-title" id="resTitle">—</div>
         </div>
         <div class="page-badge">
-          <div class="pb-label">Manual Page</div>
+          <div class="pb-label">手冊頁碼</div>
           <div class="pb-num" id="resPage">—</div>
         </div>
       </div>
@@ -272,7 +271,7 @@ async function loadPhase2Reference() {
     host.style.marginTop = '20px';
     panel.querySelector('.container')?.appendChild(host);
   }
-  host.innerHTML = '<div class="section-label">Reference (Phase 2)</div><div class="log-empty">Loading...</div>';
+  host.innerHTML = '<div class="section-label">參考資料（Phase 2）</div><div class="log-empty">載入中...</div>';
   try {
     const [actionsRes, errorsRes] = await Promise.all([
       fetch(`/v1/${encodeURIComponent(collection)}/reference/action-numbers`),
@@ -287,28 +286,28 @@ async function loadPhase2Reference() {
       `<tr><td class="ref-code">${item.hex || ''}</td><td>${item.code || ''}</td><td>${item.meaning || ''}</td><td>${item.remedy || ''}</td></tr>`
     ).join('');
     host.innerHTML = `
-      <div class="section-label">Reference (Phase 2)</div>
+      <div class="section-label">參考資料（Phase 2）</div>
       <details open>
-        <summary style="cursor:pointer;font-weight:700;margin-bottom:10px">840D Action Numbers (${(actions.entries || []).length})</summary>
+        <summary style="cursor:pointer;font-weight:700;margin-bottom:10px">840D Action Numbers（${(actions.entries || []).length}）</summary>
         <div style="overflow-x:auto">
           <table class="ref-table">
-            <thead><tr><th>Action</th><th>Reaction</th><th>Effect</th><th>Recovery</th></tr></thead>
-            <tbody>${actionRows || '<tr><td colspan="4">No data</td></tr>'}</tbody>
+            <thead><tr><th>Action</th><th>Reaction</th><th>影響</th><th>復原方式</th></tr></thead>
+            <tbody>${actionRows || '<tr><td colspan="4">沒有資料</td></tr>'}</tbody>
           </table>
         </div>
       </details>
       <details style="margin-top:12px">
-        <summary style="cursor:pointer;font-weight:700;margin-bottom:10px">Error Codes (300500) (${(errors.entries || []).length})</summary>
+        <summary style="cursor:pointer;font-weight:700;margin-bottom:10px">Error Codes（300500，${(errors.entries || []).length}）</summary>
         <div style="overflow-x:auto">
           <table class="ref-table">
-            <thead><tr><th>HEX</th><th>Code</th><th>Meaning</th><th>Remedy</th></tr></thead>
-            <tbody>${errorRows || '<tr><td colspan="4">No data</td></tr>'}</tbody>
+            <thead><tr><th>HEX</th><th>Code</th><th>意義</th><th>處置方式</th></tr></thead>
+            <tbody>${errorRows || '<tr><td colspan="4">沒有資料</td></tr>'}</tbody>
           </table>
         </div>
       </details>
     `;
   } catch (error) {
-    host.innerHTML = `<div class="section-label">Reference (Phase 2)</div><div class="log-empty">${String(error.message || error)}</div>`;
+    host.innerHTML = `<div class="section-label">參考資料（Phase 2）</div><div class="log-empty">${String(error.message || error)}</div>`;
   }
 }
 

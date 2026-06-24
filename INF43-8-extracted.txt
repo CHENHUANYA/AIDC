@@ -1,0 +1,27 @@
+Studio Shodwe                       Home     Profile   Our Contact
+
+
+
+
+                第八組進度報告
+                 基於流程自動化與RAG技術之設備維修智能客服平台開發
+
+
+                                           2026/6/01
+本週針對 alarm-rag 的 Supervisor 與 Admin 後台進行整理，讓兩個⾴⾯各⾃聚焦在不同管理需求。
+Supervisor 主要負責現場⼯單流程控管，包含維修狀態追蹤、完成驗證、退回重⼯、派⼯調整與風險
+監控；Admin 則負責系統層級管理，包含使⽤者、權限、session、知識庫、資料匯入與系統設定。
+重點說明
+   Supervisor：現場流程控管
+       查看 KPI、未解決 issue、待驗證工單、逾期⼯單與完成率。
+       追蹤高風險⼯單，例如逾期、未指派、critical / high priority。
+       驗證 completed 工單，確認維修是否真的完成。
+       可退回重工、調整負責⼈、優先級與⼯單狀態。
+       支援篩選、批次更新、CSV 匯出與 audit history 查看。
+   Admin：系統管理
+       管理 mock users、角⾊、team、scope、啟⽤狀態與密碼重設。
+       查看或撤銷 session。
+       匯入 Excel 工單。
+       管理知識庫 collection、PDF、SOP、公告與維修紀錄。
+       查看 KB health、重建索引、調整系統設定與匯出管理資料。
+

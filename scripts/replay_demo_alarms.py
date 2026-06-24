@@ -1,14 +1,22 @@
 import argparse
 import json
+import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
 from urllib import error, request
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from env_utils import EnvConfigError, admin_initial_password, load_project_env
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EVENTS = ROOT / "mock_data" / "demo_alarm_events.json"
 SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+load_project_env()
 
 
 def post_json(
@@ -21,6 +29,9 @@ def post_json(
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    trigger_token = os.getenv("ALARM_RAG_TRIGGER_TOKEN", "").strip()
+    if trigger_token:
+        headers["X-Alarm-RAG-Token"] = trigger_token
     req = request.Request(
         f"{base_url.rstrip('/')}{path}",
         data=json.dumps(payload).encode("utf-8"),
@@ -37,13 +48,20 @@ def post_json(
             return exc.code, json.loads(body)
         except json.JSONDecodeError:
             return exc.code, {"_raw": body}
+    except (TimeoutError, error.URLError) as exc:
+        return 0, {"_error": str(exc)}
 
 
 def login(base_url: str, timeout: int) -> str:
+    try:
+        password = admin_initial_password()
+    except EnvConfigError as exc:
+        print(f"[FAIL] {exc}")
+        return ""
     code, data = post_json(
         base_url,
         "/auth/login",
-        {"username": "admin01", "password": "demo1234"},
+        {"username": "admin01", "password": password},
         timeout,
     )
     return data.get("token") if code == 200 and isinstance(data, dict) else ""

@@ -10,11 +10,11 @@ const STORAGE_KEYS = coreStorage.keys || {
   queryTimings: 'queryTimings',
 };
 const LOOKUP_FIELDS = [
-  { key: 'Parameters', label: 'PARAMETERS', cls: 'fl-params', icon: '⚙️' },
-  { key: 'Explanation', label: 'EXPLANATION', cls: 'fl-expl', icon: '📘' },
-  { key: 'Reaction', label: 'REACTION', cls: 'fl-react', icon: '⚡' },
-  { key: 'Remedy', label: 'REMEDY', cls: 'fl-remedy', icon: '🔧' },
-  { key: 'Program continuation', label: 'PROGRAM CONTINUATION', cls: 'fl-prog', icon: '▶️' },
+  { key: 'Parameters', label: '參數', cls: 'fl-params', icon: '⚙️' },
+  { key: 'Explanation', label: '說明', cls: 'fl-expl', icon: '📘' },
+  { key: 'Reaction', label: '系統反應', cls: 'fl-react', icon: '⚡' },
+  { key: 'Remedy', label: '處置方式', cls: 'fl-remedy', icon: '🔧' },
+  { key: 'Program continuation', label: '程式續行', cls: 'fl-prog', icon: '▶️' },
 ];
 const LOOKUP_SECTIONS = 'Parameters|Explanation|Reaction|Remedy|Program continuation|Manual Page';
 const EMPTY_CHAT_HTML = `
@@ -143,6 +143,13 @@ async function parseJsonResponse(res) {
   if (!res.ok) {
     throw new Error(data.message || `Server error: ${res.status}`);
   }
+  if (data?.status === 'error') {
+    if (data.message === 'Not authenticated') {
+      coreApi.clearAuth?.();
+      coreApi.requireAuth?.();
+    }
+    throw new Error(data.message || '請求失敗');
+  }
   return data;
 }
 
@@ -198,7 +205,7 @@ function applyAuthChrome() {
       button.type = 'button';
       button.className = 'auth-logout';
       button.dataset.authLogout = 'true';
-      button.textContent = 'Logout';
+      button.textContent = '登出';
       button.addEventListener('click', logout);
       pill.appendChild(button);
     }
@@ -659,16 +666,6 @@ function initOperationsPage(options = {}) {
   }
 }
 
-function initLegacyPage() {
-  renderHistory();
-  renderLog();
-  loadBI();
-  loadIngestLog();
-  loadKBStats();
-  loadCollectionDocuments();
-  loadWorkOrders();
-}
-
 window.AlarmApp = {
   RAG_BASE,
   STORAGE_KEYS,
@@ -719,7 +716,6 @@ window.AlarmApp = {
   initDashboardPage,
   initAssistantPage,
   initOperationsPage,
-  initLegacyPage,
 };
 
 document.addEventListener('DOMContentLoaded', applyAuthChrome);

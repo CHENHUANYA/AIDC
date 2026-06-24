@@ -4,6 +4,16 @@ vector_store.py - abstraction layer for interchangeable vector backends (Chroma 
 import os
 from typing import List, Optional
 
+
+def _warn(message: str):
+    print(f"[WARN][vector_store] {message}")
+
+
+def _looks_like_missing_collection(exc: Exception) -> bool:
+    detail = str(exc).lower()
+    return any(token in detail for token in ["does not exist", "not found", "not exists", "unknown collection"])
+
+
 class BaseVectorStore:
     def add(self, collection: str, texts: List[str], embeddings: List[list], metadatas: List[dict], ids: List[str]):
         raise NotImplementedError
@@ -50,8 +60,9 @@ class ChromaStore(BaseVectorStore):
     def delete_collection(self, collection: str):
         try:
             self.client.delete_collection(collection)
-        except Exception:
-            pass
+        except Exception as exc:
+            if not _looks_like_missing_collection(exc):
+                _warn(f"Unable to delete Chroma collection {collection}: {exc}")
 
     def add(self, collection: str, texts: List[str], embeddings: List[list], metadatas: List[dict], ids: List[str]):
         col = self.client.get_collection(collection)
@@ -88,8 +99,8 @@ class QdrantStore(BaseVectorStore):
             cols = [c.name for c in self.client.get_collections().collections]
             if collection in cols:
                 return
-        except Exception:
-            pass
+        except Exception as exc:
+            _warn(f"Unable to list Qdrant collections before ensuring {collection}: {exc}")
         self.client.create_collection(
             collection_name=collection,
             vectors_config=self.qm.VectorParams(size=size, distance=self.qm.Distance.COSINE),
@@ -98,8 +109,9 @@ class QdrantStore(BaseVectorStore):
     def delete_collection(self, collection: str):
         try:
             self.client.delete_collection(collection)
-        except Exception:
-            pass
+        except Exception as exc:
+            if not _looks_like_missing_collection(exc):
+                _warn(f"Unable to delete Qdrant collection {collection}: {exc}")
 
     @staticmethod
     def _to_int_id(sid: str) -> int:
@@ -158,7 +170,8 @@ class QdrantStore(BaseVectorStore):
         try:
             info = self.client.get_collection(collection)
             return info.points_count or 0
-        except Exception:
+        except Exception as exc:
+            _warn(f"Unable to count Qdrant collection {collection}: {exc}")
             return 0
 
     def _build_filter(self, where: dict):

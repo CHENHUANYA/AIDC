@@ -1,13 +1,23 @@
 import argparse
 import json
+import os
 import time
+import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from env_utils import EnvConfigError, admin_initial_password, load_project_env
+from n8n_workflow_check import DEFAULT_WORKFLOW, load_workflow, validate_workflow
+
 
 ROOT = Path(__file__).resolve().parents[1]
+load_project_env()
 
 
 @dataclass
@@ -31,6 +41,9 @@ class Runner:
         headers = {"Content-Type": "application/json"} if payload is not None else {}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
+        trigger_token = os.getenv("ALARM_RAG_TRIGGER_TOKEN", "").strip()
+        if trigger_token:
+            headers["X-Alarm-RAG-Token"] = trigger_token
         return headers
 
     def request_json(
@@ -54,7 +67,12 @@ class Runner:
         except (TimeoutError, error.URLError) as exc:
             return 0, {"_error": str(exc)}
 
-    def login(self, username: str = "admin01", password: str = "demo1234") -> bool:
+    def login(self, username: str = "admin01", password: str | None = None) -> bool:
+        try:
+            password = password or admin_initial_password()
+        except EnvConfigError as exc:
+            self.record("auth:login", False, str(exc))
+            return False
         previous_token = self.token
         self.token = ""
         code, data = self.request_json(
@@ -66,11 +84,6 @@ class Runner:
         self.token = token or previous_token
         self.record("auth:login", code == 200 and bool(token), f"HTTP {code}")
         return bool(token)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8-sig") as file:
-        return json.load(file)
 
 
 def count_total(data: dict[str, Any]) -> int:
@@ -89,39 +102,19 @@ def check_static_baseline(runner: Runner) -> None:
     missing = [str(path.relative_to(ROOT)) for path in required if not path.exists()]
     runner.record("static:baseline-files", not missing, f"missing={missing}")
 
-    gitignore_path = ROOT.parent / ".gitignore"
+    gitignore_path = ROOT / ".gitignore"
     gitignore_text = gitignore_path.read_text(encoding="utf-8", errors="replace")
     runner.record("static:n8n-data-ignored", "n8n_data/" in gitignore_text, "expects n8n_data/")
 
 
 def check_n8n_workflow(runner: Runner) -> None:
-    data = load_json(ROOT / "mock_data" / "n8n_mock_workflow.json")
-    nodes = data.get("nodes") if isinstance(data, dict) else []
-    node_names = {str(node.get("name")) for node in nodes if isinstance(node, dict)}
-    required_nodes = {
-        "Schedule Trigger",
-        "Manual Trigger",
-        "Set Mock Alarm Payload",
-        "IF High Or Critical",
-        "POST /trigger-alarm",
-    }
-    runner.record("n8n:nodes", required_nodes <= node_names, f"nodes={len(node_names)}")
-
-    payload_node = next((node for node in nodes if node.get("name") == "Set Mock Alarm Payload"), {})
-    assignments = (
-        payload_node.get("parameters", {})
-        .get("assignments", {})
-        .get("assignments", [])
-    )
-    payload_fields = {str(item.get("name")) for item in assignments if isinstance(item, dict)}
-    required_fields = {"alarm_code", "manual", "machine_id", "source", "severity", "description"}
-    runner.record("n8n:payload-fields", required_fields <= payload_fields, f"fields={sorted(payload_fields)}")
-
-    http_node = next((node for node in nodes if node.get("name") == "POST /trigger-alarm"), {})
-    http_params = http_node.get("parameters", {}) if isinstance(http_node, dict) else {}
-    method = str(http_params.get("method", "")).upper()
-    url = str(http_params.get("url", ""))
-    runner.record("n8n:http-request", method == "POST" and "/trigger-alarm" in url, f"method={method}, url={url}")
+    try:
+        workflow = load_workflow(DEFAULT_WORKFLOW)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        runner.record("n8n:workflow-load", False, str(exc))
+        return
+    for item in validate_workflow(workflow):
+        runner.record(f"n8n:{item.name}", item.status == "PASS", item.detail)
 
 
 def check_health(runner: Runner) -> bool:
@@ -129,6 +122,24 @@ def check_health(runner: Runner) -> bool:
     ok = code == 200 and data.get("status") == "ok"
     runner.record("live:health", ok, f"HTTP {code}")
     return ok
+
+
+def check_login_config(runner: Runner) -> None:
+    code, data = runner.request_json("/auth/login-config")
+    users = data.get("bootstrap_users") if isinstance(data, dict) else []
+    roles = {
+        str(user.get("role") or "")
+        for user in users
+        if isinstance(user, dict)
+    }
+    ok = (
+        code == 200
+        and data.get("status") == "ok"
+        and isinstance(data.get("production"), bool)
+        and isinstance(data.get("initial_password_configured"), bool)
+        and {"admin", "supervisor"}.issubset(roles)
+    )
+    runner.record("auth:login-config", ok, f"HTTP {code}, roles={','.join(sorted(roles)) or '-'}")
 
 
 def check_lookup_metadata(runner: Runner, manual: str, alarm_code: str) -> None:
@@ -240,7 +251,10 @@ def check_alarm_flow(runner: Runner, manual: str, alarm_code: str, marker: str) 
     runner.record("alarm:banner-clear", code == 200 and isinstance(cleared_alarms, list) and not cleared_alarms, f"HTTP {code}, count={len(cleared_alarms) if isinstance(cleared_alarms, list) else '-'}")
 
     if order_id:
-        resolution = f"Regression close flow {marker}: verified source metadata and cleared simulated alarm."
+        unique_case = f"Regression unique case {marker}"
+        root_cause = f"{unique_case}: simulated alarm path injected for acceptance coverage."
+        repair_action = f"{unique_case}: verified metadata, reset simulated condition, and closed this exact work order."
+        resolution = f"{unique_case}: source metadata was verified and the simulated alarm condition was cleared."
         code, updated = runner.request_json(
             f"/work-orders/{order_id}",
             "PATCH",
@@ -248,14 +262,42 @@ def check_alarm_flow(runner: Runner, manual: str, alarm_code: str, marker: str) 
                 "status": "completed",
                 "assigned_to": "regression-bot",
                 "resolution": resolution,
-                "root_cause": "Regression simulated alarm path",
-                "repair_action": "Verified metadata, reset simulated condition, and closed the work order.",
-                "notes": "Regression auto-ingest check.",
+                "root_cause": root_cause,
+                "repair_action": repair_action,
+                "notes": f"{unique_case}: knowledge review check.",
             },
         )
-        feedback = updated.get("feedback") if isinstance(updated, dict) else None
-        auto_ingested = isinstance(feedback, dict) and feedback.get("auto_ingested") is True
-        runner.record("work-order:auto-ingest", code == 200 and auto_ingested, f"HTTP {code}, auto_ingested={auto_ingested}")
+        updated_order = updated.get("order") if isinstance(updated, dict) else None
+        review = updated.get("knowledge_review") if isinstance(updated, dict) else None
+        review_status = ""
+        if isinstance(review, dict):
+            review_status = str(review.get("review_status") or "")
+        if not review_status and isinstance(updated_order, dict):
+            review_status = str(updated_order.get("kb_review_status") or "")
+        pending_review = code == 200 and review_status == "pending_review"
+        detail = f"HTTP {code}, review={review}, status={updated.get('status') if isinstance(updated, dict) else '-'}"
+        if isinstance(updated, dict) and updated.get("message"):
+            detail += f", message={updated.get('message')}"
+        runner.record("work-order:knowledge-candidate", pending_review, detail)
+
+        code, approved = runner.request_json(
+            f"/work-orders/{order_id}/knowledge-review",
+            "POST",
+            {"action": "approve", "note": "Regression approved knowledge candidate."},
+        )
+        ingested = (
+            code == 200
+            and isinstance(approved, dict)
+            and approved.get("status") == "ok"
+            and approved.get("order", {}).get("kb_review_status") == "ingested"
+        )
+        approve_detail = f"HTTP {code}, ingested={ingested}"
+        if isinstance(approved, dict):
+            if approved.get("message"):
+                approve_detail += f", message={approved.get('message')}"
+            if approved.get("duplicate_of"):
+                approve_detail += f", duplicate_of={approved.get('duplicate_of')}"
+        runner.record("work-order:knowledge-approve", ingested, approve_detail)
 
         code, log = runner.request_json(f"/v1/{manual}/ingest-log")
         entries = log.get("entries") if isinstance(log, dict) else []
@@ -265,7 +307,7 @@ def check_alarm_flow(runner: Runner, manual: str, alarm_code: str, marker: str) 
             and str(entry.get("title", "")).endswith(order_id)
             for entry in entries
         )
-        runner.record("ingest-log:workorder", code == 200 and log_hit, f"HTTP {code}, order={order_id}")
+        runner.record("ingest-log:approved-workorder", code == 200 and log_hit, f"HTTP {code}, order={order_id}")
 
     _, alarms_after = runner.request_json("/stats/alarms")
     _, orders_after = runner.request_json("/work-orders/stats")
@@ -311,11 +353,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=180, help="HTTP timeout in seconds")
     args = parser.parse_args()
 
-    marker = str(int(time.time()))
+    marker = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
     runner = Runner(args.base_url, args.timeout)
     check_static_baseline(runner)
     check_n8n_workflow(runner)
     if check_health(runner):
+        check_login_config(runner)
         if not runner.login():
             print_report(runner.results)
             return 1

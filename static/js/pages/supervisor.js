@@ -7,6 +7,7 @@ const SUPERVISOR_RISK_STATUSES = new Set(['pending', 'assigned', 'in_progress'])
 const SUPERVISOR_PRIORITIES = ['critical', 'high', 'medium', 'low'];
 const SUPERVISOR_EDITABLE_STATUSES = ['pending', 'assigned', 'in_progress'];
 const SUPERVISOR_PRIORITY_SCORE = { critical: 0, high: 1, medium: 2, low: 3 };
+const SUPERVISOR_SECTIONS = new Set(['overview', 'verification', 'responsibility', 'lines', 'audit']);
 
 const SUPERVISOR_STATUS_LABELS = {
   open: '未處理',
@@ -22,6 +23,30 @@ function supervisorLabel(value, labels = SUPERVISOR_STATUS_LABELS) {
   return labels[value] || value || '-';
 }
 
+function activeSupervisorSectionFromHash() {
+  const section = String(window.location.hash || '').replace(/^#/, '');
+  return SUPERVISOR_SECTIONS.has(section) ? section : 'overview';
+}
+
+function selectSupervisorSection(section, updateHash = true) {
+  const nextSection = SUPERVISOR_SECTIONS.has(section) ? section : 'overview';
+  document.querySelectorAll('[data-supervisor-section]').forEach((panel) => {
+    panel.classList.toggle('active', panel.dataset.supervisorSection === nextSection);
+  });
+  document.querySelectorAll('[data-supervisor-section-target]').forEach((button) => {
+    const active = button.dataset.supervisorSectionTarget === nextSection;
+    button.classList.toggle('active', active);
+    if (active) {
+      button.setAttribute('aria-current', 'page');
+    } else {
+      button.removeAttribute('aria-current');
+    }
+  });
+  if (updateHash && window.location.hash !== `#${nextSection}`) {
+    window.history.replaceState(null, '', `#${nextSection}`);
+  }
+}
+
 function supervisorCsvCell(value) {
   const text = String(value ?? '').replace(/"/g, '""');
   return `"${text}"`;
@@ -29,7 +54,7 @@ function supervisorCsvCell(value) {
 
 function downloadSupervisorCsv(filename, rows) {
   if (!rows.length) {
-    setSupervisorResult('No data to export', true);
+    setSupervisorResult('沒有可匯出的資料', true);
     return;
   }
   const csv = rows.map((row) => row.map(supervisorCsvCell).join(',')).join('\n');
@@ -129,7 +154,7 @@ function supervisorAssigneeOptions(selectedUserId) {
   const app = supervisorApp();
   const maintenanceUsers = supervisorMaintenanceUsers();
   return [
-    `<option value="" ${selectedUserId ? '' : 'selected'}>Unassigned</option>`,
+    `<option value="" ${selectedUserId ? '' : 'selected'}>未指派</option>`,
     ...maintenanceUsers.map((user) =>
       `<option value="${supervisorAttr(user.user_id)}" ${user.user_id === selectedUserId ? 'selected' : ''}>${app.esc(user.name || user.user_id)}</option>`,
     ),
@@ -175,7 +200,7 @@ function renderSupervisorLineOptions(issues) {
     return;
   }
   const current = filter.value;
-  const lines = [...new Set(issues.map((issue) => issue.line_id || 'Unspecified'))].sort();
+  const lines = [...new Set(issues.map((issue) => issue.line_id || '未指定'))].sort();
   filter.innerHTML = [
     '<option value="">全部產線</option>',
     ...lines.map((line) => `<option value="${supervisorAttr(line)}">${app.esc(line)}</option>`),
@@ -191,8 +216,8 @@ function renderSupervisorBulkAssigneeOptions() {
   }
   const maintenanceUsers = supervisorMaintenanceUsers();
   target.innerHTML = [
-    '<option value="">Keep assignee</option>',
-    '<option value="__unassigned__">Unassigned</option>',
+    '<option value="">保留負責人</option>',
+    '<option value="__unassigned__">未指派</option>',
     ...maintenanceUsers.map((user) =>
       `<option value="${supervisorAttr(user.user_id)}">${app.esc(user.name || user.user_id)}</option>`,
     ),
@@ -208,7 +233,7 @@ function renderSupervisorVerificationOrder(app, order, issue) {
       <div class="wo-code">#${app.esc(order.id)} | ${app.esc(order.alarm_code || 'SYMPTOM')}</div>
       <div class="wo-desc">${app.esc(order.resolution || order.description || '')}</div>
       <div class="wo-meta">
-        <span class="wo-badge">Issue ${app.esc(order.issue_id || '-')}</span>
+        <span class="wo-badge">問題 ${app.esc(order.issue_id || '-')}</span>
         <span class="wo-badge">產線 ${app.esc(issue?.line_id || '-')}</span>
         <span class="wo-badge">機台 ${app.esc(order.machine_id || '-')}</span>
         <span class="wo-badge">完成者 ${app.esc(order.completed_by || order.updated_by || '-')}</span>
@@ -289,10 +314,10 @@ function visibleSupervisorOrders(app, issues, orders) {
 function renderSupervisorResponsibilityOrder(app, order, issue) {
   const editable = order.status !== 'completed';
   const editControls = editable ? `<div class="sv-order-edit">
-    <select class="wo-select" id="svAssignee_${supervisorAttr(order.id)}" aria-label="Assignee">${supervisorAssigneeOptions(order.assigned_to || '')}</select>
-    <select class="wo-select" id="svPriority_${supervisorAttr(order.id)}" aria-label="Priority">${supervisorPriorityOptions(order.priority || 'medium')}</select>
-    <select class="wo-select" id="svStatus_${supervisorAttr(order.id)}" aria-label="Status">${supervisorStatusOptions(order.status || 'pending')}</select>
-    <button class="wo-btn alt" type="button" onclick="updateSupervisorOrder(${supervisorJsArg(order.id)})">Update</button>
+    <select class="wo-select" id="svAssignee_${supervisorAttr(order.id)}" aria-label="負責人">${supervisorAssigneeOptions(order.assigned_to || '')}</select>
+    <select class="wo-select" id="svPriority_${supervisorAttr(order.id)}" aria-label="優先等級">${supervisorPriorityOptions(order.priority || 'medium')}</select>
+    <select class="wo-select" id="svStatus_${supervisorAttr(order.id)}" aria-label="狀態">${supervisorStatusOptions(order.status || 'pending')}</select>
+    <button class="wo-btn alt" type="button" onclick="updateSupervisorOrder(${supervisorJsArg(order.id)})">更新</button>
   </div>` : '';
   return `<div class="role-row compact">
     <div>
@@ -344,20 +369,20 @@ function renderSupervisorRiskHotlist() {
     })
     .slice(0, 6);
   if (!riskOrders.length) {
-    target.innerHTML = supervisorEmpty('No active risk items');
+    target.innerHTML = supervisorEmpty('目前沒有風險項目');
     return;
   }
   target.innerHTML = riskOrders.map((order) => {
     const issue = issueById.get(order.issue_id) || {};
     const reasons = [
-      isSupervisorOrderOverdue(order) ? 'overdue' : '',
-      !(order.assigned_to || '').trim() ? 'unassigned' : '',
+      isSupervisorOrderOverdue(order) ? '逾期' : '',
+      !(order.assigned_to || '').trim() ? '未指派' : '',
       ['critical', 'high'].includes(String(order.priority || '').toLowerCase()) ? order.priority : '',
     ].filter(Boolean).join(' / ');
     return `<div class="sv-risk-card">
       <div class="risk-title">#${app.esc(order.id)} ${app.esc(order.alarm_code || 'SYMPTOM')}</div>
       <div class="risk-body">
-        ${app.esc(reasons || 'risk')}<br>
+        ${app.esc(reasons || '風險')}<br>
         ${app.esc(order.machine_id || '-')} | ${app.esc(issue.line_id || '-')} | ${app.esc(String(supervisorAgeHours(order.created_at)))}h<br>
         ${app.esc(order.description || issue.description || '')}
       </div>
@@ -402,7 +427,7 @@ async function patchSupervisorOrder(app, orderId, values) {
     body: JSON.stringify(supervisorWorkOrderPatch(app, values)),
   });
   if (data.status !== 'ok') {
-    throw new Error(data.message || 'update failed');
+    throw new Error(data.message || '更新失敗');
   }
   return data;
 }
@@ -417,10 +442,10 @@ async function updateSupervisorOrder(orderId) {
   const status = app.$(`svStatus_${orderId}`)?.value || 'pending';
   try {
     await patchSupervisorOrder(app, orderId, { assigned_to: assignee, priority, status });
-    setSupervisorResult(`Work order #${orderId} updated`);
+    setSupervisorResult(`工單 #${orderId} 已更新`);
     await loadSupervisorConsole();
   } catch (error) {
-    setSupervisorResult(app.formatError(error, 'Work order update failed'), true);
+    setSupervisorResult(app.formatError(error, '工單更新失敗'), true);
   }
 }
 
@@ -432,17 +457,17 @@ async function bulkUpdateSupervisorOrders() {
   const orders = (app.getState('supervisorVisibleOrders') || [])
     .filter((order) => order.status !== 'completed');
   if (!orders.length) {
-    setSupervisorResult('No editable visible work orders', true);
+    setSupervisorResult('目前清單沒有可編輯的工單', true);
     return;
   }
   const assigneeValue = app.$('svBulkAssignee')?.value || '';
   const priority = app.$('svBulkPriority')?.value || '';
   const status = app.$('svBulkStatus')?.value || '';
   if (!assigneeValue && !priority && !status) {
-    setSupervisorResult('Choose at least one bulk update value', true);
+    setSupervisorResult('請至少選擇一個批次更新欄位', true);
     return;
   }
-  if (!window.confirm(`Update ${orders.length} visible work order(s)?`)) {
+  if (!window.confirm(`確定要更新目前可見的 ${orders.length} 張工單？`)) {
     return;
   }
   const assignedTo = assigneeValue === '__unassigned__' ? '' : assigneeValue;
@@ -461,8 +486,8 @@ async function bulkUpdateSupervisorOrders() {
       failedIds.push(order.id);
     }
   }
-  const failedText = failedIds.length ? `; failed: ${failedIds.join(', ')}` : '';
-  setSupervisorResult(`Bulk update complete: ${updated} updated${failedText}`, failedIds.length > 0);
+  const failedText = failedIds.length ? `；失敗：${failedIds.join(', ')}` : '';
+  setSupervisorResult(`批次更新完成：${updated} 張已更新${failedText}`, failedIds.length > 0);
   await loadSupervisorConsole();
 }
 
@@ -478,9 +503,9 @@ function renderSupervisorLineOverview(issueStats, orderStats) {
     <div class="role-mini-grid">
       ${lineEntries.length ? lineEntries.map(([line, count]) => `<div class="role-mini-card"><span>${app.esc(line)}</span><b>${count}</b><small>issues</small></div>`).join('') : supervisorEmpty('沒有產線 Issue 統計')}
     </div>
-    <div class="role-subtitle">Top Machines</div>
+    <div class="role-subtitle">高頻機台</div>
     <div class="role-mini-grid">
-      ${machineEntries.length ? machineEntries.map((item) => `<div class="role-mini-card"><span>${app.esc(item.machine_id)}</span><b>${app.esc(String(item.count))}</b><small>work orders</small></div>`).join('') : supervisorEmpty('沒有機台統計')}
+      ${machineEntries.length ? machineEntries.map((item) => `<div class="role-mini-card"><span>${app.esc(item.machine_id)}</span><b>${app.esc(String(item.count))}</b><small>工單</small></div>`).join('') : supervisorEmpty('沒有機台統計')}
     </div>`;
 }
 
@@ -496,7 +521,7 @@ function renderSupervisorAudit() {
     ...orders.flatMap((order) => (Array.isArray(order.work_order_history) ? order.work_order_history.map((event) => ({ ...event, source_id: order.id, audit_source: 'work order' })) : [])),
   ].sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0)).slice(0, 12);
   if (!events.length) {
-    target.innerHTML = supervisorEmpty('尚無 audit events');
+    target.innerHTML = supervisorEmpty('尚無稽核事件');
     return;
   }
   target.innerHTML = events.map((event) => {
@@ -506,7 +531,7 @@ function renderSupervisorAudit() {
       <div class="audit-dot"></div>
       <div class="audit-body">
         <div class="audit-title">${app.esc(event.audit_source)} ${app.esc(event.source_id)} ${statusText ? `<span>${app.esc(statusText)}</span>` : ''}</div>
-        <div class="audit-meta">${app.esc(event.action || 'updated')} by ${app.esc(event.user_id || 'system')} | ${app.esc(supervisorTime(event.created_at))}</div>
+        <div class="audit-meta">${app.esc(event.action || 'updated')} 由 ${app.esc(event.user_id || 'system')} | ${app.esc(supervisorTime(event.created_at))}</div>
         ${changes}
       </div>
     </div>`;
@@ -525,7 +550,7 @@ async function loadSupervisorConsole() {
       app.apiJson('/issues/stats'),
       app.apiJson('/work-orders/stats'),
       app.apiJson('/feedback/stats'),
-      app.apiJson('/mock-users').catch(() => ({ users: [] })),
+      app.apiJson('/users').catch(() => ({ users: [] })),
     ]);
     app.patchState({
       supervisorIssues: issuesData.issues || [],
@@ -601,6 +626,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   app.initCommonPageBindings();
   app.$('supervisorUserLabel').textContent = `${app.currentUserId()} (${app.currentUserRole()})`;
+  document.querySelectorAll('[data-supervisor-section-target]').forEach((button) => {
+    button.addEventListener('click', () => selectSupervisorSection(button.dataset.supervisorSectionTarget));
+  });
+  window.addEventListener('hashchange', () => selectSupervisorSection(activeSupervisorSectionFromHash(), false));
+  selectSupervisorSection(activeSupervisorSectionFromHash(), false);
   ['svLineFilter', 'svStatusFilter', 'svPriorityFilter', 'svTextFilter', 'svRiskOnly'].forEach((id) => {
     app.$(id)?.addEventListener('input', renderSupervisorResponsibility);
     app.$(id)?.addEventListener('change', renderSupervisorResponsibility);

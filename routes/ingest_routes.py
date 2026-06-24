@@ -3,10 +3,13 @@ import os
 import pickle
 import shutil
 import tempfile
+import threading
 import time
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from app_context import (
     IngestTextRequest,
@@ -15,9 +18,8 @@ from app_context import (
     get_collection_summary,
     get_engine,
     ingest_log,
-    is_safe_path_segment,
 )
-from auth import get_actor, is_admin
+from auth import actor_id, actor_role, get_actor, is_admin
 from storage import (
     DB_PATH,
     INGEST_LOG_PATH,
@@ -26,6 +28,7 @@ from storage import (
     compute_sha256_bytes,
     find_document_by_hash,
     generate_doc_id,
+    is_safe_path_segment,
     list_collections_summary,
     now_iso,
     remove_document_entry,
@@ -34,12 +37,215 @@ from storage import (
 
 
 router = APIRouter()
+REBUILD_JOBS: dict[str, dict] = {}
+REBUILD_LOCK = threading.Lock()
+
+
+def upload_limit_bytes(env_name: str, default_mb: float) -> int:
+    try:
+        mb = float(os.getenv(env_name, str(default_mb)))
+    except ValueError:
+        mb = default_mb
+    return max(int(mb * 1024 * 1024), 1)
+
+
+PDF_UPLOAD_MAX_BYTES = upload_limit_bytes("ALARM_RAG_PDF_UPLOAD_MAX_MB", 50)
+PDF_MAGIC = b"%PDF"
+PDF_MAX_PAGES = int(os.getenv("ALARM_RAG_PDF_MAX_PAGES", "1000"))
+
+
+def _job_public(job: dict) -> dict:
+    return {
+        key: value
+        for key, value in job.items()
+        if key not in {"stop_event", "thread"}
+    }
+
+
+def _load_rebuild_sections(collection_name: str) -> list[dict]:
+    pkl_path = f"{DB_PATH}/bm25_{collection_name}.pkl"
+    if not os.path.exists(pkl_path):
+        raise FileNotFoundError("Index file not found")
+    try:
+        with open(pkl_path, "rb") as file:
+            data = json.load(file)
+    except Exception:
+        with open(pkl_path, "rb") as file:
+            data = pickle.load(file)
+    return data.get("sections", [])
+
+
+def _update_rebuild_job(job_id: str, **updates):
+    with REBUILD_LOCK:
+        job = REBUILD_JOBS.get(job_id)
+        if job:
+            job.update(updates)
+            job["updated_at"] = now_iso()
+
+
+def _run_rebuild_job(job_id: str):
+    with REBUILD_LOCK:
+        job = REBUILD_JOBS.get(job_id)
+    if not job:
+        return
+
+    collection_name = job["collection"]
+    stop_event = job["stop_event"]
+
+    def progress(done: int, total: int, phase: str):
+        percent = 100 if total == 0 else round(done * 100 / total, 1)
+        _update_rebuild_job(
+            job_id,
+            phase=phase,
+            processed_sections=done,
+            total_sections=total,
+            percent=percent,
+        )
+
+    _update_rebuild_job(job_id, state="running", phase="loading")
+    try:
+        sections = _load_rebuild_sections(collection_name)
+        _update_rebuild_job(job_id, total_sections=len(sections), sections=len(sections))
+        engine = get_engine(collection_name)
+        engine.rebuild_with_progress(sections, progress_callback=progress, stop_event=stop_event)
+        state = "cancelled" if stop_event.is_set() else "completed"
+        _update_rebuild_job(
+            job_id,
+            state=state,
+            phase=state,
+            finished_at=now_iso(),
+            percent=100 if state == "completed" else job.get("percent", 0),
+        )
+    except Exception as exc:
+        state = "cancelled" if stop_event.is_set() or "cancelled" in str(exc).lower() else "failed"
+        _update_rebuild_job(job_id, state=state, phase=state, error=str(exc), finished_at=now_iso())
+
+
+def _find_active_rebuild(collection_name: str) -> dict | None:
+    with REBUILD_LOCK:
+        for job in REBUILD_JOBS.values():
+            if job.get("collection") == collection_name and job.get("state") in {"queued", "running", "cancelling"}:
+                return _job_public(job)
+    return None
+
+
+def _start_rebuild_job(collection_name: str) -> dict:
+    existing = _find_active_rebuild(collection_name)
+    if existing:
+        return existing
+
+    job_id = uuid.uuid4().hex
+    job = {
+        "job_id": job_id,
+        "collection": collection_name,
+        "state": "queued",
+        "phase": "queued",
+        "processed_sections": 0,
+        "total_sections": 0,
+        "sections": 0,
+        "percent": 0,
+        "error": "",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "finished_at": "",
+        "stop_event": threading.Event(),
+    }
+    thread = threading.Thread(target=_run_rebuild_job, args=(job_id,), daemon=True)
+    job["thread"] = thread
+    with REBUILD_LOCK:
+        REBUILD_JOBS[job_id] = job
+    thread.start()
+    return _job_public(job)
+
+
+def require_authenticated(actor: dict) -> dict | None:
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
+    return None
+
+
+def require_admin_or_supervisor(actor: dict) -> dict | None:
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
+    if actor_role(actor) not in ("admin", "supervisor"):
+        return {"status": "error", "message": "Permission denied"}
+    return None
 
 
 def validate_collection_name(collection_name: str) -> str:
     if not is_safe_path_segment(collection_name):
         raise ValueError("Invalid collection name")
     return collection_name
+
+
+def validate_pdf_structure(path: str) -> str:
+    try:
+        import fitz
+
+        with fitz.open(path) as doc:
+            if doc.page_count <= 0:
+                return "PDF contains no pages"
+            if doc.page_count > PDF_MAX_PAGES:
+                return f"PDF page count exceeds {PDF_MAX_PAGES} page limit"
+    except Exception:
+        return "Invalid or corrupt PDF file"
+    return ""
+
+
+def ingest_pdf_file(collection_name: str, tmp_path: str, safe_filename: str, source_hash: str, existing: dict | None) -> dict:
+    doc_id = generate_doc_id(safe_filename, source_hash)
+    doc_meta = {
+        "doc_id": doc_id,
+        "filename": safe_filename,
+        "source_hash": source_hash,
+        "imported_at": now_iso(),
+        "version": (existing.get("version", 1) + 1) if existing else 1,
+        "kind": "pdf",
+    }
+
+    from ingest import extract_alarm_sections, extract_general_chunks
+
+    alarm_sections = extract_alarm_sections(tmp_path)
+    general_chunks = extract_general_chunks(tmp_path)
+    all_sections = apply_doc_meta(alarm_sections + general_chunks, doc_meta)
+    if not all_sections:
+        return {"status": "error", "message": "No content extracted from PDF"}
+
+    engine = get_engine(collection_name)
+    try:
+        added = engine.add_sections(all_sections)
+    except RuntimeError as exc:
+        return {"status": "error", "message": str(exc)}
+
+    ingest_log.append({
+        "time": datetime.now().isoformat(),
+        "collection": collection_name,
+        "filename": safe_filename,
+        "alarms": len(alarm_sections),
+        "general": len(general_chunks),
+        "total": added,
+        "type": "pdf",
+        "doc_id": doc_id,
+        "source_hash": source_hash,
+    })
+    append_jsonl(INGEST_LOG_PATH, ingest_log[-1])
+
+    doc_entry = dict(doc_meta)
+    doc_entry["sections"] = len(all_sections)
+    upsert_document_entry(collection_name, doc_entry)
+
+    return {
+        "status": "ok",
+        "collection": collection_name,
+        "filename": safe_filename,
+        "doc_id": doc_id,
+        "source_hash": source_hash,
+        "alarms_added": len(alarm_sections),
+        "general_added": len(general_chunks),
+        "total_added": added,
+        "total_in_collection": len(engine.sections),
+    }
 
 
 @router.post("/v1/{collection_name}/ingest")
@@ -49,6 +255,9 @@ async def ingest_pdf(
     force: bool = Form(False),
     actor: dict = Depends(get_actor),
 ):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
     try:
@@ -63,8 +272,16 @@ async def ingest_pdf(
     tmp_path = os.path.join(tmp_dir, safe_filename)
     try:
         content = await file.read()
+        if len(content) > PDF_UPLOAD_MAX_BYTES:
+            max_mb = PDF_UPLOAD_MAX_BYTES / 1024 / 1024
+            return {"status": "error", "message": f"PDF upload exceeds {max_mb:g} MB limit"}
+        if not content.startswith(PDF_MAGIC):
+            return {"status": "error", "message": "Invalid PDF file signature"}
         with open(tmp_path, "wb") as output:
             output.write(content)
+        pdf_error = validate_pdf_structure(tmp_path)
+        if pdf_error:
+            return {"status": "error", "message": pdf_error}
 
         source_hash = compute_sha256_bytes(content)
         existing = find_document_by_hash(collection_name, source_hash)
@@ -76,58 +293,7 @@ async def ingest_pdf(
                 "source_hash": source_hash,
             }
 
-        doc_id = generate_doc_id(safe_filename, source_hash)
-        doc_meta = {
-            "doc_id": doc_id,
-            "filename": safe_filename,
-            "source_hash": source_hash,
-            "imported_at": now_iso(),
-            "version": (existing.get("version", 1) + 1) if existing else 1,
-            "kind": "pdf",
-        }
-
-        from ingest import extract_alarm_sections, extract_general_chunks
-
-        alarm_sections = extract_alarm_sections(tmp_path)
-        general_chunks = extract_general_chunks(tmp_path)
-        all_sections = apply_doc_meta(alarm_sections + general_chunks, doc_meta)
-        if not all_sections:
-            return {"status": "error", "message": "No content extracted from PDF"}
-
-        engine = get_engine(collection_name)
-        try:
-            added = engine.add_sections(all_sections)
-        except RuntimeError as exc:
-            return {"status": "error", "message": str(exc)}
-
-        ingest_log.append({
-            "time": datetime.now().isoformat(),
-            "collection": collection_name,
-            "filename": safe_filename,
-            "alarms": len(alarm_sections),
-            "general": len(general_chunks),
-            "total": added,
-            "type": "pdf",
-            "doc_id": doc_id,
-            "source_hash": source_hash,
-        })
-        append_jsonl(INGEST_LOG_PATH, ingest_log[-1])
-
-        doc_entry = dict(doc_meta)
-        doc_entry["sections"] = len(all_sections)
-        upsert_document_entry(collection_name, doc_entry)
-
-        return {
-            "status": "ok",
-            "collection": collection_name,
-            "filename": file.filename,
-            "doc_id": doc_id,
-            "source_hash": source_hash,
-            "alarms_added": len(alarm_sections),
-            "general_added": len(general_chunks),
-            "total_added": added,
-            "total_in_collection": len(engine.sections),
-        }
+        return await run_in_threadpool(ingest_pdf_file, collection_name, tmp_path, safe_filename, source_hash, existing)
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
     finally:
@@ -188,6 +354,7 @@ async def ingest_text_entry(collection_name: str, req: IngestTextRequest) -> dic
     return {
         "status": "ok",
         "collection": collection_name,
+        "doc_id": doc_meta["doc_id"],
         "sections_added": added,
         "total_in_collection": len(engine.sections),
     }
@@ -195,6 +362,9 @@ async def ingest_text_entry(collection_name: str, req: IngestTextRequest) -> dic
 
 @router.post("/v1/{collection_name}/ingest-text")
 async def ingest_text(collection_name: str, req: IngestTextRequest, actor: dict = Depends(get_actor)):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
     try:
@@ -204,7 +374,10 @@ async def ingest_text(collection_name: str, req: IngestTextRequest, actor: dict 
 
 
 @router.get("/v1/{collection_name}/ingest-log")
-async def get_ingest_log(collection_name: str):
+async def get_ingest_log(collection_name: str, actor: dict = Depends(get_actor)):
+    denied = require_admin_or_supervisor(actor)
+    if denied:
+        return denied
     try:
         collection_name = validate_collection_name(collection_name)
     except ValueError as exc:
@@ -214,12 +387,18 @@ async def get_ingest_log(collection_name: str):
 
 
 @router.get("/ingest-log")
-async def get_all_ingest_log():
+async def get_all_ingest_log(actor: dict = Depends(get_actor)):
+    denied = require_admin_or_supervisor(actor)
+    if denied:
+        return denied
     return {"entries": ingest_log[-50:]}
 
 
 @router.get("/collections")
-async def list_collections():
+async def list_collections(actor: dict = Depends(get_actor)):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
     manifest_collections = {entry["name"]: entry for entry in list_collections_summary()}
     collection_names = set(manifest_collections)
     collection_names.update(engines.keys())
@@ -234,7 +413,10 @@ async def list_collections():
 
 
 @router.get("/v1/{collection_name}/documents")
-async def list_documents(collection_name: str):
+async def list_documents(collection_name: str, actor: dict = Depends(get_actor)):
+    denied = require_admin_or_supervisor(actor)
+    if denied:
+        return denied
     try:
         collection_name = validate_collection_name(collection_name)
     except ValueError as exc:
@@ -248,6 +430,9 @@ async def list_documents(collection_name: str):
 
 @router.delete("/v1/{collection_name}/documents/{doc_id}")
 async def delete_document(collection_name: str, doc_id: str, actor: dict = Depends(get_actor)):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
     try:
@@ -287,23 +472,73 @@ async def delete_document(collection_name: str, doc_id: str, actor: dict = Depen
 
 
 @router.post("/v1/{collection_name}/rebuild")
-async def rebuild_collection(collection_name: str, actor: dict = Depends(get_actor)):
+async def rebuild_collection(
+    collection_name: str,
+    sync: bool = False,
+    actor: dict = Depends(get_actor),
+):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
     try:
         collection_name = validate_collection_name(collection_name)
     except ValueError as exc:
         return {"status": "error", "message": str(exc)}
-    pkl_path = f"{DB_PATH}/bm25_{collection_name}.pkl"
-    if not os.path.exists(pkl_path):
-        return {"status": "error", "message": "Index file not found"}
     try:
-        with open(pkl_path, "rb") as file:
-            data = json.load(file)
-    except Exception:
-        with open(pkl_path, "rb") as file:
-            data = pickle.load(file)
-    sections = data.get("sections", [])
+        sections = _load_rebuild_sections(collection_name)
+    except FileNotFoundError as exc:
+        return {"status": "error", "message": str(exc)}
+    except Exception as exc:
+        return {"status": "error", "message": f"Unable to load index file: {exc}"}
+
+    if not sync:
+        job = _start_rebuild_job(collection_name)
+        return {"status": "accepted", **job}
+
     engine = get_engine(collection_name)
-    engine.rebuild(sections)
+    await run_in_threadpool(engine.rebuild_with_progress, sections)
     return {"status": "ok", "sections": len(sections)}
+
+
+@router.get("/v1/{collection_name}/rebuild/{job_id}")
+async def get_rebuild_job(collection_name: str, job_id: str, actor: dict = Depends(get_actor)):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
+    if actor_role(actor) not in ("admin", "supervisor"):
+        return {"status": "error", "message": "Permission denied"}
+    try:
+        collection_name = validate_collection_name(collection_name)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    with REBUILD_LOCK:
+        job = REBUILD_JOBS.get(job_id)
+        if not job or job.get("collection") != collection_name:
+            return {"status": "not_found", "message": "Rebuild job not found"}
+        return {"status": "ok", **_job_public(job)}
+
+
+@router.delete("/v1/{collection_name}/rebuild/{job_id}")
+async def cancel_rebuild_job(collection_name: str, job_id: str, actor: dict = Depends(get_actor)):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
+    if not is_admin(actor):
+        return {"status": "error", "message": "Permission denied"}
+    try:
+        collection_name = validate_collection_name(collection_name)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    with REBUILD_LOCK:
+        job = REBUILD_JOBS.get(job_id)
+        if not job or job.get("collection") != collection_name:
+            return {"status": "not_found", "message": "Rebuild job not found"}
+        if job.get("state") in {"completed", "failed", "cancelled"}:
+            return {"status": "ok", **_job_public(job)}
+        job["stop_event"].set()
+        job["state"] = "cancelling"
+        job["phase"] = "cancelling"
+        job["updated_at"] = now_iso()
+        return {"status": "ok", **_job_public(job)}

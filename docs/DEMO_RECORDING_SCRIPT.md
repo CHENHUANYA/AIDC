@@ -14,15 +14,18 @@ Target length: 4 to 6 minutes.
 
 Show these tabs before recording:
 
-- `/alarm-app`
 - `/dashboard`
+- `/operator`
+- `/maintenance`
+- `/supervisor`
+- `/admin`
 - `/operations`
 - Terminal in `alarm-rag/`
 
-Start the API:
+Start the local stack:
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8100 --reload
+docker compose up -d
 ```
 
 Seed richer demo data when needed:
@@ -33,7 +36,7 @@ python scripts/seed_week2_data.py --base-url http://localhost:8100
 
 ## Recording Flow
 
-1. Open `/alarm-app` and show the `警報監控` tab.
+1. Open `/dashboard` and show the alarm monitoring area.
 2. Trigger one alarm:
 
 ```bash
@@ -54,19 +57,23 @@ python scripts/replay_demo_alarms.py --base-url http://localhost:8100 --source n
 
 ```bash
 python scripts/week4_acceptance.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000
+python scripts/ui_evidence_check.py
 ```
 
-10. Show `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md` with all rows passing.
+10. Show `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md` with all rows passing and the UI evidence check with `PASS=8 FAIL=0`.
 
 ## Screenshot Checklist
 
 Capture these stills for slides or a proposal appendix:
 
-- Alarm banner visible in `/alarm-app`.
+- Alarm banner visible in `/dashboard` or `/operator`.
 - Lookup result with source metadata.
 - Work order detail after completion.
 - BI dashboard after refresh.
 - Week 4 acceptance report.
+- UI evidence summary in `docs/UI_EVIDENCE_SUMMARY_2026-06-24.md`.
+- Browser E2E report at `tests_tmp/browser_e2e/browser_e2e_report.json`.
+- Browser E2E screenshots under `tests_tmp/browser_e2e/screenshots/`.
 - n8n workflow canvas or `mock_data/n8n_mock_workflow.json` import preview.
 
 ## Narration Beats

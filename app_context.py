@@ -5,22 +5,6 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel
-
-from rag_engine import AlarmRAGEngine
-from storage import (
-    ALARM_LOG_PATH,
-    DB_PATH,
-    ERROR_LOG_PATH,
-    INGEST_LOG_PATH,
-    QUERY_LOG_PATH,
-    append_jsonl,
-    build_legacy_document_entry,
-    ensure_db_dir,
-    get_documents,
-    read_jsonl,
-)
-
 
 def load_local_env(path: str = ".env") -> None:
     if not os.path.exists(path):
@@ -37,6 +21,24 @@ def load_local_env(path: str = ".env") -> None:
 
 
 load_local_env()
+
+from pydantic import BaseModel
+
+from rag_engine import AlarmRAGEngine
+from storage import (
+    ALARM_LOG_PATH,
+    DB_PATH,
+    ERROR_LOG_PATH,
+    INGEST_LOG_PATH,
+    QUERY_LOG_PATH,
+    append_jsonl,
+    build_legacy_document_entry,
+    ensure_db_dir,
+    get_documents,
+    is_safe_path_segment,
+    read_jsonl,
+)
+
 ensure_db_dir()
 
 
@@ -56,8 +58,6 @@ SCHOOL_API_MODEL = os.getenv("SCHOOL_API_MODEL", "gpt-oss-120b")
 SCHOOL_API_FALLBACK_TO_OLLAMA = os.getenv("SCHOOL_API_FALLBACK_TO_OLLAMA", "true").strip().lower() == "true"
 LLM_TIMEOUT_SECONDS = env_float("RAG_LLM_TIMEOUT_SECONDS", 20)
 REFERENCE_DIR = os.path.join(DB_PATH, "reference")
-HOWTO_DIR = os.path.join(DB_PATH, "howto")
-LEGACY_HOWTO_COLLECTION = "808d"
 FEEDBACK_LOG = os.path.join(DB_PATH, "feedback.jsonl")
 
 SYSTEM_PROMPT = """You are a SINUMERIK factory maintenance assistant.
@@ -171,15 +171,15 @@ def get_engine(collection_name: str) -> AlarmRAGEngine:
 
 
 def load_all_engines() -> None:
-    db_path = "./alarm_db"
+    db_path = DB_PATH
     if not os.path.exists(db_path):
-        print("alarm_db/ not found - run ingest.py first")
+        print(f"{db_path}/ not found - run ingest.py first")
         return
     for fname in os.listdir(db_path):
         if fname.startswith("bm25_") and fname.endswith(".pkl"):
             get_engine(fname[5:-4])
     if not engines:
-        print("No indexes found in alarm_db/")
+        print(f"No indexes found in {db_path}/")
         print("  Run: docker exec -it alarm_rag python ingest.py --pdf data/manual.pdf --name mymanual")
 
 
@@ -204,7 +204,7 @@ def get_collection_documents(collection_name: str) -> list[dict]:
 def get_collection_summary(collection_name: str) -> dict:
     engine = engines.get(collection_name)
     documents = get_collection_documents(collection_name)
-    return {
+    summary = {
         "name": collection_name,
         "ready": engine.ready if engine else False,
         "documents": len(documents),
@@ -212,6 +212,26 @@ def get_collection_summary(collection_name: str) -> dict:
         "updated_at": next((doc.get("imported_at") for doc in documents if doc.get("imported_at")), None),
         "has_legacy_index": any(doc.get("legacy") for doc in documents),
     }
+    if engine:
+        try:
+            summary.update(engine.vector_coverage())
+        except Exception as exc:
+            summary.update({
+                "vector_points": 0,
+                "bm25_sections": len(engine.sections),
+                "vector_coverage_percent": 0,
+                "vector_ready": False,
+                "vector_error": str(exc),
+            })
+    else:
+        summary.update({
+            "vector_points": 0,
+            "bm25_sections": summary["sections"],
+            "vector_coverage_percent": 0 if summary["sections"] else 100,
+            "vector_ready": False,
+            "vector_error": "",
+        })
+    return summary
 
 
 def build_augmented_messages(messages: List[Message], engine: AlarmRAGEngine) -> tuple[list[dict], list[dict]]:
@@ -274,7 +294,7 @@ def make_sse_chunk(content: str, finish: bool = False) -> str:
             "finish_reason": "stop" if finish else None,
         }],
     }
-    return f"data: {json.dumps(chunk)}\n\n"
+    return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
 
 def parse_alarm_code_int(code: str) -> Optional[int]:
@@ -319,21 +339,6 @@ def load_json_entries(path: str) -> list[dict]:
     if isinstance(payload, dict) and isinstance(payload.get("entries"), list):
         return [entry for entry in payload["entries"] if isinstance(entry, dict)]
     return []
-
-
-def is_safe_path_segment(value: str) -> bool:
-    return re.fullmatch(r"[a-zA-Z0-9_-]+", value) is not None
-
-
-def get_howto_dir(collection_name: str) -> str | None:
-    if not is_safe_path_segment(collection_name):
-        return None
-    collection_dir = os.path.join(HOWTO_DIR, collection_name)
-    if os.path.isdir(collection_dir):
-        return collection_dir
-    if collection_name == LEGACY_HOWTO_COLLECTION:
-        return HOWTO_DIR
-    return collection_dir
 
 
 def filter_entries(entries: list[dict], q: str, fields: list[str]) -> list[dict]:

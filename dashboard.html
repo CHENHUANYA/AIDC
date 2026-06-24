@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SINUMERIK 智慧儀表板</title>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/alarm_app.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css?v=quality-2">
   <style>
     /* ─── Dashboard-specific overrides ─── */
     .kpi-grid {
@@ -274,9 +274,9 @@
 </header>
 
 <div class="tabs">
-  <button class="tab-btn active" onclick="window.location.href='/dashboard'">Dashboard</button>
-  <button class="tab-btn" onclick="window.location.href='/assistant'">Assistant</button>
-  <button class="tab-btn" onclick="window.location.href='/howto'">HOW-TO</button>
+  <button class="tab-btn active" onclick="window.location.href='/dashboard'">儀表板</button>
+  <button class="tab-btn" onclick="window.location.href='/supervisor'">主管工作台</button>
+  <button class="tab-btn" onclick="window.location.href='/assistant'">智慧助理</button>
 </div>
 
 <!-- ═══════════ MAIN DASHBOARD CONTENT ═══════════ -->
@@ -378,7 +378,7 @@
       <div class="bi-card">
         <div class="bi-title">🎯 查詢準確率</div>
         <div class="bi-big grn" id="biAccuracy">—</div>
-        <div class="bi-big-sub" id="biAccuracySub">Loading...</div>
+        <div class="bi-big-sub" id="biAccuracySub">載入中...</div>
         <div class="accuracy-bar-wrap">
           <div class="accuracy-bar-bg">
             <div class="accuracy-bar-fill" id="biAccBar" style="width:0%"></div>
@@ -494,7 +494,7 @@
 <script src="/static/js/modules/chat.js"></script>
 <script src="/static/js/modules/lookup.js"></script>
 <script src="/static/js/modules/operations.js"></script>
-<script src="/static/js/pages/dashboard.js"></script>
+<script src="/static/js/pages/dashboard.js?v=quality-2"></script>
 
 <script>
 /* ─── Dashboard KPI + Table + Trend rendering ─── */

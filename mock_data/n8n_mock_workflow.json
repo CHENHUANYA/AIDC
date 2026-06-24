@@ -1,5 +1,6 @@
 {
   "name": "Alarm RAG Mock Trigger",
+  "active": false,
   "nodes": [
     {
       "parameters": {
@@ -88,6 +89,12 @@
     {
       "parameters": {
         "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
           "combinator": "or",
           "conditions": [
             {
@@ -122,7 +129,16 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://localhost:8100/trigger-alarm",
+        "url": "http://alarm_rag:8000/trigger-alarm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Alarm-RAG-Token",
+              "value": "={{ $env.ALARM_RAG_TRIGGER_TOKEN }}"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"alarm_code\": \"{{ $json.alarm_code }}\",\n  \"manual\": \"{{ $json.manual }}\",\n  \"machine_id\": \"{{ $json.machine_id }}\",\n  \"source\": \"{{ $json.source }}\",\n  \"severity\": \"{{ $json.severity }}\",\n  \"description\": \"{{ $json.description }}\"\n}",

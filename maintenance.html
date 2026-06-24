@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Maintenance Workbench</title>
+  <title>維修工作台</title>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/alarm_app.css?v=workboard-fill-1">
+  <link rel="stylesheet" href="/static/css/maintenance.css?v=quality-3">
 </head>
 <body data-page="maintenance">
 
@@ -13,22 +13,22 @@
   <div class="logo">
     <div class="logo-icon">MT</div>
     <div class="logo-text">
-      <h1>MAINTENANCE WORKBENCH</h1>
+      <h1>維修工作台</h1>
       <p>維修人員問題佇列、工單處理與 LLM 回饋</p>
     </div>
   </div>
   <div class="status-pill">
     <div class="status-dot"></div>
     <span id="maintenanceUserLabel">maintenance01</span>
-    <button class="auth-logout" onclick="AlarmApp.logout()">Logout</button>
+    <button class="auth-logout" onclick="AlarmApp.logout()">登出</button>
   </div>
 </header>
 
 <div class="tabs">
-  <button class="tab-btn active" data-tab="workbench" onclick="switchTab('workbench', this)">Workbench</button>
+  <button class="tab-btn active" data-tab="workbench" onclick="switchTab('workbench', this)">工作台</button>
   <button class="tab-btn" data-tab="resolved" onclick="switchTab('resolved', this)">已解決日曆</button>
-  <button class="tab-btn" data-tab="lookup" onclick="switchTab('lookup', this)">Lookup</button>
-  <button class="tab-btn" data-tab="chat" onclick="switchTab('chat', this)">Chat</button>
+  <button class="tab-btn" data-tab="lookup" onclick="switchTab('lookup', this)">查詢</button>
+  <button class="tab-btn" data-tab="chat" onclick="switchTab('chat', this)">對話</button>
 </div>
 
 <div class="panel active" id="panel-workbench">
@@ -37,7 +37,7 @@
     <div class="wo-header">
       <div class="wo-stat"><div class="label">未處理問題</div><div class="val" id="mtIssueOpen">--</div><div class="sub">等待維修判斷</div></div>
       <div class="wo-stat"><div class="label">未指派工單</div><div class="val" id="mtUnassigned">--</div><div class="sub">需要接手</div></div>
-      <div class="wo-stat"><div class="label">處理中</div><div class="val" id="mtInProgress">--</div><div class="sub">assigned / in progress</div></div>
+      <div class="wo-stat"><div class="label">處理中</div><div class="val" id="mtInProgress">--</div><div class="sub">已指派 / 處理中</div></div>
       <div class="wo-stat"><div class="label">LLM 評估數</div><div class="val" id="mtFeedbackCount">--</div><div class="sub">技師回饋</div></div>
     </div>
 
@@ -47,7 +47,7 @@
         <button class="wo-btn alt" onclick="loadMaintenanceData()">重整</button>
       </div>
       <div class="maintenance-filter-row">
-        <input class="wo-input" id="mtIssueFilter" placeholder="Filter issue, machine, line, alarm">
+        <input class="wo-input" id="mtIssueFilter" placeholder="篩選問題、機台、產線、alarm">
       </div>
       <div id="maintenanceIssueList"><div class="wo-empty">載入中...</div></div>
     </div>
@@ -66,13 +66,13 @@
           <option value="mine">我的工單</option>
         </select>
         <select class="wo-select" id="mtPriorityFilter">
-          <option value="">All priorities</option>
-          <option value="critical">Critical</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
+          <option value="">全部優先級</option>
+          <option value="critical">緊急</option>
+          <option value="high">高</option>
+          <option value="medium">中</option>
+          <option value="low">低</option>
         </select>
-        <input class="wo-input" id="mtWorkFilter" placeholder="Filter work order, machine, alarm">
+        <input class="wo-input" id="mtWorkFilter" placeholder="篩選工單、機台、alarm">
       </div>
       <div class="wo-board" id="maintenanceWorkBoard"></div>
     </div>
@@ -117,9 +117,9 @@
     </div>
 
     <div class="timer-row" id="timerRow">
-      <div class="timer-seg"><span class="timer-label">Retrieval</span><span class="timer-val" id="timerRetrieval">--</span></div>
+      <div class="timer-seg"><span class="timer-label">檢索</span><span class="timer-val" id="timerRetrieval">--</span></div>
       <div class="timer-seg"><span class="timer-label">AI</span><span class="timer-val" id="timerAI">--</span></div>
-      <div class="timer-seg"><span class="timer-label">Total</span><span class="timer-val" id="timerTotal">--</span></div>
+      <div class="timer-seg"><span class="timer-label">總計</span><span class="timer-val" id="timerTotal">--</span></div>
     </div>
 
     <div class="loading" id="loading">
@@ -139,7 +139,7 @@
           <div class="alarm-title" id="resTitle">--</div>
         </div>
         <div class="page-badge">
-          <div class="pb-label">Manual Page</div>
+          <div class="pb-label">手冊頁碼</div>
           <div class="pb-num" id="resPage">--</div>
         </div>
       </div>
@@ -202,8 +202,9 @@
     </div>
     <div class="maintenance-context" id="mtIssueContext"></div>
     <div class="maintenance-timeline" id="mtWorkTimeline"></div>
+    <div class="maintenance-verify-note" id="mtKnowledgeReview" style="display:none"></div>
     <div class="wo-modal-grid">
-      <div><div class="wo-note">狀態</div><select class="wo-select" id="mtEditStatus"><option value="pending">待處理</option><option value="assigned">已指派</option><option value="in_progress">處理中</option><option value="completed">已完成</option><option value="verified">已驗證</option></select></div>
+      <div><div class="wo-note">狀態</div><select class="wo-select" id="mtEditStatus"><option value="pending">待處理</option><option value="assigned">已指派</option><option value="in_progress">進行中</option><option value="completed">已完成</option></select></div>
       <div><div class="wo-note">優先等級</div><select class="wo-select" id="mtEditPriority"><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">緊急</option></select></div>
       <div><div class="wo-note">負責人</div><input class="wo-input" id="mtEditAssignee"></div>
       <div><div class="wo-note">機台</div><input class="wo-input" id="mtEditMachine"></div>
@@ -215,7 +216,6 @@
     <div class="wo-modal-grid" style="margin-top:10px">
       <div><div class="wo-note">接受人員</div><input class="wo-input" id="mtEditAcceptedBy"></div>
       <div><div class="wo-note">完成人員</div><input class="wo-input" id="mtEditCompletedBy"></div>
-      <div><div class="wo-note">驗證人員（Operator / Supervisor）</div><input class="wo-input" id="mtEditVerifiedBy" placeholder="例如 supervisor01"></div>
       <div><div class="wo-note">根本原因</div><input class="wo-input" id="mtEditRootCause"></div>
       <div><div class="wo-note">故障分類</div><input class="wo-input" id="mtEditFailureCategory"></div>
       <div><div class="wo-note">LLM 正確率回饋</div><select class="wo-select" id="mtEditLlmCorrectness"><option value="">未評估</option><option value="correct">正確</option><option value="partially_correct">部分正確</option><option value="incorrect">不正確</option><option value="unknown">未知</option></select></div>
@@ -239,6 +239,6 @@
 <script src="/static/js/modules/chat.js"></script>
 <script src="/static/js/modules/lookup.js"></script>
 <script src="/static/js/modules/audit.js"></script>
-<script src="/static/js/pages/maintenance.js?v=workboard-fill-1"></script>
+<script src="/static/js/pages/maintenance.js?v=quality-2"></script>
 </body>
 </html>

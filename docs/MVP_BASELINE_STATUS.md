@@ -1,17 +1,68 @@
 # MVP Baseline Status
 
-Generated for the post-acceptance development baseline.
+Generated for the delivery baseline review on 2026-06-08.
 
 ## Current Baseline
 
-- Git worktree was clean before adding this baseline/status package.
 - Live Alarm RAG service is expected at `http://localhost:8100`.
-- Week 4 live acceptance has passed with `24 PASS / 0 FAIL`.
 - Current acceptance evidence is stored in `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md`.
+- The latest regenerated acceptance report is an offline evidence pass: `17 PASS / 0 FAIL`, generated at `2026-06-08T19:21:42`.
+- The previous tracked report contained live checks and showed `24 PASS / 0 FAIL`; the regenerated report intentionally removed the 7 live rows because the offline acceptance path was used.
 - Static demo package docs live under `docs/`.
 - Operational scripts live under `scripts/`.
 - Mock datasets live under `mock_data/`.
 - Route implementations are split under `routes/`, with shared state and request models in `app_context.py`.
+
+## Delivery Change Groups
+
+| Group | Status | Notes |
+|---|---|---|
+| Frontend page split | Intentional refactor | Root HTML files now load page-specific CSS from `static/css/` and page/module JavaScript from `static/js/`. |
+| Legacy single-page shell removal | Intentional refactor | `alarm_app.html` was removed. No current root HTML, static JS, or page CSS reference it. |
+| Legacy CSS removal | Intentional refactor | `static/alarm_app.css` and `static/login.css` were removed. Current pages load `/static/css/*.css` instead. |
+| Legacy JS removal | Intentional refactor | `static/js/pages/legacy.js` was removed. No current root HTML or static JS reference it. |
+| Deployment baseline | Include | `docker-compose.yml`, `Dockerfile`, `.dockerignore`, `.env.example`, and `docs/DEPLOYMENT.md` form the compose/deployment source set. |
+| Test baseline | Include | `pytest.ini` and the new `tests/test_*.py` files should be committed with the scripts they exercise. |
+| Runtime data | Exclude | `qdrant_data/`, `n8n_data/`, `tests_tmp/`, `pytest-cache-files-*`, `.pytest_cache/`, `tmp*/`, logs, and `__pycache__/` are local products. |
+| Generated plan exports | Needs owner decision | `docs/期末計畫書撰寫摘要.docx`, `.pdf`, `_v2.pdf`, and `_v3.pdf` are binary/generated exports. Keep only if they are required deliverables; otherwise keep the Markdown source as canonical. |
+
+## Commit Candidate Groups
+
+These groups should move together when preparing the delivery commit:
+
+| Group | Files |
+|---|---|
+| Frontend role pages | `admin.html`, `assistant.html`, `dashboard.html`, `login.html`, `maintenance.html`, `operations.html`, `operator.html`, `supervisor.html`, `static/css/`, `static/alarm_app.js`, `static/js/core/`, `static/js/modules/`, `static/js/pages/` |
+| Removed legacy frontend | `alarm_app.html`, `static/alarm_app.css`, `static/login.css`, `static/js/pages/legacy.js` |
+| Auth and API routing | `main.py`, `auth.py`, `app_context.py`, `routes/`, `issues.py`, `storage.py`, `work_orders.py` |
+| RAG and data maintenance | `rag_engine.py`, `mock_data/n8n_mock_workflow.json`, `scripts/data_maintenance.py`, `scripts/model_cache.py`, `scripts/preflight_check.py`, `scripts/bootstrap_env.py`, `scripts/env_utils.py` |
+| Acceptance and smoke tooling | `pytest.ini`, `scripts/regression_checks.py`, `scripts/smoke_test.py`, `scripts/week4_acceptance.py`, `scripts/standalone_acceptance.py`, `scripts/n8n_workflow_check.py`, `scripts/replay_demo_alarms.py`, `scripts/role_console_smoke.py`, `scripts/seed_week2_data.py`, `tests/` |
+| Deployment docs and config | `.dockerignore`, `.env.example`, `.gitignore`, `Dockerfile`, `docker-compose.yml`, `README.md`, `docs/DEPLOYMENT.md`, `docs/DATA_MAINTENANCE.md`, `docs/SMOKE_TEST.md`, `docs/N8N_MOCK_WORKFLOW.md` |
+| Planning and delivery docs | `docs/MVP_BASELINE_STATUS.md`, `docs/MVP_ACCEPTANCE_CHECKLIST.md`, `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md`, `docs/DEMO_SCRIPT.md`, `docs/DEMO_RECORDING_SCRIPT.md`, `docs/plans/` |
+
+## Hold Or Decide Before Commit
+
+| Item | Recommendation | Reason |
+|---|---|---|
+| `docs/期末計畫書撰寫摘要.md` | Include if this is the canonical final-plan source | Text source is reviewable and diffable. |
+| `docs/期末計畫書撰寫摘要.docx` | Include only as a required submission artifact | Binary document cannot be meaningfully reviewed in Git. |
+| `docs/期末計畫書撰寫摘要.pdf`, `_v2.pdf`, `_v3.pdf` | Include only the final required version | Multiple binary exports increase noise; prefer one final PDF if needed. |
+| `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md` | Include with note | The current report is offline-only `17 PASS / 0 FAIL`; rerun live acceptance if live evidence is required for delivery. |
+
+## Frontend CSS Replacement Check
+
+| Page | CSS |
+|---|---|
+| `admin.html` | `/static/css/admin.css` |
+| `assistant.html` | `/static/css/assistant.css?v=quality-2` |
+| `dashboard.html` | `/static/css/dashboard.css?v=quality-2` |
+| `login.html` | `/static/css/login.css` |
+| `maintenance.html` | `/static/css/maintenance.css?v=quality-2` |
+| `operations.html` | `/static/css/operations.css?v=quality-2` |
+| `operator.html` | `/static/css/operator.css?v=quality-2` |
+| `supervisor.html` | `/static/css/supervisor.css` |
+
+`static/css/` currently contains matching CSS files for all 8 page-specific links above. No remaining reference was found for `alarm_app.html`, `howto.html`, `static/alarm_app.css`, `static/css/howto.css`, `static/login.css`, `static/js/modules/howto.js`, or `static/js/pages/legacy.js`.
 
 ## File Organization
 
@@ -36,7 +87,7 @@ The next baseline should keep these checks passing:
 - `POST /trigger-alarm` creates an alarm event, queues a banner, and creates a work order.
 - `/pending-alarms` returns queued alarms and clears the queue on the next poll.
 - `/work-orders` supports create, read, update, and delete for normal maintenance tickets.
-- Completing a work order with a resolution auto-ingests a `workorder` knowledge record.
+- Completing a work order with root cause, repair action, and resolution creates a pending knowledge candidate; Admin approval ingests the `workorder` record.
 - `/stats/alarms`, `/stats/queries`, `/feedback/stats`, and `/work-orders/stats` keep their expected schemas.
 - `mock_data/n8n_mock_workflow.json` keeps the required trigger, severity gate, payload, and HTTP request nodes.
 - `GET /v1/{manual}/lookup` returns traceable source metadata for known alarm codes.

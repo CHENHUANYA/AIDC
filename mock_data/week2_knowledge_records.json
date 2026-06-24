@@ -2,43 +2,97 @@
   {
     "collection": "808d",
     "code": "3000",
-    "title": "SOP: Alarm 3000 NC start blocked",
-    "source": "week2-sop",
-    "text": "Alarm 3000 SOP for 808D demo machines. Symptom: NC start is blocked or the channel does not enter cycle start. Checks: verify correct part program is selected, confirm mode group is ready, release feed hold, check emergency-stop chain, confirm no program lock is active. Recovery: reset channel state, clear the alarm, perform dry run, then resume production. Escalate if the same machine repeats the alarm more than twice in one shift."
+    "title": "[MOCK] SOP: Alarm 3000 NC start blocked",
+    "source": "mock-week2-sop",
+    "mock_data": true,
+    "text": "MOCK DATA. Alarm 3000 SOP for 808D demo machines. Symptom: NC start is blocked or the channel does not enter cycle start. Checks: verify correct part program is selected, confirm mode group is ready, release feed hold, check emergency-stop chain, confirm no program lock is active. Recovery: reset channel state, clear the alarm, perform dry run, then resume production. Escalate if the same machine repeats the alarm more than twice in one shift."
   },
   {
     "collection": "808d",
     "code": "5000",
-    "title": "SOP: Alarm 5000 channel or axis warm-up issue",
-    "source": "week2-sop",
-    "text": "Alarm 5000 demo maintenance note. Symptom: intermittent channel or axis alarm during warm-up. Checks: inspect axis enable state, verify machine is not waiting for an operator acknowledgement, confirm reference position is valid, and check the previous shutdown record. Recovery: clear stale channel request, run low-speed dry cycle, then mark the work order verified after operator confirmation."
-  },
-  {
-    "collection": "808d",
-    "code": "emergency stop",
-    "title": "Safety bulletin: Emergency stop chain active",
-    "source": "week2-bulletin",
-    "text": "Emergency stop response bulletin. Treat every emergency stop as a safety event. Confirm the physical button state, door interlock, safety relay, and reset sequence. Do not bypass the chain for demo purposes. After reset, record machine_id, source, operator, and verification result in the work order."
-  },
-  {
-    "collection": "808d",
-    "code": "3000",
-    "title": "Technical bulletin: Repeated alarm 3000 trend",
-    "source": "week2-bulletin",
-    "text": "Repeated alarm 3000 trend guidance. If BI shows multiple alarm 3000 events for CNC-LINE-01 in a short window, compare the active program, operator shift, and fixture-change record. Use the work-order resolution field as feedback for the knowledge base so future RAG results include proven local fixes."
+    "title": "[MOCK] SOP: Alarm 5000 channel or axis warm-up issue",
+    "source": "mock-week2-sop",
+    "mock_data": true,
+    "text": "MOCK DATA. Alarm 5000 demo maintenance SOP. Symptom: intermittent channel or axis alarm during warm-up. Checks: inspect axis enable state, verify machine is not waiting for an operator acknowledgement, confirm reference position is valid, and check the previous shutdown record. Recovery: clear stale channel request, run low-speed dry cycle, then mark the work order verified after operator confirmation."
   },
   {
     "collection": "808d",
     "code": "20010",
-    "title": "SOP: Axis enable alarm after restart",
-    "source": "week2-sop",
-    "text": "Axis enable restart SOP. Symptom: axis alarm appears after machine power cycle or emergency reset. Checks: drive ready signal, axis enable relay, reference state, and operator mode. Recovery: reset reference state, jog at low speed, verify no mechanical obstruction, then document the ready signal result in the work order."
+    "title": "[MOCK] SOP: Axis enable alarm after restart",
+    "source": "mock-week2-sop",
+    "mock_data": true,
+    "text": "MOCK DATA. Axis enable restart SOP. Symptom: axis alarm appears after machine power cycle, maintenance door reset, or emergency reset. Checks: drive ready signal, axis enable relay, reference state, and operator mode. Recovery: reset reference state, jog at low speed, verify no mechanical obstruction, then document the ready signal result in the work order."
+  },
+  {
+    "collection": "808d",
+    "code": "25010",
+    "title": "[MOCK] SOP: Spindle ready signal dropped",
+    "source": "mock-week2-sop",
+    "mock_data": true,
+    "text": "MOCK DATA. Spindle ready SOP for CNC-LINE-05. Symptom: spindle ready signal drops during high-speed warm-up or before cycle start. Checks: spindle enable chain, encoder feedback, cooling state, and connector seating. Recovery: stop automatic cycle, run spindle warm-up at low speed, verify stable feedback, then restart with operator confirmation."
+  },
+  {
+    "collection": "808d",
+    "code": "emergency stop",
+    "title": "[MOCK] Safety bulletin: Emergency stop chain active",
+    "source": "mock-week2-bulletin",
+    "mock_data": true,
+    "text": "MOCK DATA. Emergency stop response bulletin. Treat every emergency stop as a safety event. Confirm the physical button state, door interlock, safety relay, and reset sequence. Do not bypass the chain for demo purposes. After reset, record machine_id, source, operator, and verification result in the work order."
+  },
+  {
+    "collection": "808d",
+    "code": "3000",
+    "title": "[MOCK] Technical bulletin: Repeated alarm 3000 trend",
+    "source": "mock-week2-bulletin",
+    "mock_data": true,
+    "text": "MOCK DATA. Repeated alarm 3000 trend guidance. If BI shows multiple alarm 3000 events for CNC-LINE-01 in a short window, compare the active program, operator shift, and fixture-change record. Use the work-order resolution field as feedback for the knowledge base so future RAG results include proven local fixes."
   },
   {
     "collection": "808d",
     "code": "300000",
-    "title": "Technical bulletin: Drive alarm escalation",
-    "source": "week2-bulletin",
-    "text": "Drive alarm escalation bulletin. For high or critical drive alarms, stop automatic cycle, capture machine_id, alarm_code, source, severity, and operator context. Assign the work order to the drive specialist and do not restart production until the dry-run and acceleration checks pass."
+    "title": "[MOCK] Technical bulletin: Drive alarm escalation",
+    "source": "mock-week2-bulletin",
+    "mock_data": true,
+    "text": "MOCK DATA. Drive alarm escalation bulletin. For high or critical drive alarms, stop automatic cycle, capture machine_id, alarm_code, source, severity, and operator context. Assign the work order to the drive specialist and do not restart production until the dry-run and acceleration checks pass."
+  },
+  {
+    "collection": "808d",
+    "code": "400300",
+    "title": "[MOCK] Technical bulletin: PLC handshake diagnostics",
+    "source": "mock-week2-bulletin",
+    "mock_data": true,
+    "text": "MOCK DATA. PLC handshake bulletin for CNC-LINE-06. When alarm 400300 or a similar PLC diagnostic appears after pallet clamp state changes, compare the clamp sensor timestamp, PLC acknowledgement bit, and operator HMI acknowledgement. Escalate to controls-a if the acknowledgement bit remains active after reset."
+  },
+  {
+    "collection": "808d",
+    "code": "12000",
+    "title": "[MOCK] Maintenance note: Channel state warm-up checks",
+    "source": "mock-week2-maintenance-note",
+    "mock_data": true,
+    "text": "MOCK DATA. Maintenance note from demo Line B. Alarm 12000 or 12010 during warm-up is usually tied to channel state not returning ready after a reset. First action: verify mode group, clear old operator acknowledgement, and run one low-speed dry cycle before opening an electrical check."
+  },
+  {
+    "collection": "808d",
+    "code": "7000",
+    "title": "[MOCK] Maintenance note: Fixture setup start interlock",
+    "source": "mock-week2-maintenance-note",
+    "mock_data": true,
+    "text": "MOCK DATA. Maintenance note for fixture-change demos. Alarm 7000 on CNC-LINE-03 is commonly reproduced when the fixture setup leaves the panel in jog mode or a program lock is still enabled. First action: confirm operator mode, fixture clamp state, and approved program selection."
+  },
+  {
+    "collection": "808d",
+    "code": "25000",
+    "title": "[MOCK] Prior repair: Spindle connector cleaning resolved ready fault",
+    "source": "mock-week2-prior-repair",
+    "mock_data": true,
+    "text": "MOCK DATA. Prior repair example for CNC-LINE-05. Symptom: spindle did not reach ready state before cycle start. Root cause: oxidized connector on spindle feedback cable. Repair action: cleaned and reseated connector, verified encoder feedback, ran spindle warm-up, and monitored one production cycle without recurrence."
+  },
+  {
+    "collection": "808d",
+    "code": "300020",
+    "title": "[MOCK] Prior repair: Drive acceleration profile fault",
+    "source": "mock-week2-prior-repair",
+    "mock_data": true,
+    "text": "MOCK DATA. Prior repair example for CNC-LINE-07. Symptom: critical drive event during acceleration stress-test cycle. Root cause: acceleration profile exceeded demo drive limit after a parameter copy. Repair action: restored approved drive profile, checked acceleration ramp, completed dry run, and required drive-specialist signoff."
   }
 ]

@@ -7,13 +7,14 @@
     maintenance: ['maintenance'],
     supervisor: ['supervisor'],
     admin: ['admin'],
-    dashboard: ['supervisor'],
-    operations: [],
+    dashboard: ['supervisor', 'admin'],
+    assistant: ['operator', 'maintenance', 'supervisor', 'admin'],
+    operations: ['admin'],
   };
   const ROLE_HOME = {
     operator: '/operator',
     maintenance: '/maintenance',
-    supervisor: '/supervisor',
+    supervisor: '/dashboard',
     admin: '/admin',
   };
 
@@ -100,6 +101,13 @@
     if (!response.ok) {
       throw new Error(data.message || `Server error: ${response.status}`);
     }
+    if (data?.status === 'error') {
+      if (data.message === 'Not authenticated') {
+        clearAuth();
+        requireAuth();
+      }
+      throw new Error(data.message || 'Request failed');
+    }
     return data;
   }
 
@@ -109,10 +117,6 @@
       headers: authHeaders(options.headers || {}),
     });
     const data = await parseJsonResponse(response);
-    if (data?.message === 'Not authenticated') {
-      clearAuth();
-      requireAuth();
-    }
     return data;
   }
 

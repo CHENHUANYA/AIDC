@@ -1,11 +1,22 @@
 import argparse
 import json
 import mimetypes
+import os
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from env_utils import EnvConfigError, admin_initial_password, load_project_env
+from n8n_workflow_check import DEFAULT_WORKFLOW, load_workflow, validate_workflow
+
+
+load_project_env()
 
 
 @dataclass
@@ -32,6 +43,9 @@ class SmokeRunner:
         headers = dict(extra or {})
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
+        trigger_token = os.getenv("ALARM_RAG_TRIGGER_TOKEN", "").strip()
+        if trigger_token:
+            headers["X-Alarm-RAG-Token"] = trigger_token
         return headers
 
     def get_text(self, path: str) -> tuple[int, str]:
@@ -145,7 +159,12 @@ class SmokeRunner:
         except (TimeoutError, error.URLError) as exc:
             return 0, {"_error": str(exc)}
 
-    def login(self, username: str = "admin01", password: str = "demo1234") -> bool:
+    def login(self, username: str = "admin01", password: str | None = None) -> bool:
+        try:
+            password = password or admin_initial_password()
+        except EnvConfigError as exc:
+            self.record("auth:login", "FAIL", str(exc))
+            return False
         previous_token = self.token
         self.token = ""
         code, data = self.post_json("/auth/login", {"username": username, "password": password})
@@ -175,7 +194,7 @@ def check_health(runner: SmokeRunner) -> bool:
 
 
 def check_pages(runner: SmokeRunner) -> None:
-    for path in ["/dashboard", "/assistant", "/operations", "/alarm-app"]:
+    for path in ["/dashboard", "/assistant", "/operations", "/operator"]:
         code, body = runner.get_text(path)
         if code == 200 and "<html" in body.lower():
             runner.record(f"page:{path}", "PASS", "HTTP 200")
@@ -225,7 +244,7 @@ def check_chat(runner: SmokeRunner, manual: str) -> None:
         runner.record("chat", "FAIL", f"HTTP {code}, body={data}")
 
 
-def check_pdf_upload(runner: SmokeRunner, manual: str, pdf_path: str | None) -> None:
+def check_pdf_upload(runner: SmokeRunner, manual: str, pdf_path: str | None, max_mb: float) -> None:
     if not pdf_path:
         runner.record("upload:pdf", "SKIP", "no --pdf path provided")
         return
@@ -233,6 +252,10 @@ def check_pdf_upload(runner: SmokeRunner, manual: str, pdf_path: str | None) -> 
     file_path = Path(pdf_path)
     if not file_path.exists():
         runner.record("upload:pdf", "SKIP", f"file not found: {file_path}")
+        return
+    size_mb = file_path.stat().st_size / (1024 * 1024)
+    if max_mb > 0 and size_mb > max_mb:
+        runner.record("upload:pdf", "SKIP", f"file is {size_mb:.1f} MB; limit is {max_mb:.1f} MB")
         return
 
     code, data = runner.post_multipart(f"/v1/{manual}/ingest", "file", file_path)
@@ -338,33 +361,27 @@ def check_banner_polling(runner: SmokeRunner, manual: str, alarm_code: str) -> N
 
 
 def check_n8n_workflow_file(runner: SmokeRunner) -> None:
-    workflow_path = Path(__file__).resolve().parents[1] / "mock_data" / "n8n_mock_workflow.json"
-    if not workflow_path.exists():
-        runner.record("n8n:workflow-file", "FAIL", f"missing {workflow_path}")
-        return
-
     try:
-        data = json.loads(workflow_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        workflow = load_workflow(DEFAULT_WORKFLOW)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         runner.record("n8n:workflow-file", "FAIL", f"invalid JSON: {exc}")
         return
 
-    nodes = data.get("nodes") if isinstance(data, dict) else None
-    node_names = {str(node.get("name")) for node in nodes or [] if isinstance(node, dict)}
-    required = {"Schedule Trigger", "Manual Trigger", "Set Mock Alarm Payload", "POST /trigger-alarm"}
-    missing = sorted(required - node_names)
-    if isinstance(nodes, list) and not missing:
-        runner.record("n8n:workflow-file", "PASS", f"nodes={len(nodes)}")
-        return
-
-    runner.record("n8n:workflow-file", "FAIL", f"missing nodes={missing}")
+    checks = validate_workflow(workflow)
+    failures = [item for item in checks if item.status == "FAIL"]
+    detail = "all workflow checks passed" if not failures else "; ".join(
+        f"{item.name}: {item.detail}" for item in failures
+    )
+    runner.record("n8n:workflow-file", "PASS" if not failures else "FAIL", detail)
 
 
 def check_n8n_trigger_sync(runner: SmokeRunner, manual: str, alarm_code: str) -> None:
     _, alarm_before = runner.get_json("/stats/alarms")
     _, order_before = runner.get_json("/work-orders/stats")
+    _, issue_before = runner.get_json("/issues/stats")
     alarm_total_before = alarm_before.get("total", 0) if isinstance(alarm_before, dict) else 0
     order_total_before = order_before.get("total", 0) if isinstance(order_before, dict) else 0
+    issue_total_before = issue_before.get("total", 0) if isinstance(issue_before, dict) else 0
 
     payload = {
         "alarm_code": alarm_code,
@@ -377,31 +394,64 @@ def check_n8n_trigger_sync(runner: SmokeRunner, manual: str, alarm_code: str) ->
     code, trigger = runner.post_json("/trigger-alarm", payload)
     work_order = trigger.get("work_order") if isinstance(trigger, dict) else None
     order_id = work_order.get("id") if isinstance(work_order, dict) else None
+    issue = trigger.get("issue") if isinstance(trigger, dict) else None
+    issue_id = issue.get("issue_id") if isinstance(issue, dict) else None
     alarm = trigger.get("alarm") if isinstance(trigger, dict) else None
-    if code != 200 or trigger.get("status") != "ok" or not order_id:
+    if code != 200 or trigger.get("status") != "ok" or not order_id or not issue_id:
         runner.record("n8n:trigger-sync", "FAIL", f"HTTP {code}, body={trigger}")
+        runner.record("n8n:linked-records", "SKIP", "trigger failed")
         return
 
     _, alarm_after = runner.get_json("/stats/alarms")
     _, order_after = runner.get_json("/work-orders/stats")
+    _, issue_after = runner.get_json("/issues/stats")
     alarm_total_after = alarm_after.get("total", 0) if isinstance(alarm_after, dict) else 0
     order_total_after = order_after.get("total", 0) if isinstance(order_after, dict) else 0
+    issue_total_after = issue_after.get("total", 0) if isinstance(issue_after, dict) else 0
     by_source = alarm_after.get("by_source", {}) if isinstance(alarm_after, dict) else {}
     order_sources = order_after.get("by_source", {}) if isinstance(order_after, dict) else {}
+    issue_sources = issue_after.get("by_source", {}) if isinstance(issue_after, dict) else {}
 
-    updated = alarm_total_after > alarm_total_before and order_total_after > order_total_before
-    source_visible = by_source.get("n8n-mock", 0) > 0 and order_sources.get("n8n-mock", 0) > 0
+    updated = (
+        alarm_total_after > alarm_total_before
+        and order_total_after > order_total_before
+        and issue_total_after > issue_total_before
+    )
+    source_visible = (
+        by_source.get("n8n-mock", 0) > 0
+        and order_sources.get("n8n-mock", 0) > 0
+        and issue_sources.get("n8n-mock", 0) > 0
+    )
     severity_ok = isinstance(alarm, dict) and alarm.get("severity") == "high"
     if updated and source_visible and severity_ok:
-        runner.record("n8n:trigger-sync", "PASS", f"order={order_id}")
-        return
+        runner.record("n8n:trigger-sync", "PASS", f"issue={issue_id}, order={order_id}")
+    else:
+        detail = (
+            f"alarm_total {alarm_total_before}->{alarm_total_after}, "
+            f"issue_total {issue_total_before}->{issue_total_after}, "
+            f"order_total {order_total_before}->{order_total_after}, "
+            f"alarm_sources={by_source}, issue_sources={issue_sources}, "
+            f"order_sources={order_sources}, alarm={alarm}"
+        )
+        runner.record("n8n:trigger-sync", "FAIL", detail)
 
-    detail = (
-        f"alarm_total {alarm_total_before}->{alarm_total_after}, "
-        f"order_total {order_total_before}->{order_total_after}, "
-        f"alarm_sources={by_source}, order_sources={order_sources}, alarm={alarm}"
+    order_code, order_data = runner.get_json(f"/work-orders/{order_id}")
+    fetched_order = order_data.get("order") if isinstance(order_data, dict) else None
+    issue_code, issue_data = runner.get_json(f"/issues/{issue_id}")
+    fetched_issue = issue_data.get("issue") if isinstance(issue_data, dict) else None
+    linked_ok = (
+        order_code == 200
+        and issue_code == 200
+        and isinstance(fetched_order, dict)
+        and isinstance(fetched_issue, dict)
+        and fetched_order.get("issue_id") == issue_id
+        and fetched_issue.get("work_order_id") == order_id
     )
-    runner.record("n8n:trigger-sync", "FAIL", detail)
+    runner.record(
+        "n8n:linked-records",
+        "PASS" if linked_ok else "FAIL",
+        f"issue={issue_id}, order={order_id}, order_http={order_code}, issue_http={issue_code}",
+    )
 
 
 def check_stats(runner: SmokeRunner) -> None:
@@ -425,9 +475,9 @@ def check_week2_seed_data(runner: SmokeRunner, manual: str) -> None:
     orders = orders_data.get("orders") if isinstance(orders_data, dict) else None
     week2_orders = [
         order for order in orders or []
-        if isinstance(order, dict) and order.get("source") == "week2-history"
+        if isinstance(order, dict) and str(order.get("source") or "") in {"week2-history", "mock-week2-history"}
     ]
-    if code == 200 and len(week2_orders) >= 10:
+    if code == 200 and len(week2_orders) >= 12:
         runner.record("week2:work-orders", "PASS", f"count={len(week2_orders)}")
     else:
         runner.record("week2:work-orders", "FAIL", f"HTTP {code}, count={len(week2_orders)}, body={orders_data}")
@@ -439,13 +489,18 @@ def check_week2_seed_data(runner: SmokeRunner, manual: str) -> None:
         for entry in entries or []
         if isinstance(entry, dict)
     }
-    required_sources = {"week2-sop", "week2-bulletin"}
+    required_sources = {
+        "mock-week2-sop",
+        "mock-week2-bulletin",
+        "mock-week2-maintenance-note",
+        "mock-week2-prior-repair",
+    }
     missing_sources = sorted(required_sources - sources)
     week2_entries = [
         entry for entry in entries or []
         if isinstance(entry, dict) and str(entry.get("source") or "") in required_sources
     ]
-    if code == 200 and not missing_sources and len(week2_entries) >= 5:
+    if code == 200 and not missing_sources and len(week2_entries) >= 10:
         runner.record("week2:knowledge", "PASS", f"count={len(week2_entries)}")
     else:
         runner.record("week2:knowledge", "FAIL", f"HTTP {code}, count={len(week2_entries)}, missing={missing_sources}, body={ingest_data}")
@@ -470,6 +525,7 @@ def main() -> int:
     parser.add_argument("--manual", default="808d", help="manual collection for lookup/chat/upload")
     parser.add_argument("--alarm-code", default="3000", help="alarm code used in tests")
     parser.add_argument("--pdf", default=None, help="optional PDF path for ingest upload smoke test")
+    parser.add_argument("--pdf-max-mb", type=float, default=1.0, help="skip --pdf upload when the file is larger than this; set 0 to disable")
     parser.add_argument("--timeout", type=int, default=180, help="HTTP timeout in seconds")
     parser.add_argument("--require-week2-data", action="store_true", help="fail unless week-2 seeded data exists")
     args = parser.parse_args()
@@ -490,6 +546,7 @@ def main() -> int:
         runner.record("banner:poll", "SKIP", "service unavailable")
         runner.record("n8n:workflow-file", "SKIP", "service unavailable")
         runner.record("n8n:trigger-sync", "SKIP", "service unavailable")
+        runner.record("n8n:linked-records", "SKIP", "service unavailable")
         runner.record("stats", "SKIP", "service unavailable")
         if args.require_week2_data:
             runner.record("week2:data", "SKIP", "service unavailable")
@@ -504,7 +561,7 @@ def main() -> int:
     check_collections(runner)
     check_lookup(runner, args.manual, args.alarm_code)
     check_chat(runner, args.manual)
-    check_pdf_upload(runner, args.manual, args.pdf)
+    check_pdf_upload(runner, args.manual, args.pdf, args.pdf_max_mb)
     check_text_ingest(runner, args.manual, args.alarm_code)
     check_work_order_crud(runner, args.manual, args.alarm_code)
     check_banner_polling(runner, args.manual, args.alarm_code)

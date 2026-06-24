@@ -1,11 +1,11 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SINUMERIK Operations</title>
+  <title>SINUMERIK 維運管理</title>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/alarm_app.css">
+  <link rel="stylesheet" href="/static/css/operations.css?v=quality-2">
 </head>
 <body data-page="operations">
 
@@ -38,15 +38,15 @@
 </header>
 
 <div class="tabs">
-  <button class="tab-btn" onclick="window.location.href='/admin'">Admin</button>
-  <button class="tab-btn" onclick="window.location.href='/assistant'">Assistant</button>
-  <button class="tab-btn active" onclick="window.location.href='/operations'">Operations</button>
+  <button class="tab-btn" onclick="window.location.href=AlarmCoreApi.roleHome(AlarmCoreApi.readAuthUser()?.role)">我的工作台</button>
+  <button class="tab-btn" onclick="window.location.href='/assistant'">智慧助理</button>
+  <button class="tab-btn active" onclick="window.location.href='/operations'">維運管理</button>
 </div>
 
 <div class="tabs">
-  <button class="tab-btn active" data-tab="work" onclick="switchTab('work', this)">Work Orders</button>
-  <button class="tab-btn" data-tab="kb" onclick="switchTab('kb', this)">Knowledge Base</button>
-  <button class="tab-btn" data-tab="settings" onclick="switchTab('settings', this)">System Settings</button>
+  <button class="tab-btn active" data-tab="work" onclick="switchTab('work', this)">工單</button>
+  <button class="tab-btn" data-tab="kb" onclick="switchTab('kb', this)">知識庫</button>
+  <button class="tab-btn" data-tab="settings" onclick="switchTab('settings', this)">系統設定</button>
 </div>
 
 <div class="panel active" id="panel-work">
@@ -191,7 +191,7 @@
       <button class="close-x" onclick="closeWoModal()">✕</button>
     </div>
     <div class="wo-modal-grid">
-      <div><div class="wo-note">狀態</div><select class="wo-select" id="woEditStatus"><option value="pending">待處理</option><option value="assigned">已指派</option><option value="in_progress">處理中</option><option value="completed">已完成</option><option value="verified">已驗證</option></select></div>
+      <div><div class="wo-note">狀態</div><select class="wo-select" id="woEditStatus"><option value="pending">待處理</option><option value="assigned">已指派</option><option value="in_progress">處理中</option><option value="completed">已完成</option></select></div>
       <div><div class="wo-note">優先等級</div><select class="wo-select" id="woEditPriority"><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">緊急</option></select></div>
       <div><div class="wo-note">負責人</div><input class="wo-input" id="woEditAssignee"></div>
       <div><div class="wo-note">機台</div><input class="wo-input" id="woEditMachine"></div>

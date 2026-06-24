@@ -8,6 +8,21 @@ n8n, smoke tests, and acceptance checks.
 
 import os
 
+
+def load_dotenv_defaults(path: str = ".env") -> None:
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8-sig") as file:
+        for raw_line in file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_dotenv_defaults()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +44,8 @@ app = FastAPI(title="Alarm RAG Server - Multi Manual")
 def cors_origins() -> list[str]:
     raw = os.getenv("ALARM_RAG_CORS_ORIGINS", "")
     origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if os.getenv("ALARM_RAG_ENV", "development").strip().lower() in {"prod", "production"}:
+        origins = [origin for origin in origins if origin != "*"]
     return origins or ["http://localhost:8100", "http://127.0.0.1:8100"]
 
 

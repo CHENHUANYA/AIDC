@@ -14,8 +14,32 @@ import issues
 import work_orders
 
 
-async def fake_auto_feedback_to_kb(order):
-    return {"auto_ingested": False, "mocked": True, "order_id": order.get("id")}
+ACTORS = {
+    "operator01": {
+        "user_id": "operator01",
+        "role": "operator",
+        "line_scope": ["LINE-A"],
+        "team": "LINE-A-DAY",
+    },
+    "maintenance01": {
+        "user_id": "maintenance01",
+        "role": "maintenance",
+        "line_scope": ["LINE-A", "LINE-B"],
+        "team": "maintenance",
+    },
+    "supervisor01": {
+        "user_id": "supervisor01",
+        "role": "supervisor",
+        "line_scope": ["*"],
+        "team": "supervisor",
+    },
+    "admin01": {
+        "user_id": "admin01",
+        "role": "admin",
+        "line_scope": ["*"],
+        "team": "admin",
+    },
+}
 
 
 def run(coro):
@@ -26,17 +50,21 @@ def assert_status(payload: dict, expected: str) -> None:
     assert payload["status"] == expected, payload
 
 
+def actor_for(user_id: str) -> dict:
+    return ACTORS.get(user_id) or ACTORS["supervisor01"]
+
+
 def patch_order(order_id: str, **kwargs):
-    return run(work_orders.api_update_order(order_id, work_orders.UpdateWorkOrder(**kwargs)))
+    actor = actor_for(str(kwargs.get("updated_by") or "supervisor01"))
+    return run(work_orders.api_update_order(order_id, work_orders.UpdateWorkOrder(**kwargs), actor=actor))
 
 
 def patch_issue(issue_id: str, **kwargs):
-    return run(issues.api_update_issue(issue_id, issues.UpdateIssue(**kwargs)))
+    actor = actor_for(str(kwargs.get("updated_by") or "supervisor01"))
+    return run(issues.api_update_issue(issue_id, issues.UpdateIssue(**kwargs), actor=actor))
 
 
 def main():
-    work_orders._auto_feedback_to_kb = fake_auto_feedback_to_kb
-
     tmp_path = ROOT / "alarm_db" / "__closure_sync_check__"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -97,18 +125,19 @@ def main():
         )
         assert_status(completed, "ok")
         assert completed["issue"]["status"] == "completed", completed
+        assert completed["knowledge_review"]["review_status"] == "pending_review", completed
         assert completed["order"]["work_order_history"][-1]["action"] == "status_changed", completed
         assert completed["order"]["work_order_history"][-1]["changes"], completed
 
         rejected_completed_reopen_from_work_order = patch_order(order["id"], status="in_progress", updated_by="maintenance01")
         assert_status(rejected_completed_reopen_from_work_order, "error")
 
-        order_history = run(work_orders.api_get_order_history(order["id"]))
+        order_history = run(work_orders.api_get_order_history(order["id"], actor=ACTORS["supervisor01"]))
         assert_status(order_history, "ok")
         assert order_history["work_order_history"], order_history
         assert order_history["issue_history"], order_history
 
-        issue_history = run(issues.api_get_issue_history(issue["issue_id"]))
+        issue_history = run(issues.api_get_issue_history(issue["issue_id"], actor=ACTORS["supervisor01"]))
         assert_status(issue_history, "ok")
         assert issue_history["issue_history"], issue_history
         assert issue_history["work_order_history"], issue_history
@@ -160,9 +189,9 @@ def main():
         assert reopened["work_order"]["work_order_history"][-1]["action"] == "issue_synced", reopened
         assert reopened["work_order"]["work_order_history"][-1]["changes"], reopened
 
-        soft_deleted = run(work_orders.api_delete_order(order["id"]))
+        soft_deleted = run(work_orders.api_delete_order(order["id"], actor=ACTORS["admin01"]))
         assert_status(soft_deleted, "ok")
-        fetched_deleted = run(work_orders.api_get_order(order["id"]))
+        fetched_deleted = run(work_orders.api_get_order(order["id"], actor=ACTORS["admin01"]))
         assert fetched_deleted["order"]["deleted_at"], fetched_deleted
         assert fetched_deleted["order"]["work_order_history"][-1]["action"] == "deleted", fetched_deleted
         assert fetched_deleted["order"]["work_order_history"][-1]["changes"], fetched_deleted

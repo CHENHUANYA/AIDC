@@ -22,6 +22,7 @@ from app_context import (
     query_log,
 )
 from auth import actor_id, actor_role, get_actor, is_admin
+from rag_engine import model_cache_status
 from storage import ALARM_LOG_PATH
 
 
@@ -30,6 +31,8 @@ router = APIRouter()
 
 @router.get("/stats/alarms")
 async def alarm_stats(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
     today = datetime.now().strftime("%Y-%m-%d")
@@ -60,6 +63,8 @@ async def alarm_stats(actor: dict = Depends(get_actor)):
 
 @router.delete("/stats/alarms")
 async def clear_alarm_stats(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
     alarm_history.clear()
@@ -73,6 +78,8 @@ async def clear_alarm_stats(actor: dict = Depends(get_actor)):
 
 @router.post("/feedback")
 async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     entry = {
         "time": datetime.now().isoformat(),
         "query": req.query,
@@ -98,6 +105,8 @@ async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
 
 @router.get("/feedback/stats")
 async def feedback_stats(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
     if not os.path.exists(FEEDBACK_LOG):
@@ -143,6 +152,8 @@ async def feedback_stats(actor: dict = Depends(get_actor)):
 
 @router.get("/stats/queries")
 async def query_stats(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
     today = datetime.now().strftime("%Y-%m-%d")
@@ -154,13 +165,15 @@ async def query_stats(actor: dict = Depends(get_actor)):
 
     code_counts: Dict[str, int] = {}
     for query in query_log:
-        for code in re.findall(r"\d{2,6}", query["query"]):
+        query_text = str(query.get("query") or "")
+        for code in re.findall(r"\d{2,6}", query_text):
             code_counts[code] = code_counts.get(code, 0) + 1
     top_codes = sorted(code_counts.items(), key=lambda item: -item[1])[:10]
 
     collection_counts: Dict[str, int] = {}
     for query in query_log:
-        collection_counts[query["collection"]] = collection_counts.get(query["collection"], 0) + 1
+        collection = str(query.get("collection") or "unknown")
+        collection_counts[collection] = collection_counts.get(collection, 0) + 1
 
     return {
         "total": len(query_log),
@@ -176,6 +189,8 @@ async def query_stats(actor: dict = Depends(get_actor)):
 
 @router.get("/stats/errors")
 async def error_stats(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
     return {"recent": error_log[-50:], "total": len(error_log)}
@@ -196,6 +211,7 @@ async def health():
         "school_api_model": SCHOOL_API_MODEL,
         "school_api_fallback_to_ollama": SCHOOL_API_FALLBACK_TO_OLLAMA,
         "last_llm_source": _last_llm_source(),
+        "model_cache": model_cache_status(),
         "collections": collections,
     }
 

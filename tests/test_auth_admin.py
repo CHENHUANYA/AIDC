@@ -1,11 +1,19 @@
 import ast
 import os
+import shutil
 import unittest
+import uuid
+from pathlib import Path
+from unittest.mock import patch
+
+from auth import can_view_work_order
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 AUTH_PATH = os.path.join(ROOT, "auth.py")
 ADMIN_JS_PATH = os.path.join(ROOT, "static", "js", "pages", "admin.js")
+LOGIN_JS_PATH = os.path.join(ROOT, "static", "js", "pages", "login.js")
+TEST_TMP = Path(ROOT) / "tests_tmp" / "auth_admin"
 
 
 def read_text(path):
@@ -40,6 +48,7 @@ class AuthAdminStaticTests(unittest.TestCase):
     def setUpClass(cls):
         cls.auth_source = read_text(AUTH_PATH)
         cls.admin_source = read_text(ADMIN_JS_PATH)
+        cls.login_source = read_text(LOGIN_JS_PATH)
         cls.auth_tree = ast.parse(cls.auth_source)
         cls.auth_functions = function_names(cls.auth_tree)
 
@@ -53,8 +62,11 @@ class AuthAdminStaticTests(unittest.TestCase):
 
         self.assertIn(("router", "get", "/sessions"), routes)
         self.assertIn(("router", "delete", "/sessions/{token_prefix}"), routes)
-        self.assertIn(("router", "delete", "/mock-users/{user_id}/sessions"), routes)
-        self.assertIn(("router", "patch", "/mock-users/{user_id}/password"), routes)
+        self.assertIn(("router", "get", "/users"), routes)
+        self.assertIn(("router", "post", "/users"), routes)
+        self.assertIn(("router", "delete", "/users/{user_id}/sessions"), routes)
+        self.assertIn(("router", "patch", "/users/{user_id}/password"), routes)
+        self.assertIn(("router", "get", "/auth/login-config"), routes)
 
     def test_auth_security_helpers_are_present(self):
         expected = {
@@ -65,7 +77,6 @@ class AuthAdminStaticTests(unittest.TestCase):
             "is_active_admin",
             "is_last_active_admin",
             "validate_admin_role_change",
-            "validate_create_mock_user",
             "revoke_user_sessions",
         }
 
@@ -79,8 +90,60 @@ class AuthAdminStaticTests(unittest.TestCase):
 
     def test_admin_ui_exposes_user_session_revoke(self):
         self.assertIn("revokeAdminUserSessions", self.admin_source)
-        self.assertIn("/mock-users/${encodeURIComponent(userId)}/sessions", self.admin_source)
-        self.assertIn("Revoke Sessions", self.admin_source)
+        self.assertIn("/users/${encodeURIComponent(userId)}/sessions", self.admin_source)
+        self.assertIn("撤銷 Session", self.admin_source)
+
+    def test_login_ui_guides_role_card_password_flow(self):
+        self.assertIn("/auth/login-config", self.login_source)
+        self.assertIn("preselectUserFromNextPath", self.login_source)
+        self.assertIn("admin01", self.login_source)
+        self.assertIn("supervisor01", self.login_source)
+        self.assertIn("角色卡只會帶入使用者 ID", self.login_source)
+
+
+class AuthPermissionRuntimeTests(unittest.TestCase):
+    def test_maintenance_cannot_view_closed_work_orders(self):
+        actor = {
+            "user_id": "maintenance01",
+            "role": "maintenance",
+            "line_scope": ["LINE-A"],
+            "team": "maintenance",
+        }
+
+        self.assertFalse(can_view_work_order(actor, {"status": "completed", "assigned_to": "maintenance01"}))
+        self.assertFalse(can_view_work_order(actor, {"status": "verified", "assigned_to": "maintenance01"}))
+        self.assertTrue(can_view_work_order(actor, {"status": "in_progress", "assigned_to": "maintenance01"}))
+
+
+class AuthBootstrapRuntimeTests(unittest.TestCase):
+    def make_case_dir(self) -> Path:
+        base = TEST_TMP / uuid.uuid4().hex
+        base.mkdir(parents=True, exist_ok=False)
+        self.addCleanup(lambda: shutil.rmtree(base, ignore_errors=True))
+        return base
+
+    def test_production_bootstrap_rejects_placeholder_initial_password(self):
+        import auth
+
+        base = self.make_case_dir()
+        with patch.dict(os.environ, {"ALARM_RAG_ENV": "production", "ADMIN_INITIAL_PASSWORD": "change-me-now"}):
+            with patch.object(auth, "DB_DIR", str(base)):
+                with patch.object(auth, "USER_FILE", str(base / "users.json")):
+                    with self.assertRaises(RuntimeError):
+                        auth.ensure_user_store()
+
+        self.assertFalse((base / "users.json").exists())
+
+    def test_development_bootstrap_allows_default_initial_password(self):
+        import auth
+
+        base = self.make_case_dir()
+        with patch.dict(os.environ, {"ALARM_RAG_ENV": "development"}, clear=False):
+            with patch.object(auth, "DB_DIR", str(base)):
+                with patch.object(auth, "USER_FILE", str(base / "users.json")):
+                    auth.ensure_user_store()
+
+        self.assertTrue((base / "users.json").exists())
 
 
 if __name__ == "__main__":

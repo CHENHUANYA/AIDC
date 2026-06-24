@@ -1,0 +1,114 @@
+import os
+import unittest
+from unittest.mock import patch
+from pathlib import Path
+
+from scripts import preflight_check
+
+
+class PreflightCheckTests(unittest.TestCase):
+    def test_placeholder_deployment_secrets_are_failures(self):
+        with patch.dict(
+            os.environ,
+            {
+                "ADMIN_INITIAL_PASSWORD": "change-me-now",
+                "ALARM_RAG_TRIGGER_TOKEN": "replace-with-a-random-trigger-token",
+                "N8N_ENCRYPTION_KEY": "replace-with-a-long-random-string",
+            },
+            clear=False,
+        ):
+            results = []
+            preflight_check.check_env(results)
+
+        statuses = {item.name: item.status for item in results}
+        self.assertEqual("FAIL", statuses["env:ADMIN_INITIAL_PASSWORD"])
+        self.assertEqual("FAIL", statuses["env:ALARM_RAG_TRIGGER_TOKEN"])
+        self.assertEqual("FAIL", statuses["env:N8N_ENCRYPTION_KEY"])
+
+    def test_configured_deployment_secrets_pass(self):
+        with patch.dict(
+            os.environ,
+            {
+                "ADMIN_INITIAL_PASSWORD": "configured-admin-password",
+                "ALARM_RAG_TRIGGER_TOKEN": "configured-trigger-token",
+                "N8N_ENCRYPTION_KEY": "configured-n8n-key",
+            },
+            clear=False,
+        ):
+            results = []
+            preflight_check.check_env(results)
+
+        statuses = {item.name: item.status for item in results}
+        self.assertEqual("PASS", statuses["env:ADMIN_INITIAL_PASSWORD"])
+        self.assertEqual("PASS", statuses["env:ALARM_RAG_TRIGGER_TOKEN"])
+        self.assertEqual("PASS", statuses["env:N8N_ENCRYPTION_KEY"])
+
+    def test_compose_requires_current_n8n_runtime_flags(self):
+        results = []
+        with patch.object(preflight_check, "ROOT", Path(".")):
+            with patch("pathlib.Path.exists", return_value=True):
+                with patch("pathlib.Path.read_text", return_value="services:\n  n8n:\n    environment: {}\n"):
+                    with patch("subprocess.run") as run:
+                        run.return_value.returncode = 0
+                        run.return_value.stderr = ""
+                        run.return_value.stdout = ""
+                        preflight_check.check_compose(results)
+
+        statuses = {item.name: item.status for item in results}
+        self.assertEqual("FAIL", statuses["compose:N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS"])
+        self.assertEqual("FAIL", statuses["compose:N8N_RUNNERS_ENABLED"])
+
+    def test_compose_requires_alarm_runtime_contract(self):
+        compose_text = """
+services:
+  alarm_rag:
+    environment:
+      ALARM_RAG_ENV: production
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-change-me-now}
+      ALARM_RAG_TRIGGER_TOKEN: ${ALARM_RAG_TRIGGER_TOKEN:-}
+      DB_PATH: /app/alarm_db
+      HF_HOME: /app/hf_cache
+      VECTOR_STORE: ${VECTOR_STORE:-qdrant}
+      QDRANT_HOST: qdrant
+    volumes:
+      - ./alarm_db:/app/alarm_db
+      - ./hf_cache:/app/hf_cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "http://localhost:8000/health"]
+  qdrant:
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+  n8n:
+    environment:
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: true
+      N8N_RUNNERS_ENABLED: true
+"""
+        results = []
+        with patch.object(preflight_check, "ROOT", Path(".")):
+            with patch("pathlib.Path.exists", return_value=True):
+                with patch("pathlib.Path.read_text", return_value=compose_text):
+                    with patch("subprocess.run") as run:
+                        run.return_value.returncode = 0
+                        run.return_value.stderr = ""
+                        run.return_value.stdout = ""
+                        preflight_check.check_compose(results)
+
+        statuses = {item.name: item.status for item in results}
+        self.assertEqual("PASS", statuses["compose:alarm-env:ALARM_RAG_ENV"])
+        self.assertEqual("PASS", statuses["compose:alarm-env:DB_PATH"])
+        self.assertEqual("PASS", statuses["compose:volume:./alarm_db"])
+        self.assertEqual("PASS", statuses["compose:volume:./qdrant_data"])
+        self.assertEqual("PASS", statuses["compose:alarm-healthcheck"])
+
+    def test_n8n_workflow_contract_is_reported(self):
+        results = []
+        preflight_check.check_n8n_workflow(results)
+        statuses = {item.name: item.status for item in results}
+
+        self.assertEqual("PASS", statuses["n8n:request:url"])
+        self.assertEqual("PASS", statuses["n8n:request:token-header"])
+        self.assertEqual("PASS", statuses["n8n:payload:fields"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app_context import (
@@ -24,11 +24,13 @@ from app_context import (
     classify_alarm,
     error_log,
     get_engine,
+    is_safe_path_segment,
     log_query,
     make_openai_response,
     make_sse_chunk,
     parse_alarm_code_int,
 )
+from auth import actor_id, get_actor
 from storage import ERROR_LOG_PATH, append_jsonl
 
 
@@ -36,8 +38,24 @@ router = APIRouter()
 last_llm_source = "none"
 
 
+def require_authenticated(actor: dict) -> dict | None:
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
+    return None
+
+
+def validate_collection_name(collection_name: str) -> dict | None:
+    if not is_safe_path_segment(collection_name):
+        return {"status": "error", "message": "Invalid collection name"}
+    return None
+
+
+def error_detail(exc: Exception) -> str:
+    return str(exc) or exc.__class__.__name__
+
+
 def build_llm_unavailable_message(exc: Exception, docs: list[dict]) -> str:
-    detail = str(exc) or exc.__class__.__name__
+    detail = error_detail(exc)
     if not docs:
         return (
             "系統目前無法連線至 LLM 服務，暫時不能產生對話回答。\n\n"
@@ -161,7 +179,7 @@ async def handle_chat(req: ChatRequest, collection_name: str):
             "time": datetime.now().isoformat(),
             "collection": collection_name,
             "query": user_query,
-            "error": str(exc),
+            "error": error_detail(exc),
             "rag_preview": build_rag_preview(docs),
         })
         append_jsonl(ERROR_LOG_PATH, error_log[-1])
@@ -180,17 +198,47 @@ async def handle_chat(req: ChatRequest, collection_name: str):
 
 
 @router.post("/v1/chat/completions")
-async def chat_default(req: ChatRequest, collection: str = "alarms"):
+async def chat_default(req: ChatRequest, collection: str = "alarms", actor: dict = Depends(get_actor)):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
     return await handle_chat(req, collection)
 
 
+@router.post("/v1/free/chat/completions")
+async def free_chat(req: ChatRequest, actor: dict = Depends(get_actor)):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
+    messages = [{"role": "system", "content": FREE_CHAT_SYSTEM}]
+    messages.extend({"role": m.role, "content": m.content} for m in req.messages)
+    content = await call_llm(
+        messages=messages,
+        temperature=req.temperature or 0.7,
+        max_tokens=req.max_tokens or 1024,
+    )
+    return make_openai_response(content or "Error: empty response from LLM.")
+
+
 @router.post("/v1/{collection_name}/chat/completions")
-async def chat_collection(req: ChatRequest, collection_name: str):
+async def chat_collection(req: ChatRequest, collection_name: str, actor: dict = Depends(get_actor)):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
+    invalid = validate_collection_name(collection_name)
+    if invalid:
+        return invalid
     return await handle_chat(req, collection_name)
 
 
 @router.post("/v1/{collection_name}/chat")
-async def chat_multiturn(req: ChatRequest, collection_name: str):
+async def chat_multiturn(req: ChatRequest, collection_name: str, actor: dict = Depends(get_actor)):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
+    invalid = validate_collection_name(collection_name)
+    if invalid:
+        return invalid
     engine = get_engine(collection_name)
     if not engine.ready:
         return make_openai_response(NOT_READY_TEMPLATE.format(name=collection_name))
@@ -230,7 +278,7 @@ async def chat_multiturn(req: ChatRequest, collection_name: str):
             "time": datetime.now().isoformat(),
             "collection": collection_name,
             "query": user_query,
-            "error": str(exc),
+            "error": error_detail(exc),
             "rag_preview": build_rag_preview(docs),
         })
         append_jsonl(ERROR_LOG_PATH, error_log[-1])
@@ -239,7 +287,13 @@ async def chat_multiturn(req: ChatRequest, collection_name: str):
 
 
 @router.get("/v1/{collection_name}/lookup")
-async def lookup_alarm(collection_name: str, code: str):
+async def lookup_alarm(collection_name: str, code: str, actor: dict = Depends(get_actor)):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
+    invalid = validate_collection_name(collection_name)
+    if invalid:
+        return invalid
     engine = get_engine(collection_name)
     if not engine.ready:
         return {"found": False, "error": NOT_READY_TEMPLATE.format(name=collection_name)}
@@ -286,7 +340,7 @@ async def lookup_alarm(collection_name: str, code: str):
             "time": datetime.now().isoformat(),
             "collection": collection_name,
             "query": code_clean,
-            "error": str(exc),
+            "error": error_detail(exc),
         })
         append_jsonl(ERROR_LOG_PATH, error_log[-1])
         log_query(collection_name, code_clean, source="lookup", elapsed_ms=int((time.time() - start_ts) * 1000))
@@ -295,6 +349,9 @@ async def lookup_alarm(collection_name: str, code: str):
 
 @router.get("/v1/{collection_name}/models")
 async def models_collection(collection_name: str):
+    invalid = validate_collection_name(collection_name)
+    if invalid:
+        return invalid
     return {
         "object": "list",
         "data": [{"id": f"alarm-rag-{collection_name}", "object": "model", "owned_by": "local"}],
@@ -304,15 +361,3 @@ async def models_collection(collection_name: str):
 @router.get("/v1/models")
 async def models_default():
     return {"object": "list", "data": [{"id": "alarm-rag", "object": "model", "owned_by": "local"}]}
-
-
-@router.post("/v1/free/chat/completions")
-async def free_chat(req: ChatRequest):
-    messages = [{"role": "system", "content": FREE_CHAT_SYSTEM}]
-    messages.extend({"role": m.role, "content": m.content} for m in req.messages)
-    content = await call_llm(
-        messages=messages,
-        temperature=req.temperature or 0.7,
-        max_tokens=req.max_tokens or 1024,
-    )
-    return make_openai_response(content or "Error: empty response from LLM.")

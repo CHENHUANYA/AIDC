@@ -2,27 +2,21 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+ARG RAG_PRELOAD_MODELS=0
+
 ENV HF_HOME=/app/hf_cache
 ENV HF_HUB_OFFLINE=1
 ENV TRANSFORMERS_OFFLINE=1
 ENV RAG_HF_LOCAL_ONLY=true
 
-# Install dependencies first (cached layer)
 COPY requirements.txt .
 RUN python -m pip --isolated install --default-timeout=1000 --no-cache-dir -r requirements.txt
 
-# Pre-download embedding + reranker models at build time
-# This means startup is fast — models are baked into the image
-RUN HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 RAG_HF_LOCAL_ONLY=false python -c "\
-from sentence_transformers import SentenceTransformer, CrossEncoder; \
-print('Downloading embedder...'); \
-SentenceTransformer('mixedbread-ai/mxbai-embed-large-v1', cache_folder='/app/hf_cache'); \
-print('Downloading reranker...'); \
-CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); \
-print('Done.')"
-
-# Copy application code
 COPY . .
+
+RUN if [ "$RAG_PRELOAD_MODELS" = "1" ]; then \
+      python scripts/model_cache.py --hf-home /app/hf_cache --online preload ; \
+    fi
 
 EXPOSE 8000
 

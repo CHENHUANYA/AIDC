@@ -18,6 +18,8 @@
 |---|---|
 | `plans/ROLE_BASED_WORKFLOW_AND_FEEDBACK_PLAN.md` | 登入、角色權限、audit、LLM feedback、Supervisor/Admin 獨立頁規劃。 |
 | `plans/OPERATOR_MAINTENANCE_INTERFACE_PLAN.md` | Operator 與 Maintenance 頁面的畫面與互動規劃。 |
+| `plans/LOCAL_ONLY_CONTINUATION_PLAN_2026-06-24.md` | 在尚無廠商資料或現場環境時，本機可繼續推進與應暫緩事項。 |
+| `plans/NEXT_LOCAL_WORK_PLAN_2026-06-24.md` | 下一輪本機可繼續實作的工作流、驗收指令與暫停條件。 |
 
 ## 展示與驗收
 
@@ -27,12 +29,16 @@
 | `DEMO_RECORDING_SCRIPT.md` | 錄影與截圖版展示腳本。 |
 | `MVP_ACCEPTANCE_CHECKLIST.md` | MVP 驗收清單。 |
 | `MVP_WEEK4_ACCEPTANCE_REPORT.md` | Week 4 驗收輸出紀錄，可由 acceptance script 重新產生。 |
+| `LOCAL_ACCEPTANCE_REPORT_2026-06-24.md` | 本機 live acceptance、備份健康與 restore-smoke 驗收紀錄。 |
+| `UI_EVIDENCE_SUMMARY_2026-06-24.md` | 本機瀏覽器 E2E 流程與 responsive 截圖證據摘要。 |
+| `LOCAL_HANDOFF_MANIFEST_2026-06-24.md` | 本機交付包應包含、應排除與可引用證據清單。 |
 
 ## 廠商與資料欄位
 
 | 文件 | 用途 |
 |---|---|
 | `VENDOR_DATA_FIELD_CHECKLIST.md` | 廠商資料、使用者、工單、feedback、知識庫整合欄位清單。 |
+| `VENDOR_MACHINE_MAPPING_EXAMPLE.md` | 本機 mock machine_id 到未來設備主檔欄位的對照範例。 |
 | `MOCK_DATA_SPEC.md` | Demo mock alarm/work-order/knowledge data 規格。 |
 | `N8N_MOCK_WORKFLOW.md` | n8n mock workflow 設計與觸發說明。 |
 

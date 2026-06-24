@@ -1,5 +1,7 @@
 hf_cache/
 alarm_db/
+qdrant_data/
+n8n_data/
 vector_store/
 backups/
 exports/
@@ -9,3 +11,7 @@ __pycache__/
 .env
 .venv/
 venv/
+tests_tmp/
+.pytest_cache/
+pytest-cache-files-*/
+tmp*/

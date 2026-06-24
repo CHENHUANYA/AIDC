@@ -1,0 +1,92 @@
+[
+  {
+    "alarm_code": "3000",
+    "machine_id": "CNC-LINE-01",
+    "line_id": "LINE-A",
+    "likely_cause": "Program transfer or operator mode left NC start blocked.",
+    "recommended_first_action": "Verify selected part program, automatic mode, feed hold, and emergency-stop reset before clearing the alarm.",
+    "escalation_owner": "maintenance-a",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "5000",
+    "machine_id": "CNC-LINE-02",
+    "line_id": "LINE-A",
+    "likely_cause": "Warm-up channel request or axis enable state remained stale after idle time.",
+    "recommended_first_action": "Clear stale channel request and run a low-speed dry cycle after checking axis enable.",
+    "escalation_owner": "maintenance-b",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "20010",
+    "machine_id": "CNC-LINE-02",
+    "line_id": "LINE-A",
+    "likely_cause": "Axis enable relay or drive ready signal did not recover after power cycle.",
+    "recommended_first_action": "Check drive ready, axis enable relay, reference state, and low-speed jog response.",
+    "escalation_owner": "maintenance-b",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "7000",
+    "machine_id": "CNC-LINE-03",
+    "line_id": "LINE-B",
+    "likely_cause": "Fixture setup left the machine in jog mode or program lock state.",
+    "recommended_first_action": "Confirm fixture clamp, operator mode, and approved program selection.",
+    "escalation_owner": "maintenance-c",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "12010",
+    "machine_id": "CNC-LINE-04",
+    "line_id": "LINE-B",
+    "likely_cause": "Channel ready acknowledgement remained active after warm-up reset.",
+    "recommended_first_action": "Clear operator acknowledgement, verify mode group, and run one low-speed dry cycle.",
+    "escalation_owner": "maintenance-c",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "25010",
+    "machine_id": "CNC-LINE-05",
+    "line_id": "LINE-C",
+    "likely_cause": "Intermittent spindle feedback or enable connector during high-speed warm-up.",
+    "recommended_first_action": "Stop automatic cycle, inspect feedback connector, verify encoder feedback, and run spindle warm-up.",
+    "escalation_owner": "maintenance-d",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "400300",
+    "machine_id": "CNC-LINE-06",
+    "line_id": "LINE-C",
+    "likely_cause": "PLC acknowledgement timing mismatch after pallet clamp signal change.",
+    "recommended_first_action": "Compare clamp sensor state, PLC acknowledgement bit, and gateway timestamp order.",
+    "escalation_owner": "controls-a",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "300020",
+    "machine_id": "CNC-LINE-07",
+    "line_id": "LINE-D",
+    "likely_cause": "Drive acceleration profile exceeded approved demo limits.",
+    "recommended_first_action": "Restore approved drive profile, check acceleration ramp, and run dry acceleration test.",
+    "escalation_owner": "drive-specialist",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "emergency stop",
+    "machine_id": "DEMO-STATION",
+    "line_id": "TRAINING",
+    "likely_cause": "Emergency-stop button, door interlock, or safety relay is still active.",
+    "recommended_first_action": "Verify the physical safety chain and reset sequence before restarting the demo station.",
+    "escalation_owner": "safety-lead",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  }
+]

@@ -1,8 +1,19 @@
 import argparse
 import json
+import os
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib import error, request
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from env_utils import EnvConfigError, admin_initial_password, load_project_env
+
+
+load_project_env()
 
 
 @dataclass
@@ -51,29 +62,68 @@ class RoleSmoke:
         except (TimeoutError, error.URLError) as exc:
             return 0, {"_error": str(exc)}
 
-    def login(self, username: str, password: str = "demo1234") -> str:
+    def login(self, username: str, password: str | None = None, record_result: bool = True) -> str:
+        try:
+            password = password or admin_initial_password()
+        except EnvConfigError as exc:
+            if record_result:
+                self.record(f"login:{username}", False, str(exc))
+            return ""
         code, data = self.request("/auth/login", "POST", {"username": username, "password": password})
         token = data.get("token") if isinstance(data, dict) else ""
-        self.record(f"login:{username}", code == 200 and bool(token), f"HTTP {code}")
+        if record_result:
+            self.record(f"login:{username}", code == 200 and bool(token), f"HTTP {code}")
         if token:
             self.tokens[username] = token
         return token
 
+    def reset_user_password(self, user_id: str, password: str, admin_token: str) -> bool:
+        code, data = self.request(
+            f"/users/{user_id}/password",
+            "PATCH",
+            {"password": password},
+            admin_token,
+        )
+        ok = code == 200 and isinstance(data, dict) and data.get("status") == "ok"
+        self.record(f"admin:reset-password:{user_id}", ok, f"HTTP {code}")
+        return ok
 
-def check_page(runner: RoleSmoke, path: str, expected: str) -> None:
+
+def check_page(runner: RoleSmoke, path: str, expected: str | list[str]) -> None:
     code, body = runner.request(path)
-    ok = code == 200 and isinstance(body, str) and expected in body
+    markers = [expected] if isinstance(expected, str) else expected
+    ok = code == 200 and isinstance(body, str) and all(marker in body for marker in markers)
     runner.record(f"page:{path}", ok, f"HTTP {code}")
 
 
+def check_login_config(runner: RoleSmoke) -> None:
+    code, data = runner.request("/auth/login-config")
+    users = data.get("bootstrap_users") if isinstance(data, dict) else None
+    has_roles = {
+        user.get("role")
+        for user in users or []
+        if isinstance(user, dict)
+    }
+    ok = (
+        code == 200
+        and isinstance(data, dict)
+        and data.get("status") == "ok"
+        and isinstance(data.get("production"), bool)
+        and isinstance(data.get("initial_password_configured"), bool)
+        and {"supervisor", "admin"}.issubset(has_roles)
+    )
+    detail = f"HTTP {code}, roles={','.join(sorted(has_roles)) if has_roles else '-'}"
+    runner.record("login:config", ok, detail)
+
+
 def check_admin_console(runner: RoleSmoke, token: str) -> None:
-    code, users = runner.request("/mock-users", token=token)
+    code, users = runner.request("/users", token=token)
     user_list = users.get("users") if isinstance(users, dict) else []
     has_active = any(isinstance(user, dict) and "active" in user for user in user_list)
     runner.record("admin:users", code == 200 and has_active, f"HTTP {code}, users={len(user_list)}")
 
     code, patched = runner.request(
-        "/mock-users/operator02",
+        "/users/operator02",
         "PATCH",
         {"line_scope": ["LINE-B"], "active": True},
         token,
@@ -120,10 +170,24 @@ def main() -> int:
     args = parser.parse_args()
 
     runner = RoleSmoke(args.base_url, args.timeout)
-    check_page(runner, "/supervisor", "SUPERVISOR CONSOLE")
-    check_page(runner, "/admin", "ADMIN CONSOLE")
+    check_page(runner, "/supervisor", ['data-page="supervisor"', "Supervisor"])
+    check_page(runner, "/admin", ['data-page="admin"', "Admin"])
+    check_login_config(runner)
     admin_token = runner.login("admin01")
-    supervisor_token = runner.login("supervisor01")
+    try:
+        supervisor_password = os.getenv("SUPERVISOR_TEST_PASSWORD") or admin_initial_password()
+    except EnvConfigError as exc:
+        runner.record("login:supervisor01", False, str(exc))
+        supervisor_password = ""
+    supervisor_token = runner.login("supervisor01", supervisor_password, record_result=False) if supervisor_password else ""
+    if (
+        not supervisor_token
+        and supervisor_password
+        and admin_token
+        and runner.reset_user_password("supervisor01", supervisor_password, admin_token)
+    ):
+        supervisor_token = runner.login("supervisor01", supervisor_password, record_result=False)
+    runner.record("login:supervisor01", bool(supervisor_token), "token=yes" if supervisor_token else "token=no")
     if admin_token:
         check_admin_console(runner, admin_token)
     if supervisor_token:

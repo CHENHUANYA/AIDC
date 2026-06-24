@@ -2,14 +2,17 @@
 work_orders.py - Work order JSON storage + CRUD API.
 
 Features
-- JSON persistence at ./alarm_db/work_orders.json
+- JSON persistence at DB_PATH/work_orders.json
 - CRUD endpoints for work orders
-- When a work order is completed/verified with a resolution, auto-ingest the note
-  back into the RAG knowledge base via /v1/{manual}/ingest-text.
+- Completed work orders become knowledge candidates.
+- Admin approval ingests reviewed notes into the RAG knowledge base.
 """
 
 import json
 import os
+import zipfile
+from difflib import SequenceMatcher
+from io import BytesIO
 import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
@@ -22,11 +25,57 @@ from auth import actor_id, actor_role, can_update_work_order, can_view_work_orde
 
 router = APIRouter()
 
-DB_DIR = "./alarm_db"
+DB_DIR = os.getenv("DB_PATH", "./alarm_db")
 WO_FILE = os.path.join(DB_DIR, "work_orders.json")
 ARCHIVE_DIR = os.path.join(DB_DIR, "archive")
 STATUSES = ["pending", "assigned", "in_progress", "completed", "verified"]
 PRIORITIES = ["low", "medium", "high", "critical"]
+KB_REVIEW_STATUSES = [
+    "not_ready",
+    "pending_review",
+    "needs_revision",
+    "rejected",
+    "ingested",
+    "validation_failed",
+]
+OPERATOR_WORK_ORDER_PATCH_FIELDS = {"status", "verified_by", "notes", "updated_by"}
+MAINTENANCE_WORK_ORDER_PATCH_FIELDS = {
+    "status",
+    "priority",
+    "assigned_to",
+    "machine_id",
+    "description",
+    "resolution",
+    "notes",
+    "accepted_by",
+    "completed_by",
+    "root_cause",
+    "repair_action",
+    "failure_category",
+    "llm_correctness",
+    "llm_coverage",
+    "llm_missing_info",
+    "llm_expected_fix",
+    "llm_answer_used",
+    "updated_by",
+}
+
+
+def upload_limit_bytes(env_name: str, default_mb: float) -> int:
+    try:
+        mb = float(os.getenv(env_name, str(default_mb)))
+    except ValueError:
+        mb = default_mb
+    return max(int(mb * 1024 * 1024), 1)
+
+
+EXCEL_UPLOAD_MAX_BYTES = upload_limit_bytes("ALARM_RAG_EXCEL_UPLOAD_MAX_MB", 10)
+XLSX_MAGIC = b"PK\x03\x04"
+XLS_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+XLSX_MAX_UNCOMPRESSED_BYTES = upload_limit_bytes("ALARM_RAG_XLSX_UNCOMPRESSED_MAX_MB", 50)
+XLSX_MAX_SHARED_STRINGS_BYTES = upload_limit_bytes("ALARM_RAG_XLSX_SHARED_STRINGS_MAX_MB", 10)
+XLSX_MAX_ENTRIES = int(os.getenv("ALARM_RAG_XLSX_MAX_ENTRIES", "2000"))
+XLSX_MAX_COMPRESSION_RATIO = float(os.getenv("ALARM_RAG_XLSX_MAX_COMPRESSION_RATIO", "100"))
 
 STATUS_LABELS = {
     "pending": "待處理",
@@ -90,6 +139,92 @@ def _direct_verification_error(order: dict, user_id: str) -> str:
     return ""
 
 
+def _knowledge_candidate_ready(order: dict) -> bool:
+    return order.get("status") in ("completed", "verified") and all(
+        _clean_text(str(order.get(field) or ""))
+        for field in ("root_cause", "repair_action", "resolution")
+    )
+
+
+def _refresh_knowledge_review_state(order: dict, changed_fields: set[str] | list[str]) -> None:
+    changed = set(changed_fields)
+    review_fields = {
+        "manual",
+        "alarm_code",
+        "machine_id",
+        "description",
+        "root_cause",
+        "repair_action",
+        "resolution",
+        "notes",
+        "llm_correctness",
+        "llm_coverage",
+        "llm_missing_info",
+        "llm_expected_fix",
+    }
+    ready = _knowledge_candidate_ready(order)
+    order["kb_candidate"] = ready
+    current = str(order.get("kb_review_status") or "not_ready")
+    if not ready:
+        if current != "ingested":
+            order["kb_review_status"] = "not_ready"
+        return
+    relevant_change = bool(changed & review_fields)
+    if current in ("ingested", "needs_revision", "rejected", "validation_failed") and not relevant_change:
+        return
+    if current == "not_ready" or relevant_change:
+        order["kb_review_status"] = "pending_review"
+        order["kb_reviewed_by"] = ""
+        order["kb_reviewed_at"] = ""
+
+
+def _knowledge_comparison_text(order: dict) -> str:
+    return " ".join(
+        _clean_text(str(order.get(field) or "")).lower()
+        for field in ("manual", "alarm_code", "root_cause", "repair_action", "resolution")
+    )
+
+
+def _find_duplicate_knowledge_order(order: dict, orders: List[dict]) -> str:
+    candidate_text = _knowledge_comparison_text(order)
+    if not candidate_text.strip():
+        return ""
+    for existing in orders:
+        if existing.get("id") == order.get("id"):
+            continue
+        if existing.get("kb_review_status") != "ingested":
+            continue
+        if str(existing.get("manual") or "") != str(order.get("manual") or ""):
+            continue
+        if str(existing.get("alarm_code") or "") != str(order.get("alarm_code") or ""):
+            continue
+        similarity = SequenceMatcher(None, candidate_text, _knowledge_comparison_text(existing)).ratio()
+        if similarity >= 0.94:
+            return str(existing.get("id") or "")
+    return ""
+
+
+def _request_fields(req: BaseModel) -> set[str]:
+    fields = getattr(req, "model_fields_set", None)
+    if fields is None:
+        fields = getattr(req, "__fields_set__", set())
+    return set(fields or set())
+
+
+def _work_order_patch_permission_error(actor: dict, req: BaseModel) -> str:
+    role = actor_role(actor)
+    if role == "operator":
+        allowed_fields = OPERATOR_WORK_ORDER_PATCH_FIELDS
+    elif role == "maintenance":
+        allowed_fields = MAINTENANCE_WORK_ORDER_PATCH_FIELDS
+    else:
+        return ""
+    disallowed = _request_fields(req) - allowed_fields
+    if disallowed:
+        return f"Permission denied for work order fields: {', '.join(sorted(disallowed))}"
+    return ""
+
+
 def _parse_iso(value: str) -> Optional[datetime]:
     if not value:
         return None
@@ -113,7 +248,18 @@ def _load_orders() -> List[dict]:
         return []
     try:
         with open(WO_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            orders = json.load(f)
+        for order in orders:
+            order.setdefault("kb_candidate", False)
+            order.setdefault("kb_review_status", "not_ready")
+            order.setdefault("kb_review_note", "")
+            order.setdefault("kb_reviewed_by", "")
+            order.setdefault("kb_reviewed_at", "")
+            order.setdefault("kb_ingested_at", "")
+            order.setdefault("kb_ingest_result", None)
+            order.setdefault("kb_duplicate_of", "")
+            _refresh_knowledge_review_state(order, [])
+        return orders
     except (json.JSONDecodeError, IOError):
         return []
 
@@ -240,6 +386,11 @@ class UpdateWorkOrder(BaseModel):
     updated_by: Optional[str] = None
 
 
+class KnowledgeReviewRequest(BaseModel):
+    action: str
+    note: Optional[str] = ""
+
+
 # ----------------- Public helper -----------------
 def create_order_dict(
     alarm_code: str,
@@ -282,6 +433,13 @@ def create_order_dict(
         "llm_expected_fix": "",
         "llm_answer_used": False,
         "kb_candidate": False,
+        "kb_review_status": "not_ready",
+        "kb_review_note": "",
+        "kb_reviewed_by": "",
+        "kb_reviewed_at": "",
+        "kb_ingested_at": "",
+        "kb_ingest_result": None,
+        "kb_duplicate_of": "",
         "rag_suggestion": rag_suggestion,
         "source": source,
         "created_at": now,
@@ -411,6 +569,8 @@ async def api_create_order(req: CreateWorkOrder, actor: dict = Depends(get_actor
 
 @router.get("/work-orders")
 async def api_list_orders(status: Optional[str] = None, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     orders = _visible_orders(actor)
     if status:
         orders = [o for o in orders if o["status"] == status]
@@ -419,6 +579,8 @@ async def api_list_orders(status: Optional[str] = None, actor: dict = Depends(ge
 
 @router.get("/work-orders/stats")
 async def api_order_stats(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     orders = _visible_orders(actor)
     today = datetime.now().strftime("%Y-%m-%d")
     recent_days = _recent_day_keys(7)
@@ -434,6 +596,7 @@ async def api_order_stats(actor: dict = Depends(get_actor)):
     assigned_orders = 0
     unassigned_open = 0
     overdue_open = 0
+    by_kb_review_status: dict[str, int] = {status: 0 for status in KB_REVIEW_STATUSES}
     for o in orders:
         by_status[o["status"]] = by_status.get(o["status"], 0) + 1
         by_priority[o["priority"]] = by_priority.get(o["priority"], 0) + 1
@@ -443,6 +606,8 @@ async def api_order_stats(actor: dict = Depends(get_actor)):
         by_manual[manual] = by_manual.get(manual, 0) + 1
         by_source[source] = by_source.get(source, 0) + 1
         by_machine[machine] = by_machine.get(machine, 0) + 1
+        review_status = str(o.get("kb_review_status") or "not_ready")
+        by_kb_review_status[review_status] = by_kb_review_status.get(review_status, 0) + 1
 
         created_at = _parse_iso(o.get("created_at", ""))
         completed_at = _parse_iso(o.get("completed_at", ""))
@@ -505,6 +670,8 @@ async def api_order_stats(actor: dict = Depends(get_actor)):
         "daily_created": [{"date": day, "count": created_daily[day]} for day in recent_days],
         "daily_completed": [{"date": day, "count": completed_daily[day]} for day in recent_days],
         "top_machines": [{"machine_id": machine, "count": count} for machine, count in top_machines],
+        "by_kb_review_status": by_kb_review_status,
+        "pending_knowledge_review": by_kb_review_status.get("pending_review", 0),
         "status_labels": STATUS_LABELS,
         "priority_labels": PRIORITY_LABELS,
     }
@@ -512,6 +679,8 @@ async def api_order_stats(actor: dict = Depends(get_actor)):
 
 @router.get("/work-orders/archive")
 async def api_work_order_archive(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     archives, orders = _load_archived_orders()
     issues_by_id = _issue_map_by_id()
     orders = [
@@ -530,6 +699,8 @@ async def api_work_order_archive(actor: dict = Depends(get_actor)):
 
 @router.get("/work-orders/{order_id}")
 async def api_get_order(order_id: str, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     _, order = _find_order(order_id)
     if order is None:
         return {"status": "error", "message": f"Work order {order_id} not found"}
@@ -541,6 +712,8 @@ async def api_get_order(order_id: str, actor: dict = Depends(get_actor)):
 
 @router.get("/work-orders/{order_id}/history")
 async def api_get_order_history(order_id: str, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     _, order = _find_order(order_id)
     if order is None:
         return {"status": "error", "message": f"Work order {order_id} not found"}
@@ -568,6 +741,8 @@ async def api_get_order_history(order_id: str, actor: dict = Depends(get_actor))
 
 @router.patch("/work-orders/{order_id}")
 async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     orders = _load_orders()
     idx, order = -1, None
     for i, o in enumerate(orders):
@@ -583,6 +758,9 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
         return {"status": "error", "message": "Permission denied"}
     if not can_update_work_order(actor, order, req.status):
         return {"status": "error", "message": "Permission denied"}
+    field_permission_error = _work_order_patch_permission_error(actor, req)
+    if field_permission_error:
+        return {"status": "error", "message": field_permission_error}
 
     now = datetime.now().isoformat()
     before_order = dict(order)
@@ -642,6 +820,17 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
     if verification_error:
         return {"status": "error", "message": verification_error}
 
+    previous_review_status = order.get("kb_review_status", "not_ready")
+    _refresh_knowledge_review_state(order, changed_fields)
+    duplicate_of = _find_duplicate_knowledge_order(order, orders) if order.get("kb_candidate") else ""
+    if order.get("kb_duplicate_of", "") != duplicate_of:
+        order["kb_duplicate_of"] = duplicate_of
+        changed_fields.append("kb_duplicate_of")
+    if order.get("kb_review_status") != previous_review_status:
+        changed_fields.append("kb_review_status")
+    if order.get("kb_candidate") != before_order.get("kb_candidate", False):
+        changed_fields.append("kb_candidate")
+
     order["updated_at"] = now
     order["updated_by"] = updated_by
     if changed_fields:
@@ -668,15 +857,17 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
         except Exception as exc:
             print(f"[WO] issue sync failed for {order['id']}: {exc}")
 
-    feedback_result = None
-    if order["status"] in ("completed", "verified") and order.get("resolution"):
-        feedback_result = await _auto_feedback_to_kb(order)
-
-    return {"status": "ok", "order": order, "feedback": feedback_result, "issue": synced_issue}
+    review_result = {
+        "candidate": bool(order.get("kb_candidate")),
+        "review_status": order.get("kb_review_status", "not_ready"),
+    }
+    return {"status": "ok", "order": order, "knowledge_review": review_result, "issue": synced_issue}
 
 
 @router.delete("/work-orders/{order_id}")
 async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
     orders = _load_orders()
@@ -707,11 +898,13 @@ async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
 
 # ----------------- KB feedback -----------------
 async def _auto_feedback_to_kb(order: dict) -> dict:
-    """Auto-write resolution back to knowledge base."""
+    """Write an admin-approved work-order resolution to the knowledge base."""
     text = (
         f"[維修工單] Alarm: {order['alarm_code']}\n"
         f"機台: {order.get('machine_id', 'N/A')}\n"
         f"描述: {order.get('description', 'N/A')}\n"
+        f"根本原因: {order.get('root_cause', 'N/A')}\n"
+        f"實際維修動作: {order.get('repair_action', 'N/A')}\n"
         f"處理結果: {order['resolution']}\n"
         f"技師: {order.get('assigned_to', 'N/A')}\n"
         f"完成時間: {order.get('completed_at', 'N/A')}\n"
@@ -730,15 +923,37 @@ async def _auto_feedback_to_kb(order: dict) -> dict:
 
     try:
         from app_context import IngestTextRequest
+        from app_context import get_engine
         from routes.ingest_routes import ingest_text_entry
 
         data = await ingest_text_entry(manual, IngestTextRequest(**payload))
-        ok = data.get("status") == "ok"
+        doc_id = data.get("doc_id")
+        engine = get_engine(manual)
+        indexed = bool(doc_id) and any(
+            section.get("doc_id") == doc_id
+            for section in engine.sections
+        )
+        validation_query = " ".join(
+            str(order.get(field) or "")
+            for field in ("description", "root_cause", "repair_action", "resolution")
+        ).strip()
+        retrieved = engine.retrieve(validation_query, top_k=5) if validation_query else []
+        retrieval_hit = bool(doc_id) and any(
+            result.get("meta", {}).get("doc_id") == doc_id
+            for result in retrieved
+        )
+        ok = data.get("status") == "ok" and indexed
         return {
             "auto_ingested": ok,
             "collection": manual,
+            "doc_id": doc_id,
             "text_preview": text[:200],
             "response": data,
+            "validation": {
+                "indexed": indexed,
+                "retrieval_hit": retrieval_hit,
+                "query": validation_query,
+            },
         }
     except Exception as exc:
         return {
@@ -747,6 +962,97 @@ async def _auto_feedback_to_kb(order: dict) -> dict:
             "text_preview": text[:200],
             "error": str(exc),
         }
+
+
+@router.post("/work-orders/{order_id}/knowledge-review")
+async def review_work_order_knowledge(
+    order_id: str,
+    req: KnowledgeReviewRequest,
+    actor: dict = Depends(get_actor),
+):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
+    if not is_admin(actor):
+        return {"status": "error", "message": "Permission denied"}
+
+    action = _clean_text(req.action).lower()
+    if action not in ("approve", "needs_revision", "reject"):
+        return {"status": "error", "message": f"Invalid review action: {req.action}"}
+
+    orders = _load_orders()
+    order = next((item for item in orders if item.get("id") == order_id and not item.get("deleted_at")), None)
+    if order is None:
+        return {"status": "error", "message": f"Work order {order_id} not found"}
+
+    _refresh_knowledge_review_state(order, [])
+    if action == "approve" and not _knowledge_candidate_ready(order):
+        return {
+            "status": "error",
+            "message": "Knowledge approval requires completed status, root_cause, repair_action, and resolution.",
+        }
+    duplicate_of = _find_duplicate_knowledge_order(order, orders)
+    order["kb_duplicate_of"] = duplicate_of
+    if action == "approve" and duplicate_of:
+        _save_orders(orders)
+        return {
+            "status": "error",
+            "message": f"Potential duplicate of approved work order {duplicate_of}",
+            "duplicate_of": duplicate_of,
+        }
+    if action == "needs_revision" and not _clean_text(req.note):
+        return {"status": "error", "message": "Revision note is required"}
+
+    now = datetime.now().isoformat()
+    before_order = dict(order)
+    review_status = {
+        "needs_revision": "needs_revision",
+        "reject": "rejected",
+    }.get(action, "pending_review")
+    ingest_result = None
+
+    if action == "approve":
+        ingest_result = await _auto_feedback_to_kb(order)
+        review_status = "ingested" if ingest_result.get("auto_ingested") else "validation_failed"
+        order["kb_ingested_at"] = now if review_status == "ingested" else ""
+        order["kb_ingest_result"] = ingest_result
+
+    order["kb_candidate"] = _knowledge_candidate_ready(order)
+    order["kb_review_status"] = review_status
+    order["kb_review_note"] = _clean_text(req.note)
+    order["kb_reviewed_by"] = actor_id(actor)
+    order["kb_reviewed_at"] = now
+    order["updated_by"] = actor_id(actor)
+    order["updated_at"] = now
+
+    review_fields = [
+        "kb_candidate",
+        "kb_review_status",
+        "kb_review_note",
+        "kb_reviewed_by",
+        "kb_reviewed_at",
+        "kb_ingested_at",
+        "kb_ingest_result",
+        "kb_duplicate_of",
+    ]
+    _append_order_history(
+        order,
+        f"knowledge_{action}",
+        actor_id(actor),
+        review_fields,
+        "",
+        "",
+        field_changes(before_order, order, review_fields),
+    )
+    _save_orders(orders)
+
+    if review_status == "validation_failed":
+        return {
+            "status": "error",
+            "message": ingest_result.get("error") or "Knowledge ingestion failed",
+            "order": order,
+            "ingest": ingest_result,
+        }
+    return {"status": "ok", "order": order, "ingest": ingest_result}
 
 
 # ----------------- Excel import -----------------
@@ -796,8 +1102,40 @@ def _detect_columns(header_row: list) -> dict | None:
     return mapping if len(mapping) >= 1 else None
 
 
+def _validate_xlsx_archive(content: bytes) -> str:
+    try:
+        with zipfile.ZipFile(BytesIO(content), "r") as archive:
+            infos = archive.infolist()
+            if len(infos) > XLSX_MAX_ENTRIES:
+                return f"XLSX archive has too many entries ({len(infos)} > {XLSX_MAX_ENTRIES})"
+
+            total_uncompressed = 0
+            for info in infos:
+                if info.file_size < 0 or info.compress_size < 0:
+                    return "Invalid XLSX archive member size"
+                total_uncompressed += info.file_size
+                if total_uncompressed > XLSX_MAX_UNCOMPRESSED_BYTES:
+                    max_mb = XLSX_MAX_UNCOMPRESSED_BYTES / 1024 / 1024
+                    return f"XLSX uncompressed content exceeds {max_mb:g} MB limit"
+                if info.filename == "xl/sharedStrings.xml" and info.file_size > XLSX_MAX_SHARED_STRINGS_BYTES:
+                    max_mb = XLSX_MAX_SHARED_STRINGS_BYTES / 1024 / 1024
+                    return f"XLSX shared strings exceed {max_mb:g} MB limit"
+                if info.compress_size > 0:
+                    ratio = info.file_size / info.compress_size
+                    if ratio > XLSX_MAX_COMPRESSION_RATIO:
+                        return "XLSX archive compression ratio is too high"
+
+            if "[Content_Types].xml" not in archive.namelist():
+                return "Invalid XLSX archive structure"
+    except zipfile.BadZipFile:
+        return "Invalid XLSX archive"
+    return ""
+
+
 @router.post("/work-orders/import-excel")
 async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
     """
@@ -807,14 +1145,26 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
     - 若第一列包含已知欄位名（如「警報代碼」「machine_id」），自動對應
     - 否則按預設順序: alarm_code, machine_id, description, assigned_to, resolution, priority, status, manual
     """
-    if not file.filename.lower().endswith((".xlsx", ".xls")):
+    safe_filename = os.path.basename(file.filename or "")
+    if not safe_filename.lower().endswith((".xlsx", ".xls")):
         return {"status": "error", "message": "僅支援 .xlsx 檔案"}
 
     tmp_dir = tempfile.mkdtemp(dir=DB_DIR)
-    tmp_path = os.path.join(tmp_dir, file.filename)
+    tmp_path = os.path.join(tmp_dir, safe_filename)
     try:
+        content = await file.read()
+        if len(content) > EXCEL_UPLOAD_MAX_BYTES:
+            max_mb = EXCEL_UPLOAD_MAX_BYTES / 1024 / 1024
+            return {"status": "error", "message": f"Excel upload exceeds {max_mb:g} MB limit"}
+        if safe_filename.lower().endswith(".xlsx") and not content.startswith(XLSX_MAGIC):
+            return {"status": "error", "message": "Invalid XLSX file signature"}
+        if safe_filename.lower().endswith(".xlsx"):
+            archive_error = _validate_xlsx_archive(content)
+            if archive_error:
+                return {"status": "error", "message": archive_error}
+        if safe_filename.lower().endswith(".xls") and not content.startswith(XLS_OLE_MAGIC):
+            return {"status": "error", "message": "Invalid XLS file signature"}
         with open(tmp_path, "wb") as f:
-            content = await file.read()
             f.write(content)
 
         from openpyxl import load_workbook
@@ -837,7 +1187,7 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
         imported = 0
         skipped = 0
         errors = []
-        feedback_results = []
+        candidate_count = 0
 
         for row_idx, row in enumerate(data_rows, start=2 if col_map else 1):
             try:
@@ -897,6 +1247,12 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
                                 break
                             if status in ("completed", "verified"):
                                 o["completed_at"] = o.get("completed_at") or datetime.now().isoformat()
+                            _refresh_knowledge_review_state(
+                                o,
+                                {"status", "resolution", "notes", "root_cause", "repair_action", "verified_by"},
+                            )
+                            if o.get("kb_review_status") == "pending_review":
+                                candidate_count += 1
                             _append_order_history(
                                 o,
                                 "import_status_override",
@@ -915,16 +1271,6 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
                     if closure_error:
                         continue
 
-                # Auto-ingest resolution to KB
-                if fields.get("resolution") and status in ("completed", "verified"):
-                    fb = await _auto_feedback_to_kb({
-                        **order,
-                        "resolution": fields["resolution"],
-                        "notes": fields.get("notes", ""),
-                        "status": status,
-                    })
-                    feedback_results.append(fb)
-
                 imported += 1
             except Exception as e:
                 errors.append(f"Row {row_idx}: {str(e)}")
@@ -933,11 +1279,12 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
 
         return {
             "status": "ok",
-            "filename": file.filename,
+            "filename": safe_filename,
             "imported": imported,
             "skipped": skipped,
             "errors": errors[:10],
-            "feedback_count": len(feedback_results),
+            "candidate_count": candidate_count,
+            "feedback_count": 0,
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}

@@ -31,7 +31,8 @@ Example:
 
 ## Week 1 Event Set
 
-The canonical week-1 events live in `mock_data/demo_alarm_events.json`. The set now contains 20 events so BI charts can show source, severity, code, and machine distribution without vendor data.
+The canonical week-1 events live in `mock_data/demo_alarm_events.json`. The set now contains 28 events so BI charts can show source, severity, code, machine, line, and owner distribution without vendor data.
+Every event is explicitly marked with `mock_data: true`, includes `line_id`, and includes an `alarm_group` for grouping by machine, line, severity, and source.
 
 | Scenario | Alarm | Manual | Machine | Purpose |
 |---|---:|---|---|---|
@@ -39,8 +40,23 @@ The canonical week-1 events live in `mock_data/demo_alarm_events.json`. The set 
 | Axis/program alarm | 5000 | 808d | CNC-LINE-02 | Validate alternate code path |
 | Emergency stop | emergency stop | 808d | DEMO-STATION | Validate keyword query path |
 | Repeat alarm | 3000 | 808d | CNC-LINE-01 | Validate BI aggregation |
-| Axis/drive/PLC events | 20010, 300000, 400100 | 808d | CNC-LINE-02..07 | Validate severity and category distribution |
-| Natural-language events | feed hold, safety door | 808d | DEMO-STATION | Validate keyword query path |
+| Axis/drive/PLC events | 20010, 25010, 300020, 400300 | 808d | CNC-LINE-02..07 | Validate severity, owner, and category distribution |
+| Natural-language events | feed hold, safety door, maintenance reminder | 808d | DEMO-STATION, CNC-LINE-05 | Validate keyword query path and low-priority filtering |
+
+## Scenario Matrix
+
+The scenario matrix lives in `mock_data/scenario_matrix.json`.
+
+It maps representative mock scenarios across:
+
+- `alarm_code`
+- `machine_id`
+- `line_id`
+- `likely_cause`
+- `recommended_first_action`
+- `escalation_owner`
+
+Each row is marked `mock_data: true` and is validated against the machine mapping tests.
 
 ## Generated Data
 
@@ -56,11 +72,24 @@ Smoke tests may also add:
 - One text knowledge-base entry via `/v1/{manual}/ingest-text`.
 - One temporary work order that is created, updated, then deleted.
 
+## Machine Mapping Example
+
+The sample machine master mapping lives in `mock_data/machine_mapping_example.json`.
+It connects local demo `machine_id` values to `line_id`, owner team, controller
+model, RAG manual collection, criticality, and common alarm codes. This is the
+local substitute for future vendor equipment master data.
+
+Related discussion document:
+
+```text
+docs/VENDOR_MACHINE_MAPPING_EXAMPLE.md
+```
+
 ## Week 2 Historical Work Orders
 
 The week-2 work-order seed set lives in `mock_data/week2_work_orders.json`.
 
-It includes 10 completed, verified, in-progress, and assigned records so the work-order board and BI endpoints have realistic state distribution.
+It includes completed, verified, in-progress, and assigned records so the work-order board and BI endpoints have realistic status, machine, owner, source, and priority distribution. New records use the `mock-week2-history` source and include `MOCK DATA` in the seeded description or notes.
 
 Seed command:
 
@@ -68,16 +97,24 @@ Seed command:
 python scripts/seed_week2_data.py --base-url http://localhost:8100 --skip-knowledge
 ```
 
-## Week 2 SOP and Bulletin Records
+## Week 2 SOP, Bulletin, Maintenance, and Repair Records
 
 The week-2 knowledge seed set lives in `mock_data/week2_knowledge_records.json`.
 
-It includes 6 records:
+It includes SOP, bulletin, maintenance note, and prior repair records:
 
-- Local SOP records for alarm `3000` and `5000`.
+- Local SOP records for alarms `3000`, `5000`, `20010`, and `25010`.
 - A safety bulletin for `emergency stop`.
-- A trend bulletin for repeated alarm `3000`.
-- Axis-enable and drive-alarm records for broader mixed retrieval.
+- Technical bulletins for repeated alarm `3000`, drive escalation, and PLC handshake diagnostics.
+- Maintenance notes for Line B channel state and fixture setup.
+- Prior repair examples for spindle feedback and drive acceleration profile faults.
+
+Knowledge sources are explicitly mock-labeled:
+
+- `mock-week2-sop`
+- `mock-week2-bulletin`
+- `mock-week2-maintenance-note`
+- `mock-week2-prior-repair`
 
 Seed command:
 

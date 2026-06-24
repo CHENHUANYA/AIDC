@@ -20,6 +20,14 @@ const MAINTENANCE_PRIORITY_LABELS = {
   high: '高',
   critical: '緊急',
 };
+const MAINTENANCE_KB_REVIEW_LABELS = {
+  not_ready: '尚未成為候選知識',
+  pending_review: '等待 Admin 審核',
+  needs_revision: 'Admin 退回補充',
+  rejected: '不採用',
+  ingested: '已寫入知識庫',
+  validation_failed: '寫入失敗，等待 Admin 處理',
+};
 
 function maintenanceApp() {
   return window.AlarmApp || null;
@@ -34,10 +42,36 @@ function normalizeFilterText(value) {
 }
 
 function includesFilter(values, filterText) {
-  if (!filterText) {
-    return true;
-  }
+  if (!filterText) return true;
   return values.some((value) => normalizeFilterText(value).includes(filterText));
+}
+
+function formatMaintenanceTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('zh-TW', { hour12: false });
+}
+
+function issueStatusLabel(status) {
+  return {
+    open: '未處理',
+    assigned: '已指派',
+    in_progress: '處理中',
+    completed: '已完成',
+    verified: '已驗證',
+    cancelled: '已取消',
+  }[status] || status || '未處理';
+}
+
+function issueSeverityLabel(severity) {
+  return {
+    info: '資訊',
+    low: '低',
+    medium: '中',
+    high: '高',
+    critical: '緊急',
+  }[severity] || severity || '中';
 }
 
 function currentIssueFilter() {
@@ -67,21 +101,11 @@ function filterMaintenanceIssues(issues) {
 function filterWorkOrders(orders) {
   const filters = currentWorkFilters();
   return (orders || []).filter((order) => {
-    if (filters.view === 'active' && order.status === 'verified') {
-      return false;
-    }
-    if (filters.view === 'verified' && order.status !== 'verified') {
-      return false;
-    }
-    if (filters.priority && order.priority !== filters.priority) {
-      return false;
-    }
-    if (filters.view === 'unassigned' && (order.assigned_to || ['completed', 'verified'].includes(order.status))) {
-      return false;
-    }
-    if (filters.view === 'mine' && order.assigned_to !== currentMaintenanceUser()) {
-      return false;
-    }
+    if (filters.view === 'active' && order.status === 'verified') return false;
+    if (filters.view === 'verified' && order.status !== 'verified') return false;
+    if (filters.priority && order.priority !== filters.priority) return false;
+    if (filters.view === 'unassigned' && (order.assigned_to || ['completed', 'verified'].includes(order.status))) return false;
+    if (filters.view === 'mine' && order.assigned_to !== currentMaintenanceUser()) return false;
     return includesFilter([
       order.id,
       order.issue_id,
@@ -96,70 +120,36 @@ function filterWorkOrders(orders) {
 
 function currentMaintenanceColumns() {
   const { view } = currentWorkFilters();
-  if (view === 'verified') {
-    return MAINTENANCE_COLUMNS.filter((column) => column.key === 'verified');
-  }
-  if (view === 'active' || view === 'unassigned') {
-    return MAINTENANCE_COLUMNS.filter((column) => column.key !== 'verified');
-  }
+  if (view === 'verified') return MAINTENANCE_COLUMNS.filter((column) => column.key === 'verified');
+  if (view === 'active' || view === 'unassigned') return MAINTENANCE_COLUMNS.filter((column) => column.key !== 'verified');
   return MAINTENANCE_COLUMNS;
 }
 
 function rerenderMaintenanceData() {
   const app = maintenanceApp();
-  if (!app) {
-    return;
-  }
+  if (!app) return;
   renderMaintenanceIssues(filterMaintenanceIssues(app.getState('maintenanceOpenIssues') || []));
   renderWorkOrders(filterWorkOrders(app.getState('maintenanceOrders') || []));
 }
 
 function findCurrentIssue(issueId) {
-  const app = maintenanceApp();
-  return (app?.getState('maintenanceIssues') || []).find((issue) => issue.issue_id === issueId);
+  return (maintenanceApp()?.getState('maintenanceIssues') || []).find((issue) => issue.issue_id === issueId);
 }
 
-function formatMaintenanceTime(value) {
-  if (!value) {
-    return '-';
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-  return date.toLocaleString('zh-TW', { hour12: false });
-}
-
-function issueStatusLabel(status) {
-  return {
-    open: '未處理',
-    assigned: '已指派',
-    in_progress: '處理中',
-    completed: '已完成',
-    verified: '已驗證',
-    cancelled: '已取消',
-  }[status] || status || '未處理';
-}
-
-function issueSeverityLabel(severity) {
-  return {
-    info: '資訊',
-    low: '低',
-    medium: '中',
-    high: '高',
-    critical: '緊急',
-  }[severity] || severity || '中';
+function findCurrentOrder(orderId) {
+  return (maintenanceApp()?.getState('maintenanceOrders') || []).find((order) => order.id === orderId);
 }
 
 function workOrderCard(order) {
   const app = maintenanceApp();
-  const description = order.description ? order.description.slice(0, 90) : '無問題描述';
+  const description = order.description ? order.description.slice(0, 90) : '無描述';
   const quickAction = {
-    pending: `<button class="wo-btn alt" onclick="event.stopPropagation(); acceptWorkOrder('${app.esc(order.id)}')">接手</button>`,
-    assigned: `<button class="wo-btn alt" onclick="event.stopPropagation(); startWorkOrder('${app.esc(order.id)}')">開始</button>`,
-    in_progress: `<button class="wo-btn alt" onclick="event.stopPropagation(); completeWorkOrder('${app.esc(order.id)}')">完成</button>`,
+    pending: `<button class="wo-btn alt" onclick="event.stopPropagation(); acceptWorkOrder(${app.toJsArg(order.id)})">接手</button>`,
+    assigned: `<button class="wo-btn alt" onclick="event.stopPropagation(); startWorkOrder(${app.toJsArg(order.id)})">開始</button>`,
+    in_progress: `<button class="wo-btn alt" onclick="event.stopPropagation(); completeWorkOrder(${app.toJsArg(order.id)})">完成</button>`,
   }[order.status] || '';
-  return `<div class="wo-card" onclick="openMaintenanceModal('${app.esc(order.id)}')">
+
+  return `<div class="wo-card" onclick="openMaintenanceModal(${app.toJsArg(order.id)})">
     <div class="wo-code">#${app.esc(order.id)} | ${app.esc(order.alarm_code || 'SYMPTOM')}</div>
     <div class="wo-desc">${app.esc(description)}</div>
     <div class="wo-meta">
@@ -167,6 +157,9 @@ function workOrderCard(order) {
       <span class="wo-badge status-pill-sm">${app.esc(MAINTENANCE_STATUS_LABELS[order.status] || order.status || '待處理')}</span>
       <span class="wo-badge">機台 ${app.esc(order.machine_id || 'N/A')}</span>
       ${order.issue_id ? `<span class="wo-badge">問題 ${app.esc(order.issue_id)}</span>` : ''}
+      ${order.kb_review_status && order.kb_review_status !== 'not_ready'
+        ? `<span class="wo-badge">${app.esc(MAINTENANCE_KB_REVIEW_LABELS[order.kb_review_status] || order.kb_review_status)}</span>`
+        : ''}
       ${quickAction}
     </div>
   </div>`;
@@ -180,11 +173,11 @@ function archiveOrderCard(order) {
       <div class="wo-code">#${app.esc(order.id)} | ${app.esc(order.alarm_code || 'SYMPTOM')}</div>
       <div class="wo-desc">${app.esc(description)}</div>
       <div class="wo-meta">
-        <span class="wo-badge status-pill-sm">${app.esc(MAINTENANCE_STATUS_LABELS[order.status] || order.status || '已封存')}</span>
+        <span class="wo-badge status-pill-sm">${app.esc(MAINTENANCE_STATUS_LABELS[order.status] || order.status || '已完成')}</span>
         <span class="wo-badge">機台 ${app.esc(order.machine_id || 'N/A')}</span>
         ${order.issue_id ? `<span class="wo-badge">問題 ${app.esc(order.issue_id)}</span>` : ''}
         <span class="wo-badge">完成 ${app.esc(formatMaintenanceTime(order.completed_at || order.updated_at))}</span>
-        <span class="wo-badge">檔案 ${app.esc(order.archive_file || '-')}</span>
+        <span class="wo-badge">封存 ${app.esc(order.archive_file || '-')}</span>
       </div>
     </div>
   </div>`;
@@ -193,12 +186,12 @@ function archiveOrderCard(order) {
 function renderArchiveOrders() {
   const app = maintenanceApp();
   const board = app?.$('maintenanceWorkBoard');
-  if (!app || !board) {
-    return;
-  }
+  if (!app || !board) return;
 
   const archives = app.getState('maintenanceArchiveFiles') || [];
   const archivedOrders = app.getState('maintenanceArchivedOrders') || [];
+  delete board.dataset.columnCount;
+
   if (!archivedOrders.length) {
     board.innerHTML = `<div class="maintenance-empty-state">
       <div class="maintenance-empty-title">目前沒有封存工單</div>
@@ -211,104 +204,22 @@ function renderArchiveOrders() {
   board.innerHTML = `<div class="maintenance-archive-view">
     <div class="archive-summary">
       <div>
-        <div class="archive-kicker">封存區</div>
-        <div class="archive-title">${archivedOrders.length} 張已封存工單</div>
-        <div class="archive-sub">來源：alarm_db/archive${latestArchive ? `，最新檔案 ${app.esc(latestArchive.file)}` : ''}</div>
+        <div class="archive-kicker">Archive summary</div>
+        <div class="archive-title">${archivedOrders.length} 筆封存工單</div>
+        <div class="archive-sub">來源：alarm_db/archive${latestArchive ? `，最近檔案 ${app.esc(latestArchive.file)}` : ''}</div>
       </div>
       <div class="archive-file-list">
         ${archives.map((archive) => `<span class="wo-badge">${app.esc(archive.file)} · ${archive.count}</span>`).join('')}
       </div>
     </div>
-    <div class="archive-order-list">
-      ${archivedOrders.map(archiveOrderCard).join('')}
-    </div>
+    <div class="archive-order-list">${archivedOrders.map(archiveOrderCard).join('')}</div>
   </div>`;
-}
-
-function maintenanceResolvedItem(order) {
-  return {
-    id: order.id,
-    title: `#${order.id} | ${order.alarm_code || 'SYMPTOM'}`,
-    description: order.resolution || order.description || '',
-    status: order.status,
-    machine: order.machine_id || 'N/A',
-    issueId: order.issue_id || '',
-    date: order.completed_at || order.updated_at || order.created_at,
-    archiveFile: order.archive_file || '',
-  };
-}
-
-function renderMaintenanceResolvedItem(item) {
-  const app = maintenanceApp();
-  const action = item.archiveFile
-    ? `<span class="wo-badge">封存 ${app.esc(item.archiveFile)}</span>`
-    : `<button class="wo-btn alt" onclick="openMaintenanceModal(${app.toJsArg(item.id)})">查看</button>`;
-  return `<div class="resolved-item">
-    <div class="wo-code">${app.esc(item.title)}</div>
-    <div class="wo-desc">${app.esc(item.description.slice(0, 140) || '無處理摘要')}</div>
-    <div class="wo-meta">
-      <span class="wo-badge">${app.esc(MAINTENANCE_STATUS_LABELS[item.status] || item.status || '已解決')}</span>
-      <span class="wo-badge">機台 ${app.esc(item.machine)}</span>
-      ${item.issueId ? `<span class="wo-badge">問題 ${app.esc(item.issueId)}</span>` : ''}
-      ${action}
-    </div>
-  </div>`;
-}
-
-function renderMaintenanceResolvedCalendar() {
-  const app = maintenanceApp();
-  if (!app?.renderResolvedCalendar) {
-    return;
-  }
-
-  const orders = app.getState('maintenanceOrders') || [];
-  const archivedOrders = app.getState('maintenanceArchivedOrders') || [];
-  const items = [
-    ...orders.filter((order) => ['completed', 'verified'].includes(order.status)),
-    ...archivedOrders,
-  ].map(maintenanceResolvedItem);
-  const monthKey = app.getState('maintenanceResolvedMonth') || app.calendarMonthKey();
-  const selectedDate = app.getState('maintenanceResolvedDate') || app.calendarDateKey(new Date().toISOString());
-  app.renderResolvedCalendar({
-    calendarEl: app.$('maintenanceResolvedCalendar'),
-    listEl: app.$('maintenanceResolvedList'),
-    items,
-    monthKey,
-    selectedDate,
-    renderItem: renderMaintenanceResolvedItem,
-    emptyText: '已完成、已驗證與封存工單會依完成日期顯示在這裡。',
-  });
-}
-
-function bindMaintenanceResolvedCalendar() {
-  const app = maintenanceApp();
-  const calendar = app?.$('maintenanceResolvedCalendar');
-  if (!app || !calendar) {
-    return;
-  }
-
-  calendar.addEventListener('click', (event) => {
-    const actionButton = event.target.closest('[data-calendar-action]');
-    if (actionButton) {
-      const offset = actionButton.dataset.calendarAction === 'prev' ? -1 : 1;
-      app.setState('maintenanceResolvedMonth', app.shiftCalendarMonth(app.getState('maintenanceResolvedMonth'), offset));
-      renderMaintenanceResolvedCalendar();
-      return;
-    }
-    const dayButton = event.target.closest('[data-calendar-date]');
-    if (dayButton) {
-      app.setState('maintenanceResolvedDate', dayButton.dataset.calendarDate);
-      renderMaintenanceResolvedCalendar();
-    }
-  });
 }
 
 function renderWorkOrders(orders) {
   const app = maintenanceApp();
   const board = app?.$('maintenanceWorkBoard');
-  if (!app || !board) {
-    return;
-  }
+  if (!app || !board) return;
 
   if (currentWorkFilters().view === 'verified') {
     renderArchiveOrders();
@@ -319,9 +230,7 @@ function renderWorkOrders(orders) {
   board.dataset.columnCount = String(columns.length);
   board.innerHTML = columns.map((column) => {
     const items = orders.filter((order) => order.status === column.key);
-    const cards = items.length
-      ? items.map(workOrderCard).join('')
-      : '<div class="maintenance-column-empty">無工單</div>';
+    const cards = items.length ? items.map(workOrderCard).join('') : '<div class="maintenance-column-empty">無工單</div>';
     return `<div class="wo-col">
       <div class="wo-col-head">
         <span class="wo-col-title">${column.title}</span>
@@ -335,9 +244,7 @@ function renderWorkOrders(orders) {
 function renderMaintenanceIssues(issues) {
   const app = maintenanceApp();
   const list = app?.$('maintenanceIssueList');
-  if (!app || !list) {
-    return;
-  }
+  if (!app || !list) return;
 
   if (!issues.length) {
     list.innerHTML = '<div class="wo-empty">目前沒有待維修問題</div>';
@@ -347,7 +254,7 @@ function renderMaintenanceIssues(issues) {
   list.innerHTML = issues.map((issue) => {
     const action = issue.work_order_id
       ? `<span class="wo-badge">工單 #${app.esc(issue.work_order_id)}</span>`
-      : `<button class="wo-btn alt" onclick="createWorkOrderFromIssue('${app.esc(issue.issue_id)}')">建立工單</button>`;
+      : `<button class="wo-btn alt" onclick="createWorkOrderFromIssue(${app.toJsArg(issue.issue_id)})">建立工單</button>`;
     return `<div class="wo-card" style="cursor:default">
       <div class="wo-code">${app.esc(issue.issue_id)} ${issue.alarm_code ? `| Alarm ${app.esc(issue.alarm_code)}` : ''}</div>
       <div class="wo-desc">${app.esc(issue.description || '')}</div>
@@ -365,9 +272,7 @@ function renderMaintenanceIssues(issues) {
 
 function updateMaintenanceStats(issues, orders, feedbackStats) {
   const app = maintenanceApp();
-  if (!app) {
-    return;
-  }
+  if (!app) return;
 
   app.$('mtIssueOpen').textContent = String(issues.length);
   app.$('mtUnassigned').textContent = String(orders.filter((order) => !order.assigned_to && !['completed', 'verified'].includes(order.status)).length);
@@ -377,9 +282,7 @@ function updateMaintenanceStats(issues, orders, feedbackStats) {
 
 async function loadMaintenanceData() {
   const app = maintenanceApp();
-  if (!app) {
-    return;
-  }
+  if (!app) return;
 
   try {
     const [issuesData, ordersData, archiveData, feedbackStats] = await Promise.all([
@@ -412,52 +315,20 @@ async function loadMaintenanceData() {
 
 async function createWorkOrderFromIssue(issueId) {
   const app = maintenanceApp();
-  if (!app) {
-    return;
-  }
+  if (!app) return;
 
   try {
     const data = await app.apiJson(`/issues/${encodeURIComponent(issueId)}/escalate`, { method: 'POST' });
-    if (data.status !== 'ok') {
-      throw new Error(data.message || '建立工單失敗');
-    }
+    if (data.status !== 'ok') throw new Error(data.message || '建立工單失敗');
     await loadMaintenanceData();
   } catch (error) {
     window.alert(app.formatError(error, '建立工單失敗'));
   }
 }
 
-async function acceptWorkOrder(orderId) {
-  const app = maintenanceApp();
-  if (!app) {
-    return;
-  }
-
-  try {
-    const data = await app.apiJson(`/work-orders/${encodeURIComponent(orderId)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        status: 'in_progress',
-        assigned_to: currentMaintenanceUser(),
-        accepted_by: currentMaintenanceUser(),
-        updated_by: currentMaintenanceUser(),
-      }),
-    });
-    if (data.status !== 'ok') {
-      throw new Error(data.message || '接手工單失敗');
-    }
-    await loadMaintenanceData();
-  } catch (error) {
-    window.alert(app.formatError(error, '接手工單失敗'));
-  }
-}
-
 async function patchMaintenanceWorkOrder(orderId, payload, fallbackMessage) {
   const app = maintenanceApp();
-  if (!app) {
-    return null;
-  }
+  if (!app) return null;
 
   try {
     const data = await app.apiJson(`/work-orders/${encodeURIComponent(orderId)}`, {
@@ -465,15 +336,21 @@ async function patchMaintenanceWorkOrder(orderId, payload, fallbackMessage) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...payload, updated_by: payload.updated_by || currentMaintenanceUser() }),
     });
-    if (data.status !== 'ok') {
-      throw new Error(data.message || fallbackMessage);
-    }
+    if (data.status !== 'ok') throw new Error(data.message || fallbackMessage);
     await loadMaintenanceData();
     return data.order;
   } catch (error) {
     window.alert(app.formatError(error, fallbackMessage));
     return null;
   }
+}
+
+async function acceptWorkOrder(orderId) {
+  await patchMaintenanceWorkOrder(orderId, {
+    status: 'in_progress',
+    assigned_to: currentMaintenanceUser(),
+    accepted_by: currentMaintenanceUser(),
+  }, '接手工單失敗');
 }
 
 async function startWorkOrder(orderId) {
@@ -487,45 +364,113 @@ async function startWorkOrder(orderId) {
 async function completeWorkOrder(orderId) {
   const app = maintenanceApp();
   const order = findCurrentOrder(orderId);
-  if (!app || !order) {
-    return;
-  }
+  if (!app || !order) return;
   openMaintenanceModal(orderId);
   app.$('mtEditStatus').value = 'completed';
   app.$('mtEditCompletedBy').value = app.$('mtEditCompletedBy').value.trim() || currentMaintenanceUser();
   app.$('mtEditResolution').focus();
 }
 
-function findCurrentOrder(orderId) {
+function maintenanceResolvedItem(order) {
+  return {
+    id: order.id,
+    title: `#${order.id} | ${order.alarm_code || 'SYMPTOM'}`,
+    description: order.resolution || order.description || '',
+    status: order.status,
+    machine: order.machine_id || 'N/A',
+    issueId: order.issue_id || '',
+    date: order.completed_at || order.updated_at || order.created_at,
+    archiveFile: order.archive_file || '',
+  };
+}
+
+function renderMaintenanceResolvedItem(item) {
   const app = maintenanceApp();
-  return (app?.getState('maintenanceOrders') || []).find((order) => order.id === orderId);
+  const action = item.archiveFile
+    ? `<span class="wo-badge">封存 ${app.esc(item.archiveFile)}</span>`
+    : `<button class="wo-btn alt" onclick="openMaintenanceModal(${app.toJsArg(item.id)})">查看</button>`;
+  return `<div class="resolved-item">
+    <div class="wo-code">${app.esc(item.title)}</div>
+    <div class="wo-desc">${app.esc(item.description.slice(0, 140) || '無描述')}</div>
+    <div class="wo-meta">
+      <span class="wo-badge">${app.esc(MAINTENANCE_STATUS_LABELS[item.status] || item.status || '已完成')}</span>
+      <span class="wo-badge">機台 ${app.esc(item.machine)}</span>
+      ${item.issueId ? `<span class="wo-badge">問題 ${app.esc(item.issueId)}</span>` : ''}
+      ${action}
+    </div>
+  </div>`;
+}
+
+function renderMaintenanceResolvedCalendar() {
+  const app = maintenanceApp();
+  if (!app?.renderResolvedCalendar) return;
+
+  const orders = app.getState('maintenanceOrders') || [];
+  const archivedOrders = app.getState('maintenanceArchivedOrders') || [];
+  const items = [
+    ...orders.filter((order) => ['completed', 'verified'].includes(order.status)),
+    ...archivedOrders,
+  ].map(maintenanceResolvedItem);
+  const monthKey = app.getState('maintenanceResolvedMonth') || app.calendarMonthKey();
+  const selectedDate = app.getState('maintenanceResolvedDate') || app.calendarDateKey(new Date().toISOString());
+  app.renderResolvedCalendar({
+    calendarEl: app.$('maintenanceResolvedCalendar'),
+    listEl: app.$('maintenanceResolvedList'),
+    items,
+    monthKey,
+    selectedDate,
+    renderItem: renderMaintenanceResolvedItem,
+    emptyText: '這天沒有已解決工單。',
+  });
+}
+
+function bindMaintenanceResolvedCalendar() {
+  const app = maintenanceApp();
+  const calendar = app?.$('maintenanceResolvedCalendar');
+  if (!app || !calendar || calendar.dataset.bound === 'true') return;
+  calendar.dataset.bound = 'true';
+
+  calendar.addEventListener('click', (event) => {
+    const actionButton = event.target.closest('[data-calendar-action]');
+    if (actionButton) {
+      const offset = actionButton.dataset.calendarAction === 'prev' ? -1 : 1;
+      app.setState('maintenanceResolvedMonth', app.shiftCalendarMonth(app.getState('maintenanceResolvedMonth'), offset));
+      renderMaintenanceResolvedCalendar();
+      return;
+    }
+    const dayButton = event.target.closest('[data-calendar-date]');
+    if (dayButton) {
+      app.setState('maintenanceResolvedDate', dayButton.dataset.calendarDate);
+      renderMaintenanceResolvedCalendar();
+    }
+  });
 }
 
 function renderMaintenanceIssueContext(order) {
   const app = maintenanceApp();
   const box = app?.$('mtIssueContext');
-  if (!app || !box) {
-    return;
-  }
+  if (!app || !box) return;
+
   const issue = order.issue_id ? findCurrentIssue(order.issue_id) : null;
   if (!issue) {
-    box.innerHTML = `<div class="maintenance-context-title">Issue context</div>
+    box.innerHTML = `<div class="maintenance-context-title">問題脈絡</div>
       <div class="maintenance-context-grid">
-        <div><span>Issue</span><b>${app.esc(order.issue_id || 'N/A')}</b></div>
-        <div><span>Source</span><b>${app.esc(order.source || 'manual')}</b></div>
-        <div><span>Machine</span><b>${app.esc(order.machine_id || 'N/A')}</b></div>
+        <div><span>問題</span><b>${app.esc(order.issue_id || 'N/A')}</b></div>
+        <div><span>來源</span><b>${app.esc(order.source || 'manual')}</b></div>
+        <div><span>機台</span><b>${app.esc(order.machine_id || 'N/A')}</b></div>
         <div><span>Alarm</span><b>${app.esc(order.alarm_code || 'SYMPTOM')}</b></div>
       </div>`;
     return;
   }
+
   const notes = Array.isArray(issue.operator_notes) ? issue.operator_notes : [];
   const latestNote = notes.length ? notes[notes.length - 1].note : '';
-  box.innerHTML = `<div class="maintenance-context-title">Operator issue context</div>
+  box.innerHTML = `<div class="maintenance-context-title">Operator 問題脈絡</div>
     <div class="maintenance-context-grid">
-      <div><span>Issue</span><b>${app.esc(issue.issue_id || 'N/A')}</b></div>
-      <div><span>Source</span><b>${app.esc(issue.source || 'operator')}</b></div>
-      <div><span>Line</span><b>${app.esc(issue.line_id || 'N/A')}</b></div>
-      <div><span>Status</span><b>${app.esc(issueStatusLabel(issue.status))}</b></div>
+      <div><span>問題</span><b>${app.esc(issue.issue_id || 'N/A')}</b></div>
+      <div><span>來源</span><b>${app.esc(issue.source || 'operator')}</b></div>
+      <div><span>產線</span><b>${app.esc(issue.line_id || 'N/A')}</b></div>
+      <div><span>狀態</span><b>${app.esc(issueStatusLabel(issue.status))}</b></div>
     </div>
     <div class="maintenance-context-text">${app.esc(issue.original_description || issue.description || '')}</div>
     ${latestNote ? `<div class="maintenance-context-note">${app.esc(latestNote)}</div>` : ''}`;
@@ -534,28 +479,27 @@ function renderMaintenanceIssueContext(order) {
 function renderMaintenanceTimeline(order) {
   const app = maintenanceApp();
   const box = app?.$('mtWorkTimeline');
-  if (!app || !box) {
-    return;
-  }
+  if (!app || !box) return;
+
   const issue = order.issue_id ? findCurrentIssue(order.issue_id) : null;
   const events = window.AlarmAudit?.mergeEvents(order.work_order_history, issue?.issue_history) || [];
   if (!events.length) {
     box.innerHTML = '';
     return;
   }
+
   box.innerHTML = `<div class="maintenance-context-title">Audit timeline</div>
     ${events.map((event) => {
       const statusText = event.from_status || event.to_status
         ? `${event.from_status || '-'} -> ${event.to_status || '-'}`
         : '';
-      const fields = Array.isArray(event.fields) && event.fields.length ? event.fields.join(', ') : '';
       const changes = window.AlarmAudit?.renderChanges(app, event) || '';
       return `<div class="audit-event">
         <div class="audit-dot"></div>
         <div class="audit-body">
           <div class="audit-title">${app.esc(event.audit_source || 'audit')} · ${app.esc(event.action || 'updated')} ${statusText ? `<span>${app.esc(statusText)}</span>` : ''}</div>
           <div class="audit-meta">${app.esc(event.user_id || 'system')} · ${app.esc(formatMaintenanceTime(event.created_at))}</div>
-          ${changes || (fields ? `<div class="audit-fields">${app.esc(fields)}</div>` : '')}
+          ${changes}
         </div>
       </div>`;
     }).join('')}`;
@@ -565,10 +509,7 @@ function resetMaintenanceModalScroll() {
   const app = maintenanceApp();
   const modal = app?.$('maintenanceModal');
   const card = modal?.querySelector('.wo-modal-card');
-  if (!modal || !card) {
-    return;
-  }
-
+  if (!modal || !card) return;
   modal.scrollTop = 0;
   card.scrollTop = 0;
   modal.querySelectorAll('textarea').forEach((field) => {
@@ -579,9 +520,7 @@ function resetMaintenanceModalScroll() {
 function openMaintenanceModal(orderId) {
   const app = maintenanceApp();
   const order = findCurrentOrder(orderId);
-  if (!app || !order) {
-    return;
-  }
+  if (!app || !order) return;
 
   app.setState('maintenanceCurrentOrderId', orderId);
   app.$('mtModalTitle').textContent = `工單 #${order.id}`;
@@ -591,18 +530,24 @@ function openMaintenanceModal(orderId) {
   app.$('mtEditAssignee').value = order.assigned_to || currentMaintenanceUser();
   app.$('mtEditMachine').value = order.machine_id || '';
   app.$('mtEditDesc').value = order.description || '';
-  app.$('mtEditRagSuggestion').value = order.rag_suggestion || '無初步建議';
+  app.$('mtEditRagSuggestion').value = order.rag_suggestion || '無參考建議';
   app.$('mtEditResolution').value = order.resolution || '';
   app.$('mtEditNotes').value = order.notes || '';
   app.$('mtEditAcceptedBy').value = order.accepted_by || '';
   app.$('mtEditCompletedBy').value = order.completed_by || '';
-  app.$('mtEditVerifiedBy').value = order.verified_by || '';
   app.$('mtEditRootCause').value = order.root_cause || '';
   app.$('mtEditFailureCategory').value = order.failure_category || '';
   app.$('mtEditLlmCorrectness').value = order.llm_correctness || '';
   app.$('mtEditLlmCoverage').value = order.llm_coverage || '';
   app.$('mtEditRepairAction').value = order.repair_action || '';
   app.$('mtEditLlmMissingInfo').value = order.llm_missing_info || '';
+  const reviewBox = app.$('mtKnowledgeReview');
+  const reviewStatus = order.kb_review_status || 'not_ready';
+  if (reviewBox) {
+    reviewBox.style.display = reviewStatus === 'not_ready' ? 'none' : 'block';
+    reviewBox.textContent = `${MAINTENANCE_KB_REVIEW_LABELS[reviewStatus] || reviewStatus}` +
+      `${order.kb_review_note ? `：${order.kb_review_note}` : ''}`;
+  }
   renderMaintenanceIssueContext(order);
   renderMaintenanceTimeline(order);
   app.$('maintenanceModal').classList.add('show');
@@ -611,9 +556,7 @@ function openMaintenanceModal(orderId) {
 
 function closeMaintenanceModal() {
   const app = maintenanceApp();
-  if (!app) {
-    return;
-  }
+  if (!app) return;
   app.$('maintenanceModal').classList.remove('show');
   app.setState('maintenanceCurrentOrderId', null);
 }
@@ -621,9 +564,7 @@ function closeMaintenanceModal() {
 async function saveMaintenanceWorkOrder() {
   const app = maintenanceApp();
   const orderId = app?.getState('maintenanceCurrentOrderId');
-  if (!app || !orderId) {
-    return;
-  }
+  if (!app || !orderId) return;
 
   const payload = {
     status: app.$('mtEditStatus').value,
@@ -635,7 +576,6 @@ async function saveMaintenanceWorkOrder() {
     notes: app.$('mtEditNotes').value.trim(),
     accepted_by: app.$('mtEditAcceptedBy').value.trim(),
     completed_by: app.$('mtEditCompletedBy').value.trim(),
-    verified_by: app.$('mtEditVerifiedBy').value.trim(),
     root_cause: app.$('mtEditRootCause').value.trim(),
     repair_action: app.$('mtEditRepairAction').value.trim(),
     failure_category: app.$('mtEditFailureCategory').value.trim(),
@@ -644,41 +584,27 @@ async function saveMaintenanceWorkOrder() {
     llm_missing_info: app.$('mtEditLlmMissingInfo').value.trim(),
     llm_expected_fix: app.$('mtEditResolution').value.trim(),
     llm_answer_used: Boolean(app.$('mtEditLlmCorrectness').value || app.$('mtEditLlmCoverage').value),
-    kb_candidate: Boolean(app.$('mtEditResolution').value.trim()),
     updated_by: currentMaintenanceUser(),
   };
 
-  if (payload.status === 'in_progress' && !payload.accepted_by) {
-    payload.accepted_by = currentMaintenanceUser();
-  }
-  if (['completed', 'verified'].includes(payload.status) && !payload.completed_by) {
-    payload.completed_by = currentMaintenanceUser();
-  }
-  if (['completed', 'verified'].includes(payload.status) && (!payload.root_cause || !payload.repair_action)) {
+  if (payload.status === 'in_progress' && !payload.accepted_by) payload.accepted_by = currentMaintenanceUser();
+  if (payload.status === 'completed' && !payload.completed_by) payload.completed_by = currentMaintenanceUser();
+  if (payload.status === 'completed' && (!payload.root_cause || !payload.repair_action)) {
     window.alert('完成工單前，請填寫根本原因與實際維修動作。');
     (payload.root_cause ? app.$('mtEditRepairAction') : app.$('mtEditRootCause')).focus();
     return;
   }
-  if (payload.status === 'verified' && !payload.verified_by) {
-    window.alert('工單需由 Operator 或 Supervisor 驗證，請填寫驗證人員。');
-    app.$('mtEditVerifiedBy').focus();
+  if (payload.status === 'verified') {
+    window.alert('維修人員不能直接驗證工單，請由 Operator 或 Supervisor 確認完成。');
     return;
   }
-  if (payload.status === 'verified' && payload.updated_by !== payload.verified_by) {
-    window.alert('Verified status must be submitted by the operator or supervisor who performed verification.');
-    app.$('mtEditVerifiedBy').focus();
-    return;
-  }
-
   try {
     const data = await app.apiJson(`/work-orders/${encodeURIComponent(orderId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (data.status !== 'ok') {
-      throw new Error(data.message || '儲存工單失敗');
-    }
+    if (data.status !== 'ok') throw new Error(data.message || '儲存工單失敗');
     closeMaintenanceModal();
     await loadMaintenanceData();
   } catch (error) {
@@ -689,13 +615,8 @@ async function saveMaintenanceWorkOrder() {
 async function deleteMaintenanceWorkOrder() {
   const app = maintenanceApp();
   const orderId = app?.getState('maintenanceCurrentOrderId');
-  if (!app || !orderId) {
-    return;
-  }
-
-  if (!window.confirm('確認刪除此工單？')) {
-    return;
-  }
+  if (!app || !orderId) return;
+  if (!window.confirm('確定要刪除此工單嗎？')) return;
 
   try {
     await app.apiJson(`/work-orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
@@ -708,9 +629,8 @@ async function deleteMaintenanceWorkOrder() {
 
 document.addEventListener('DOMContentLoaded', () => {
   const app = maintenanceApp();
-  if (!app) {
-    return;
-  }
+  if (!app) return;
+
   app.$('maintenanceUserLabel').textContent = `${app.currentUserId?.() || ''} (${app.currentUserRole?.() || ''})`;
 
   const url = new URL(window.location.href);
@@ -723,34 +643,28 @@ document.addEventListener('DOMContentLoaded', () => {
   app.renderHistory?.();
 
   app.$('searchInput')?.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      doSearch();
-    }
+    if (event.key === 'Enter') doSearch();
   });
 
   if (manual) {
     const manualBtn = document.querySelector(`#panel-lookup .manual-btn[data-name="${manual}"]`);
-    if (manualBtn) {
-      selectManual(manualBtn);
-    }
+    if (manualBtn) selectManual(manualBtn);
   }
   if (code) {
     app.switchTab('lookup', document.querySelector('.tab-btn[data-tab="lookup"]'));
-    if (app.$('searchInput')) {
-      app.$('searchInput').value = code;
-    }
+    if (app.$('searchInput')) app.$('searchInput').value = code;
     doSearch(code, manual || app.getState('lookupManual'));
   }
 
   app.$('maintenanceModal')?.addEventListener('click', (event) => {
-    if (event.target === app.$('maintenanceModal')) {
-      closeMaintenanceModal();
-    }
+    if (event.target === app.$('maintenanceModal')) closeMaintenanceModal();
   });
+
   ['mtIssueFilter', 'mtWorkView', 'mtPriorityFilter', 'mtWorkFilter'].forEach((id) => {
     app.$(id)?.addEventListener('input', rerenderMaintenanceData);
     app.$(id)?.addEventListener('change', rerenderMaintenanceData);
   });
+
   bindMaintenanceResolvedCalendar();
   loadMaintenanceData();
 });

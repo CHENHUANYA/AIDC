@@ -3,245 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Alarm RAG Supervisor Console</title>
+  <title>Alarm RAG 主管工作台</title>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/alarm_app.css">
-  <style>
-    /* ─── Supervisor-specific premium overrides ─── */
-
-    /* Wider layout like dashboard */
-    body[data-page="supervisor"] .role-console { max-width: 1100px; }
-
-    /* ─── Page toolbar ─── */
-    .sv-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 18px;
-      padding: 0 2px;
-    }
-    .sv-toolbar .toolbar-note {
-      font-size: 12px;
-      color: var(--dim);
-    }
-
-    /* ─── Premium KPI cards ─── */
-    .sv-kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 14px;
-      margin-bottom: 22px;
-    }
-    @media (max-width: 980px) { .sv-kpi-grid { grid-template-columns: repeat(3, 1fr); } }
-    @media (max-width: 620px) { .sv-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
-    @media (max-width: 420px) { .sv-kpi-grid { grid-template-columns: 1fr; } }
-
-    .sv-kpi-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 18px 20px;
-      box-shadow: var(--shadow);
-      position: relative;
-      overflow: hidden;
-      transition: transform .15s, box-shadow .15s;
-    }
-    .sv-kpi-card:hover {
-      transform: translateY(-2px);
-      box-shadow: var(--shadow2);
-    }
-    .sv-kpi-card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 3px;
-      border-radius: 12px 12px 0 0;
-    }
-    .sv-kpi-card.red::before    { background: linear-gradient(90deg, var(--red), #f87171); }
-    .sv-kpi-card.amber::before  { background: linear-gradient(90deg, var(--org), #fbbf24); }
-    .sv-kpi-card.green::before  { background: linear-gradient(90deg, var(--grn), #4ade80); }
-    .sv-kpi-card.blue::before   { background: linear-gradient(90deg, var(--acc), #60a5fa); }
-    .sv-kpi-card.purple::before { background: linear-gradient(90deg, #7c3aed, #a78bfa); }
-
-    .sv-kpi-icon {
-      font-size: 20px;
-      margin-bottom: 8px;
-    }
-    .sv-kpi-label {
-      font-family: var(--mono);
-      font-size: 10px;
-      font-weight: 700;
-      color: var(--text2);
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      margin-bottom: 8px;
-    }
-    .sv-kpi-value {
-      font-family: var(--mono);
-      font-size: 34px;
-      font-weight: 700;
-      line-height: 1;
-    }
-    .sv-kpi-value.red    { color: var(--red); }
-    .sv-kpi-value.amber  { color: var(--org); }
-    .sv-kpi-value.green  { color: var(--grn); }
-    .sv-kpi-value.blue   { color: var(--acc); }
-    .sv-kpi-value.purple { color: #7c3aed; }
-
-    .sv-kpi-sub {
-      font-size: 11px;
-      color: var(--dim);
-      margin-top: 7px;
-    }
-
-    /* ─── Premium cards with accent bars ─── */
-    .sv-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 22px 24px;
-      box-shadow: var(--shadow);
-      margin-bottom: 20px;
-      position: relative;
-      overflow: hidden;
-      transition: transform .15s, box-shadow .15s;
-    }
-    .sv-card:hover {
-      transform: translateY(-2px);
-      box-shadow: var(--shadow2);
-    }
-    .sv-card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 3px;
-      border-radius: 12px 12px 0 0;
-    }
-    .sv-card.accent-blue::before   { background: linear-gradient(90deg, var(--acc), #60a5fa); }
-    .sv-card.accent-green::before  { background: linear-gradient(90deg, var(--grn), #4ade80); }
-    .sv-card.accent-amber::before  { background: linear-gradient(90deg, var(--org), #fbbf24); }
-    .sv-card.accent-red::before    { background: linear-gradient(90deg, var(--red), #f87171); }
-    .sv-card.accent-purple::before { background: linear-gradient(90deg, #7c3aed, #a78bfa); }
-
-    .sv-card .section-label {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 2px;
-      margin-bottom: 16px;
-    }
-
-    /* ─── Two column grid ─── */
-    .sv-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-      margin-bottom: 20px;
-      align-items: start;
-    }
-    .sv-grid > .sv-card { margin-bottom: 0; }
-    @media (max-width: 860px) { .sv-grid { grid-template-columns: 1fr; } }
-
-    /* ─── Filter row ─── */
-    .sv-filter-row {
-      display: grid;
-      grid-template-columns: 150px 150px 150px 1fr auto;
-      gap: 10px;
-      align-items: center;
-      margin-bottom: 14px;
-    }
-    @media (max-width: 620px) { .sv-filter-row { grid-template-columns: 1fr; } }
-
-    .sv-risk-list {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-    }
-    @media (max-width: 860px) { .sv-risk-list { grid-template-columns: 1fr; } }
-
-    .sv-risk-card {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--red);
-      border-radius: 10px;
-      padding: 12px 14px;
-    }
-    .sv-risk-card .risk-title {
-      font-family: var(--mono);
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--red);
-      margin-bottom: 6px;
-    }
-    .sv-risk-card .risk-body {
-      color: var(--text2);
-      font-size: 12px;
-      line-height: 1.6;
-    }
-
-    .sv-order-edit {
-      display: grid;
-      grid-template-columns: 1fr 120px 130px auto;
-      gap: 8px;
-      margin-top: 10px;
-      align-items: center;
-    }
-    @media (max-width: 760px) { .sv-order-edit { grid-template-columns: 1fr; } }
-
-    /* ─── Header logo icon gradient ─── */
-    body[data-page="supervisor"] .logo-icon {
-      background: linear-gradient(135deg, #7c3aed, #6d28d9);
-      color: #fff;
-      font-family: var(--mono);
-      font-size: 14px;
-      font-weight: 700;
-      box-shadow: 0 2px 8px rgba(124,58,237,0.3);
-    }
-
-    /* ─── Tab icons ─── */
-    .tab-icon { font-size: 15px; }
-
-    /* ─── Verification queue items ─── */
-    .sv-verify-item {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 14px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 14px 16px;
-      transition: all .15s;
-      border-left: 3px solid var(--org);
-    }
-    .sv-verify-item:hover {
-      border-color: var(--acc);
-      border-left-color: var(--acc);
-      background: var(--acc-lt);
-      transform: translateX(2px);
-    }
-
-    /* ─── Audit timeline ─── */
-    .sv-audit-list {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 14px;
-    }
-
-    /* ─── Responsive ─── */
-    @media (max-width: 620px) {
-      .sv-hero { flex-direction: column; padding: 20px; }
-      .sv-hero h2 { font-size: 18px; }
-    }
-  </style>
+  <link rel="stylesheet" href="/static/css/supervisor.css">
 </head>
 <body data-page="supervisor">
 <header>
   <div class="logo">
     <div class="logo-icon">👁️</div>
     <div class="logo-text">
-      <h1>SUPERVISOR CONSOLE</h1>
+      <h1>主管工作台</h1>
       <p>產線責任、待驗證工單與 RAG 品質追蹤</p>
     </div>
   </div>
@@ -251,88 +22,94 @@
   </div>
 </header>
 
-<div class="tabs">
-  <button class="tab-btn active" type="button" aria-current="page"><span class="tab-icon">📋</span> Supervisor</button>
+<div class="tabs" aria-label="主管工作台分頁">
+  <button class="tab-btn" type="button" onclick="window.location.href='/dashboard'"><span class="tab-icon">BI</span> 儀表板</button>
+  <button class="tab-btn active" type="button" data-supervisor-section-target="overview" aria-current="page"><span class="tab-icon">📊</span> 總覽</button>
+  <button class="tab-btn" type="button" data-supervisor-section-target="verification"><span class="tab-icon">⏳</span> 待驗證</button>
+  <button class="tab-btn" type="button" data-supervisor-section-target="responsibility"><span class="tab-icon">👤</span> 責任追蹤</button>
+  <button class="tab-btn" type="button" data-supervisor-section-target="lines"><span class="tab-icon">🏭</span> 產線總覽</button>
+  <button class="tab-btn" type="button" data-supervisor-section-target="audit"><span class="tab-icon">📋</span> 稽核</button>
 </div>
 
 <main class="panel active">
   <div class="container role-console">
 
     <div class="sv-toolbar">
-      <span class="toolbar-note">產線責任、待驗證工單與 RAG 品質追蹤</span>
       <div class="wo-actions" style="margin:0">
         <button class="wo-btn alt" type="button" onclick="exportSupervisorCsv()" style="margin:0;padding:7px 14px;font-size:12px">匯出 CSV</button>
         <button class="wo-btn alt" type="button" onclick="loadSupervisorConsole()" style="margin:0;padding:7px 14px;font-size:12px">🔄 重新整理</button>
       </div>
     </div>
 
-    <!-- ─── KPI Cards ─── -->
-    <section class="sv-kpi-grid" aria-label="Supervisor KPIs">
-      <div class="sv-kpi-card red">
-        <div class="sv-kpi-icon">🚨</div>
-        <div class="sv-kpi-label">Open Issues</div>
-        <div class="sv-kpi-value red" id="svOpenIssues">--</div>
-        <div class="sv-kpi-sub">尚未完成或驗證</div>
+    <section class="sv-section-panel active" data-supervisor-section="overview">
+      <div class="sv-kpi-grid" aria-label="Supervisor KPIs">
+        <div class="sv-kpi-card red">
+          <div class="sv-kpi-icon">🚨</div>
+          <div class="sv-kpi-label">未結問題</div>
+          <div class="sv-kpi-value red" id="svOpenIssues">--</div>
+          <div class="sv-kpi-sub">尚未完成或驗證</div>
+        </div>
+        <div class="sv-kpi-card amber">
+          <div class="sv-kpi-icon">⏳</div>
+          <div class="sv-kpi-label">待驗證</div>
+          <div class="sv-kpi-value amber" id="svPendingVerification">--</div>
+          <div class="sv-kpi-sub">已完成、待主管確認</div>
+        </div>
+        <div class="sv-kpi-card red">
+          <div class="sv-kpi-icon">⚠️</div>
+          <div class="sv-kpi-label">逾期工單</div>
+          <div class="sv-kpi-value red" id="svOverdue">--</div>
+          <div class="sv-kpi-sub">超過 24 小時未結</div>
+        </div>
+        <div class="sv-kpi-card green">
+          <div class="sv-kpi-icon">✅</div>
+          <div class="sv-kpi-label">完成率</div>
+          <div class="sv-kpi-value green" id="svCompletionRate">--</div>
+          <div class="sv-kpi-sub">已驗證 / 全部</div>
+        </div>
+        <div class="sv-kpi-card blue">
+          <div class="sv-kpi-icon">💬</div>
+          <div class="sv-kpi-label">RAG 回饋率</div>
+          <div class="sv-kpi-value blue" id="svFeedbackRate">--</div>
+          <div class="sv-kpi-sub">有幫助回饋比例</div>
+        </div>
       </div>
-      <div class="sv-kpi-card amber">
-        <div class="sv-kpi-icon">⏳</div>
-        <div class="sv-kpi-label">Pending Verification</div>
-        <div class="sv-kpi-value amber" id="svPendingVerification">--</div>
-        <div class="sv-kpi-sub">已完成、待主管確認</div>
-      </div>
-      <div class="sv-kpi-card red">
-        <div class="sv-kpi-icon">⚠️</div>
-        <div class="sv-kpi-label">Overdue Work Orders</div>
-        <div class="sv-kpi-value red" id="svOverdue">--</div>
-        <div class="sv-kpi-sub">超過 24 小時未結</div>
-      </div>
-      <div class="sv-kpi-card green">
-        <div class="sv-kpi-icon">✅</div>
-        <div class="sv-kpi-label">Completion Rate</div>
-        <div class="sv-kpi-value green" id="svCompletionRate">--</div>
-        <div class="sv-kpi-sub">Verified / Total</div>
-      </div>
-      <div class="sv-kpi-card blue">
-        <div class="sv-kpi-icon">💬</div>
-        <div class="sv-kpi-label">RAG Feedback Rate</div>
-        <div class="sv-kpi-value blue" id="svFeedbackRate">--</div>
-        <div class="sv-kpi-sub">Helpful feedback ratio</div>
+
+      <div class="sv-card accent-red">
+        <div class="section-label">風險清單</div>
+        <div id="svRiskHotlist" class="sv-risk-list">
+          <div class="wo-empty">載入中...</div>
+        </div>
       </div>
     </section>
 
-    <div class="sv-card accent-red">
-      <div class="section-label">Risk Hotlist</div>
-      <div id="svRiskHotlist" class="sv-risk-list">
-        <div class="wo-empty">載入中...</div>
-      </div>
-    </div>
-
-    <!-- ─── Verification Queue + Responsibility (two columns) ─── -->
-    <div class="sv-grid">
+    <section class="sv-section-panel" data-supervisor-section="verification">
       <div class="sv-card accent-amber">
-        <div class="section-label">⏱️ Verification Queue</div>
+        <div class="section-label">⏱️ 待驗證佇列</div>
         <div id="svVerificationQueue" class="role-list">
           <div class="wo-empty">載入中...</div>
         </div>
       </div>
+    </section>
 
+    <section class="sv-section-panel" data-supervisor-section="responsibility">
       <div class="sv-card accent-blue">
-        <div class="section-label">👤 Responsibility View</div>
+        <div class="section-label">👤 責任追蹤</div>
         <div class="sv-filter-row">
-          <select class="wo-select" id="svLineFilter" aria-label="Line filter"></select>
-          <select class="wo-select" id="svStatusFilter" aria-label="Status filter">
+          <select class="wo-select" id="svLineFilter" aria-label="產線篩選"></select>
+          <select class="wo-select" id="svStatusFilter" aria-label="狀態篩選">
             <option value="">全部狀態</option>
-            <option value="pending">Pending</option>
-            <option value="assigned">Assigned</option>
-            <option value="in_progress">In Progress</option>
-            <option value="completed">Completed</option>
+            <option value="pending">待處理</option>
+            <option value="assigned">已指派</option>
+            <option value="in_progress">處理中</option>
+            <option value="completed">已完成</option>
           </select>
-          <select class="wo-select" id="svPriorityFilter" aria-label="Priority filter">
+          <select class="wo-select" id="svPriorityFilter" aria-label="優先等級篩選">
             <option value="">全部優先級</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
+            <option value="critical">緊急</option>
+            <option value="high">高</option>
+            <option value="medium">中</option>
+            <option value="low">低</option>
           </select>
           <input class="wo-input" id="svTextFilter" placeholder="搜尋機台、工單、負責人">
           <label class="settings-toggle" style="padding:9px 12px">
@@ -341,42 +118,43 @@
           </label>
         </div>
         <div class="sv-order-edit">
-          <select class="wo-select" id="svBulkAssignee" aria-label="Bulk assignee"></select>
-          <select class="wo-select" id="svBulkPriority" aria-label="Bulk priority">
-            <option value="">Keep priority</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
+          <select class="wo-select" id="svBulkAssignee" aria-label="批次指派人員"></select>
+          <select class="wo-select" id="svBulkPriority" aria-label="批次優先等級">
+            <option value="">保留優先級</option>
+            <option value="critical">緊急</option>
+            <option value="high">高</option>
+            <option value="medium">中</option>
+            <option value="low">低</option>
           </select>
-          <select class="wo-select" id="svBulkStatus" aria-label="Bulk status">
-            <option value="">Keep status</option>
-            <option value="pending">Pending</option>
-            <option value="assigned">Assigned</option>
-            <option value="in_progress">In Progress</option>
+          <select class="wo-select" id="svBulkStatus" aria-label="批次狀態">
+            <option value="">保留狀態</option>
+            <option value="pending">待處理</option>
+            <option value="assigned">已指派</option>
+            <option value="in_progress">處理中</option>
           </select>
-          <button class="wo-btn alt" type="button" onclick="bulkUpdateSupervisorOrders()">Bulk Update Visible</button>
+          <button class="wo-btn alt" type="button" onclick="bulkUpdateSupervisorOrders()">批次更新目前清單</button>
         </div>
         <div id="svResponsibilityList" class="role-list">
           <div class="wo-empty">載入中...</div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- ─── Line Overview + Audit (two columns) ─── -->
-    <div class="sv-grid">
+    <section class="sv-section-panel" data-supervisor-section="lines">
       <div class="sv-card accent-green">
-        <div class="section-label">🏭 Line Overview</div>
+        <div class="section-label">🏭 產線總覽</div>
         <div id="svLineOverview" class="role-list">
           <div class="wo-empty">載入中...</div>
         </div>
       </div>
+    </section>
 
+    <section class="sv-section-panel" data-supervisor-section="audit">
       <div class="sv-card accent-purple">
-        <div class="section-label">📋 Audit Review</div>
+        <div class="section-label">📋 稽核檢視</div>
         <div id="svAuditReview" class="audit-list"><div class="wo-empty">載入中...</div></div>
       </div>
-    </div>
+    </section>
 
     <div class="upload-result" id="svResult"></div>
   </div>

@@ -18,7 +18,7 @@
 
 ### 已有基礎
 
-- 警報查詢頁面：`alarm_app.html`
+- 警報查詢頁面：`dashboard.html` / `operator.html`
 - RAG 查詢後端：`main.py`、`rag_engine.py`
 - PDF 匯入與向量化：`ingest.py`
 - 警報觸發 API：`POST /trigger-alarm`

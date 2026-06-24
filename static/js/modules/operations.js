@@ -323,7 +323,7 @@ function renderCollectionDocuments() {
     const importedAt = formatDateTime(doc.imported_at);
     const deleteButton = doc.legacy
       ? ''
-      : `<button class="wo-btn danger" onclick="deleteKnowledgeDocument('${app.esc(doc.doc_id)}')">刪除</button>`;
+      : `<button class="wo-btn danger" onclick="deleteKnowledgeDocument(${app.toJsArg(doc.doc_id)})">刪除</button>`;
     return `<div class="kb-doc-item">
       <div class="kb-doc-main">
         <div class="kb-doc-title">${app.esc(doc.filename || doc.doc_id || '未命名文件')}</div>
@@ -551,7 +551,7 @@ function woCard(order) {
   }
 
   const description = order.description ? order.description.slice(0, 90) : '尚無描述';
-  return `<div class="wo-card" onclick="openWoModal('${order.id}')">
+  return `<div class="wo-card" onclick="openWoModal(${app.toJsArg(order.id)})">
     <div class="wo-code">#${app.esc(order.id)} · Alarm ${app.esc(order.alarm_code)}</div>
     <div class="wo-desc">${app.esc(description)}</div>
     <div class="wo-meta">
@@ -677,7 +677,6 @@ async function saveWorkOrder() {
     llm_missing_info: app.$('woEditLlmMissingInfo')?.value.trim() || '',
     llm_expected_fix: app.$('woEditResolution').value.trim(),
     llm_answer_used: Boolean(app.$('woEditLlmCorrectness')?.value || app.$('woEditLlmCoverage')?.value),
-    kb_candidate: Boolean(app.$('woEditResolution').value.trim()),
   };
 
   try {
@@ -753,8 +752,8 @@ async function uploadExcel(input) {
     let message = `匯入完成：${data.filename}\n`;
     message += `成功匯入：${data.imported} 筆\n`;
     message += `略過：${data.skipped} 筆\n`;
-    if (data.feedback_count) {
-      message += `回寫知識庫：${data.feedback_count} 筆\n`;
+    if (data.candidate_count) {
+      message += `待審核候選知識：${data.candidate_count} 筆\n`;
     }
     if (data.errors?.length) {
       message += `錯誤：${data.errors.join(', ')}\n`;

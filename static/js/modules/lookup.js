@@ -40,10 +40,10 @@ function renderResultActions(code, manual) {
   var app = getApp();
   if (!app) return '';
   return '<div class="result-actions" id="resultActions">' +
-    '<button class="result-action-btn purple" onclick="askInChat(\'' + app.esc(code) + '\')">' +
+    '<button class="result-action-btn purple" onclick="askInChat(' + app.toJsArg(code) + ')">' +
       '📨 在 Chat 中提問' +
     '</button>' +
-    '<button class="result-action-btn" onclick="copyAlarmCode(\'' + app.esc(code) + '\')">' +
+    '<button class="result-action-btn" onclick="copyAlarmCode(' + app.toJsArg(code) + ')">' +
       '📋 複製警報碼' +
     '</button>' +
   '</div>';
@@ -121,7 +121,9 @@ async function doSearch(code, manual) {
 
   try {
     if (isAlarmCode) {
-      const lookupRes = await fetch(`${app.RAG_BASE}/v1/${useManual}/lookup?code=${encodeURIComponent(query.trim())}`);
+      const lookupRes = await fetch(`${app.RAG_BASE}/v1/${useManual}/lookup?code=${encodeURIComponent(query.trim())}`, {
+        headers: window.AlarmCoreApi?.authHeaders?.({}) || {},
+      });
       const lookupData = await app.parseJsonResponse(lookupRes);
       const lookupReceivedAt = Date.now();
       if (lookupData.found) {
@@ -135,7 +137,7 @@ async function doSearch(code, manual) {
 
     const response = await fetch(`${app.RAG_BASE}/v1/${useManual}/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: window.AlarmCoreApi?.authHeaders?.({ 'Content-Type': 'application/json' }) || { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: [{ role: 'user', content: query }],
         stream: false,
@@ -218,11 +220,11 @@ function renderLookupMetadata(metadata) {
   }
 
   var fields = [
-    ['Collection', metadata.collection],
-    ['Source', metadata.source || metadata.source_file],
-    ['Document', metadata.doc_id],
-    ['Kind', metadata.kind],
-    ['Imported', metadata.imported_at],
+    ['集合', metadata.collection],
+    ['來源', metadata.source || metadata.source_file],
+    ['文件', metadata.doc_id],
+    ['類型', metadata.kind],
+    ['匯入時間', metadata.imported_at],
   ].filter(function(item) {
     return item[1] !== undefined && item[1] !== null && String(item[1]).trim() !== '';
   });
@@ -232,7 +234,7 @@ function renderLookupMetadata(metadata) {
   }
 
   return '<div class="lookup-meta">' +
-    '<div class="lookup-meta-title">Source metadata</div>' +
+    '<div class="lookup-meta-title">來源 metadata</div>' +
     fields.map(function(item) {
       return '<span class="lookup-meta-pill"><b>' + app.esc(item[0]) + '</b>' + app.esc(String(item[1])) + '</span>';
     }).join('') +
@@ -419,7 +421,7 @@ function sendFeedback(type) {
   app.writeStorage(app.STORAGE_KEYS.fbHistory, history.slice(0, 200));
   app.incrementStoredCounter(type === 'good' ? app.STORAGE_KEYS.fbGood : app.STORAGE_KEYS.fbBad);
 
-  fetch(`${app.RAG_BASE}/feedback`, {
+  app.apiJson('/feedback', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

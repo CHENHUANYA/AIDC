@@ -22,11 +22,13 @@ from work_orders import create_order_dict, sync_work_order_from_issue, validate_
 
 router = APIRouter()
 
-DB_DIR = "./alarm_db"
+DB_DIR = os.getenv("DB_PATH", "./alarm_db")
 ISSUE_FILE = os.path.join(DB_DIR, "issues.json")
 
 ISSUE_STATUSES = ["open", "assigned", "in_progress", "completed", "verified", "cancelled"]
 ISSUE_SEVERITIES = ["info", "low", "medium", "high", "critical"]
+OPERATOR_ISSUE_PATCH_FIELDS = {"status", "operator_note", "updated_by"}
+MAINTENANCE_ISSUE_PATCH_FIELDS = {"status", "resolution_summary", "operator_note", "updated_by"}
 
 
 class CreateIssue(BaseModel):
@@ -109,6 +111,27 @@ def _normalize_status(value: Optional[str], fallback: str = "open") -> str:
 def _normalize_severity(value: Optional[str], fallback: str = "medium") -> str:
     severity = (value or fallback).strip().lower()
     return severity if severity in ISSUE_SEVERITIES else fallback
+
+
+def _request_fields(req: BaseModel) -> set[str]:
+    fields = getattr(req, "model_fields_set", None)
+    if fields is None:
+        fields = getattr(req, "__fields_set__", set())
+    return set(fields or set())
+
+
+def _issue_patch_permission_error(actor: dict, req: UpdateIssue) -> str:
+    role = actor_role(actor)
+    provided = _request_fields(req)
+    if role == "operator":
+        disallowed = provided - OPERATOR_ISSUE_PATCH_FIELDS
+    elif role == "maintenance":
+        disallowed = provided - MAINTENANCE_ISSUE_PATCH_FIELDS
+    else:
+        disallowed = set()
+    if disallowed:
+        return f"Permission denied for issue fields: {', '.join(sorted(disallowed))}"
+    return ""
 
 
 def _priority_from_severity(severity: str) -> str:
@@ -220,7 +243,7 @@ def set_issue_work_order(issue_id: str, work_order_id: str, status: str = "assig
             continue
         before_issue = dict(issue)
         issue["work_order_id"] = work_order_id
-        issue["status"] = _normalize_status(status, "assigned")
+        issue["status"] = "open" if status == "pending" else _normalize_status(status, "assigned")
         issue["updated_at"] = datetime.now().isoformat()
         issue["updated_by"] = updated_by
         _append_issue_history(
@@ -255,20 +278,24 @@ def sync_issue_from_work_order(order: dict) -> Optional[dict]:
         issue["machine_id"] = order.get("machine_id") or issue.get("machine_id", "")
         issue["description"] = order.get("description") or issue.get("description", "")
         issue["resolution_summary"] = order.get("resolution") or issue.get("resolution_summary", "")
-        issue["updated_at"] = datetime.now().isoformat()
-        issue["updated_by"] = order.get("updated_by", "")
         if issue["status"] in ("completed", "verified"):
             issue["completed_at"] = issue.get("completed_at") or datetime.now().isoformat()
         if issue["status"] in ("open", "assigned", "in_progress"):
             issue["completed_at"] = ""
+        synced_fields = ["status", "assigned_to", "machine_id", "description", "resolution_summary"]
+        changes = field_changes(before_issue, issue, synced_fields)
+        if not changes:
+            return before_issue
+        issue["updated_at"] = datetime.now().isoformat()
+        issue["updated_by"] = order.get("updated_by", "")
         _append_issue_history(
             issue,
             "work_order_synced",
             order.get("updated_by", ""),
-            ["status", "assigned_to", "resolution_summary"],
+            synced_fields,
             previous_status if previous_status != issue["status"] else "",
             issue["status"] if previous_status != issue["status"] else "",
-            field_changes(before_issue, issue, ["status", "assigned_to", "resolution_summary"]),
+            changes,
         )
         issues[index] = issue
         _save_issues(issues)
@@ -324,6 +351,8 @@ async def api_list_issues(
     unresolved: Optional[bool] = None,
     actor: dict = Depends(get_actor),
 ):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     issues = [issue for issue in _load_issues() if can_view_issue(actor, issue)]
     if unresolved:
         issues = [issue for issue in issues if issue.get("status") not in ("completed", "verified", "cancelled")]
@@ -340,6 +369,8 @@ async def api_list_issues(
 
 @router.get("/issues/stats")
 async def api_issue_stats(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     issues = [issue for issue in _load_issues() if can_view_issue(actor, issue)]
     recent_days = _recent_day_keys(7)
     by_status = {status: 0 for status in ISSUE_STATUSES}
@@ -381,6 +412,8 @@ async def api_issue_stats(actor: dict = Depends(get_actor)):
 
 @router.get("/issues/{issue_id}")
 async def api_get_issue(issue_id: str, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     _, issue = _find_issue(issue_id)
     if issue is None:
         return {"status": "error", "message": f"Issue {issue_id} not found"}
@@ -391,6 +424,8 @@ async def api_get_issue(issue_id: str, actor: dict = Depends(get_actor)):
 
 @router.get("/issues/{issue_id}/history")
 async def api_get_issue_history(issue_id: str, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     _, issue = _find_issue(issue_id)
     if issue is None:
         return {"status": "error", "message": f"Issue {issue_id} not found"}
@@ -417,6 +452,8 @@ async def api_get_issue_history(issue_id: str, actor: dict = Depends(get_actor))
 
 @router.patch("/issues/{issue_id}")
 async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     issues = _load_issues()
     index = -1
     issue = None
@@ -429,6 +466,9 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
         return {"status": "error", "message": f"Issue {issue_id} not found"}
     if not can_update_issue(actor, issue, req.status):
         return {"status": "error", "message": "Permission denied"}
+    field_permission_error = _issue_patch_permission_error(actor, req)
+    if field_permission_error:
+        return {"status": "error", "message": field_permission_error}
 
     changed_fields = []
     updated_by = actor_id(actor)
@@ -496,6 +536,8 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
 
 @router.post("/issues/{issue_id}/escalate")
 async def api_escalate_issue(issue_id: str, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     _, issue = _find_issue(issue_id)
     if issue is None:
         return {"status": "error", "message": f"Issue {issue_id} not found"}

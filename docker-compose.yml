@@ -1,0 +1,112 @@
+services:
+  alarm_rag:
+    build:
+      context: .
+      args:
+        RAG_PRELOAD_MODELS: ${RAG_PRELOAD_MODELS:-0}
+    container_name: alarm_rag
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ALARM_RAG_ENV: ${ALARM_RAG_ENV:-production}
+      ALARM_RAG_CORS_ORIGINS: ${ALARM_RAG_CORS_ORIGINS:-http://localhost:8100,http://127.0.0.1:8100}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-change-me-now}
+      ALARM_RAG_TRIGGER_TOKEN: ${ALARM_RAG_TRIGGER_TOKEN:-}
+      DB_PATH: /app/alarm_db
+      HF_HOME: /app/hf_cache
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
+      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-1}
+      RAG_HF_LOCAL_ONLY: ${RAG_HF_LOCAL_ONLY:-true}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-mistral-nemo:latest}
+      RAG_LLM_TIMEOUT_SECONDS: ${RAG_LLM_TIMEOUT_SECONDS:-90}
+      VECTOR_STORE: ${VECTOR_STORE:-qdrant}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: ${QDRANT_PORT:-6333}
+      QDRANT_VECTOR_SIZE: ${QDRANT_VECTOR_SIZE:-1024}
+      QDRANT_UPSERT_BATCH_SIZE: ${QDRANT_UPSERT_BATCH_SIZE:-64}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+    ports:
+      - "${ALARM_RAG_PORT:-8100}:8000"
+    volumes:
+      - ./alarm_db:/app/alarm_db
+      - ./data:/app/data
+      - ./mock_data:/app/mock_data:ro
+      - ./backups:/app/backups
+      - ./hf_cache:/app/hf_cache
+      - ./n8n_data:/app/n8n_data
+      - ./qdrant_data:/app/qdrant_data
+      - ./static:/app/static
+      - ./routes:/app/routes
+      - ./operator.html:/app/operator.html
+      - ./maintenance.html:/app/maintenance.html
+      - ./supervisor.html:/app/supervisor.html
+      - ./dashboard.html:/app/dashboard.html
+      - ./assistant.html:/app/assistant.html
+      - ./admin.html:/app/admin.html
+      - ./login.html:/app/login.html
+      - ./operations.html:/app/operations.html
+    depends_on:
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: alarm_rag_qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/6333'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  n8n:
+    image: n8nio/n8n:1.95.3
+    container_name: alarm_rag_n8n
+    restart: unless-stopped
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-}
+      ALARM_RAG_TRIGGER_TOKEN: ${ALARM_RAG_TRIGGER_TOKEN:-}
+      GENERIC_TIMEZONE: Asia/Taipei
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: ${N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:-true}
+      N8N_RUNNERS_ENABLED: ${N8N_RUNNERS_ENABLED:-true}
+    volumes:
+      - ./n8n_data:/home/node/.n8n
+      - ./mock_data:/mock_data:ro
+    depends_on:
+      alarm_rag:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

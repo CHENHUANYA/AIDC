@@ -18,6 +18,7 @@ from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 from vector_store import get_store
 from storage import (
+    DB_PATH,
     apply_doc_meta,
     compute_sha256_bytes,
     generate_doc_id,
@@ -25,12 +26,12 @@ from storage import (
     upsert_document_entry,
     ensure_db_dir,
     find_document_by_hash,
+    is_safe_path_segment,
 )
 
 # SINUMERIK format: alarm code is a standalone number on its own line
 ALARM_CODE_RE = re.compile(r'^\d{2,6}$')
 
-DB_PATH     = "./alarm_db"
 EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
 
 SKIP_LINES = {
@@ -339,6 +340,12 @@ def build_index(sections: list[dict], collection_name: str):
     print(f"   Total in collection '{collection_name}': {len(sections)}")
 
 
+def validate_collection_name(collection_name: str) -> str:
+    if not is_safe_path_segment(collection_name):
+        raise ValueError("Invalid collection name")
+    return collection_name
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf",           required=True,  help="Path to the PDF")
@@ -351,6 +358,12 @@ if __name__ == "__main__":
                         help="Overlap lines between chunks (default: 8)")
     parser.add_argument("--force", action="store_true", help="Rebuild even if same hash already ingested")
     args = parser.parse_args()
+
+    try:
+        args.name = validate_collection_name(args.name)
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        exit(1)
 
     if not os.path.exists(args.pdf):
         print(f"ERROR: File not found: {args.pdf}"); exit(1)

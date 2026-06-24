@@ -5,6 +5,7 @@ rag_engine.py - Multi-manual RAG engine with pluggable vector backends.
 import os
 import pickle
 import re
+import threading
 from typing import List
 
 DEFAULT_HF_HOME = os.path.join(os.path.dirname(__file__), "hf_cache")
@@ -19,7 +20,7 @@ from sentence_transformers import CrossEncoder, SentenceTransformer
 from vector_store import get_store
 
 ALARM_PATTERN = re.compile(r"\b(\d{2,6})\b")
-DB_PATH = "./alarm_db"
+DB_PATH = os.getenv("DB_PATH", "./alarm_db")
 EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "mixedbread-ai/mxbai-embed-large-v1")
 RERANKER_MODEL = os.getenv("RAG_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 HF_CACHE_DIR = os.getenv("HF_HOME", DEFAULT_HF_HOME)
@@ -30,6 +31,12 @@ OFFLINE_MODEL_ERROR = (
     "Bake or mount the HuggingFace cache under /app/hf_cache, or set "
     "RAG_HF_LOCAL_ONLY=false only in an allowed online build step."
 )
+VECTOR_STORE_ERROR = (
+    "Vector store is not available. Continuing with BM25-only retrieval; "
+    "start qdrant or set VECTOR_STORE=chroma to enable vector search."
+)
+VECTOR_HYDRATE_ON_LOAD = os.getenv("RAG_VECTOR_HYDRATE_ON_LOAD", "false").strip().lower() in {"1", "true", "yes", "on"}
+VECTOR_REBUILD_BATCH_SIZE = int(os.getenv("RAG_VECTOR_REBUILD_BATCH_SIZE", "64"))
 
 # Shared models – loaded once, reused by all engine instances
 _embedder = None
@@ -45,21 +52,57 @@ def _use_local_models_only() -> bool:
 
 
 def _model_cache_dir(model_name: str) -> str:
-    return os.path.join(HF_CACHE_DIR, "hub", f"models--{model_name.replace('/', '--')}")
+    candidates = _model_cache_dirs(model_name)
+    existing = next((path for path in candidates if os.path.isdir(path)), "")
+    return existing or candidates[0]
+
+
+def _model_cache_dirs(model_name: str) -> list[str]:
+    model_dir = f"models--{model_name.replace('/', '--')}"
+    return [
+        os.path.join(HF_CACHE_DIR, model_dir),
+        os.path.join(HF_CACHE_DIR, "hub", model_dir),
+    ]
 
 
 def _latest_snapshot_path(model_name: str) -> str | None:
-    snapshots_dir = os.path.join(_model_cache_dir(model_name), "snapshots")
-    if not os.path.isdir(snapshots_dir):
-        return None
-    snapshots = [
-        os.path.join(snapshots_dir, name)
-        for name in os.listdir(snapshots_dir)
-        if os.path.isdir(os.path.join(snapshots_dir, name))
-    ]
+    snapshots = []
+    for cache_dir in _model_cache_dirs(model_name):
+        snapshots_dir = os.path.join(cache_dir, "snapshots")
+        if not os.path.isdir(snapshots_dir):
+            continue
+        snapshots.extend(
+            os.path.join(snapshots_dir, name)
+            for name in os.listdir(snapshots_dir)
+            if os.path.isdir(os.path.join(snapshots_dir, name))
+        )
     if not snapshots:
         return None
     return max(snapshots, key=os.path.getmtime)
+
+
+def model_cache_status() -> dict:
+    models = []
+    for role, model_name in [("embedding", EMBEDDING_MODEL), ("reranker", RERANKER_MODEL)]:
+        snapshot_path = _latest_snapshot_path(model_name)
+        models.append({
+            "role": role,
+            "name": model_name,
+            "cache_dir": _model_cache_dir(model_name),
+            "cache_dirs": _model_cache_dirs(model_name),
+            "snapshot_path": snapshot_path or "",
+            "available": bool(snapshot_path or os.path.exists(model_name)),
+        })
+    return {
+        "hf_home": HF_CACHE_DIR,
+        "local_only": _use_local_models_only(),
+        "offline": {
+            "hf_hub_offline": os.getenv("HF_HUB_OFFLINE", ""),
+            "transformers_offline": os.getenv("TRANSFORMERS_OFFLINE", ""),
+        },
+        "models": models,
+        "ready": all(item["available"] for item in models),
+    }
 
 
 def _resolve_model_path(model_name: str, local_files_only: bool) -> str:
@@ -167,20 +210,99 @@ class AlarmRAGEngine:
             self.bm25 = data["bm25"]
             self.sections = data["sections"]
             self.next_id = len(self.sections)
-            self.store.ensure_collection(self.collection_name)
+            try:
+                self.store.ensure_collection(self.collection_name)
+                self._hydrate_vector_store_if_needed()
+            except Exception as exc:
+                print(f"[WARN][{self.collection_name}] {VECTOR_STORE_ERROR} Detail: {exc}")
             self.ready = True
             print(f"[OK][{self.collection_name}] Ready — {len(self.sections)} sections indexed")
         except Exception as e:
             print(f"[WARN][{self.collection_name}] Failed to load index: {e}")
 
-    def _init_empty(self):
-        """Initialize an empty collection (for first-time ingest via API)."""
-        os.makedirs(DB_PATH, exist_ok=True)
+    def _hydrate_vector_store_if_needed(self):
+        if not VECTOR_HYDRATE_ON_LOAD or self.embedder is None or not self.sections:
+            return
+        count = self.store.count(self.collection_name)
+        if count == len(self.sections):
+            return
+        print(
+            f"[WARN][{self.collection_name}] Vector store has {count} points for "
+            f"{len(self.sections)} BM25 sections; hydrating vectors from local index"
+        )
+        self._replace_vector_store()
+
+    def vector_coverage(self) -> dict:
+        total = len(self.sections)
+        points = 0
+        error = ""
+        try:
+            points = self.store.count(self.collection_name)
+        except Exception as exc:
+            error = str(exc)
+        percent = 100 if total == 0 else round(points * 100 / total, 1)
+        return {
+            "vector_points": points,
+            "bm25_sections": total,
+            "vector_coverage_percent": percent,
+            "vector_ready": total > 0 and points >= total,
+            "vector_error": error,
+        }
+
+    def _replace_vector_store(self):
+        self._replace_vector_store_batched()
+
+    def _replace_vector_store_batched(
+        self,
+        batch_size: int | None = None,
+        progress_callback=None,
+        stop_event: threading.Event | None = None,
+    ):
+        texts = [section["text"] for section in self.sections]
         try:
             self.store.delete_collection(self.collection_name)
         except Exception:
             pass
         self.store.ensure_collection(self.collection_name)
+        total = len(self.sections)
+        batch_size = max(int(batch_size or VECTOR_REBUILD_BATCH_SIZE or 64), 1)
+        if progress_callback:
+            progress_callback(0, total, "vector_rebuild")
+        for start in range(0, total, batch_size):
+            if stop_event and stop_event.is_set():
+                raise RuntimeError("Rebuild cancelled")
+            end = min(start + batch_size, total)
+            batch_sections = self.sections[start:end]
+            batch_texts = texts[start:end]
+            embeddings = self.embedder.encode(batch_texts, batch_size=min(32, batch_size))
+            ids = [f"s{i}" for i in range(start, end)]
+            metadatas = self._build_metadatas(batch_sections)
+            self.store.add(
+                collection=self.collection_name,
+                texts=batch_texts,
+                embeddings=embeddings.tolist(),
+                metadatas=metadatas,
+                ids=ids,
+            )
+            if progress_callback:
+                progress_callback(end, total, "vector_rebuild")
+
+    def _init_empty(self):
+        """Initialize an empty collection (for first-time ingest via API)."""
+        os.makedirs(DB_PATH, exist_ok=True)
+        pkl_path = f"{DB_PATH}/bm25_{self.collection_name}.pkl"
+        try:
+            os.remove(pkl_path)
+        except FileNotFoundError:
+            pass
+        try:
+            self.store.delete_collection(self.collection_name)
+        except Exception:
+            pass
+        try:
+            self.store.ensure_collection(self.collection_name)
+        except Exception as exc:
+            print(f"[WARN][{self.collection_name}] {VECTOR_STORE_ERROR} Detail: {exc}")
         self.sections = []
         self.bm25 = None
         self.next_id = 0
@@ -238,6 +360,20 @@ class AlarmRAGEngine:
         with open(pkl_path, "wb") as f:
             pickle.dump({"bm25": self.bm25, "sections": self.sections}, f)
 
+    def _valid_section_indexes_from_ids(self, ids: List[str]) -> List[int]:
+        indexes = []
+        for raw_id in ids:
+            text_id = str(raw_id)
+            if not text_id.startswith("s"):
+                continue
+            try:
+                index = int(text_id[1:])
+            except ValueError:
+                continue
+            if 0 <= index < len(self.sections):
+                indexes.append(index)
+        return indexes
+
     def rebuild(self, sections: List[dict] | None = None):
         """Rebuild vector store and BM25 from provided sections (or current ones)."""
         if sections is not None:
@@ -246,12 +382,6 @@ class AlarmRAGEngine:
         if not self.sections:
             self._init_empty()
             return
-
-        try:
-            self.store.delete_collection(self.collection_name)
-        except Exception:
-            pass
-        self.store.ensure_collection(self.collection_name)
 
         texts = [s["text"] for s in self.sections]
         self._persist_bm25_index(texts)
@@ -265,20 +395,63 @@ class AlarmRAGEngine:
             )
             return
 
-        embeddings = self.embedder.encode(texts, batch_size=32)
-        ids = [f"s{i}" for i in range(len(self.sections))]
-        metadatas = self._build_metadatas(self.sections)
+        try:
+            self._replace_vector_store()
+        except Exception as exc:
+            self.next_id = len(self.sections)
+            self.ready = True
+            print(f"[WARN][{self.collection_name}] {VECTOR_STORE_ERROR} Detail: {exc}")
+            return
 
-        self.store.add(
-            collection=self.collection_name,
-            texts=texts,
-            embeddings=embeddings.tolist(),
-            metadatas=metadatas,
-            ids=ids,
+        self.next_id = len(self.sections)
+        self.ready = True
+        print(f"[OK][{self.collection_name}] Rebuilt collection with {len(self.sections)} sections")
+
+    def rebuild_with_progress(
+        self,
+        sections: List[dict] | None = None,
+        progress_callback=None,
+        stop_event: threading.Event | None = None,
+    ):
+        """Rebuild BM25 and vectors in batches so callers can track/cancel long jobs."""
+        if sections is not None:
+            self.sections = sections
+
+        if not self.sections:
+            self._init_empty()
+            if progress_callback:
+                progress_callback(0, 0, "completed")
+            return
+
+        texts = [s["text"] for s in self.sections]
+        if progress_callback:
+            progress_callback(0, len(self.sections), "bm25")
+        self._persist_bm25_index(texts)
+
+        if stop_event and stop_event.is_set():
+            raise RuntimeError("Rebuild cancelled")
+
+        if self.embedder is None:
+            self.next_id = len(self.sections)
+            self.ready = True
+            if progress_callback:
+                progress_callback(len(self.sections), len(self.sections), "bm25_only")
+            print(
+                f"[WARN][{self.collection_name}] Rebuilt BM25-only collection with "
+                f"{len(self.sections)} sections: {self.model_error or OFFLINE_MODEL_ERROR}"
+            )
+            return
+
+        self._replace_vector_store_batched(
+            batch_size=VECTOR_REBUILD_BATCH_SIZE,
+            progress_callback=progress_callback,
+            stop_event=stop_event,
         )
 
         self.next_id = len(self.sections)
         self.ready = True
+        if progress_callback:
+            progress_callback(len(self.sections), len(self.sections), "completed")
         print(f"[OK][{self.collection_name}] Rebuilt collection with {len(self.sections)} sections")
 
     def add_sections(self, new_sections: List[dict]) -> int:
@@ -292,17 +465,21 @@ class AlarmRAGEngine:
         texts = [s["text"] for s in new_sections]
 
         if self.embedder is not None:
-            start_idx = self.next_id
-            embeddings = self.embedder.encode(texts, batch_size=32)
-            ids = [f"s{start_idx + i}" for i in range(len(new_sections))]
-            metadatas = self._build_metadatas(new_sections)
-            self.store.add(
-                collection=self.collection_name,
-                texts=texts,
-                embeddings=embeddings.tolist(),
-                metadatas=metadatas,
-                ids=ids,
-            )
+            try:
+                self.store.ensure_collection(self.collection_name)
+                start_idx = self.next_id
+                embeddings = self.embedder.encode(texts, batch_size=32)
+                ids = [f"s{start_idx + i}" for i in range(len(new_sections))]
+                metadatas = self._build_metadatas(new_sections)
+                self.store.add(
+                    collection=self.collection_name,
+                    texts=texts,
+                    embeddings=embeddings.tolist(),
+                    metadatas=metadatas,
+                    ids=ids,
+                )
+            except Exception as exc:
+                print(f"[WARN][{self.collection_name}] {VECTOR_STORE_ERROR} Detail: {exc}")
         else:
             print(
                 f"[WARN][{self.collection_name}] Added BM25-only sections: "
@@ -343,11 +520,16 @@ class AlarmRAGEngine:
             return [{"text": self.sections[i]["text"], "meta": self.sections[i]} for i in top_idxs]
 
         # Stage 3: Vector
-        q_emb = self.embedder.encode([query])
-        vec_res = self.store.query(
-            collection=self.collection_name, query_embeddings=q_emb.tolist(), n_results=20
-        )
-        vec_top20 = [int(i.replace("s", "")) for i in vec_res["ids"][0]]
+        try:
+            q_emb = self.embedder.encode([query])
+            vec_res = self.store.query(
+                collection=self.collection_name, query_embeddings=q_emb.tolist(), n_results=20
+            )
+            vec_top20 = self._valid_section_indexes_from_ids(vec_res.get("ids", [[]])[0])
+        except Exception as exc:
+            print(f"[WARN][{self.collection_name}] {VECTOR_STORE_ERROR} Detail: {exc}")
+            top_idxs = bm25_top20[:top_k]
+            return [{"text": self.sections[i]["text"], "meta": self.sections[i]} for i in top_idxs]
 
         # Stage 4: RRF fusion
         rrf: dict[int, float] = {}

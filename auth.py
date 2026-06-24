@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
 
 
-MOCK_USERS: Dict[str, dict] = {
+BOOTSTRAP_USERS: Dict[str, dict] = {
     "operator01": {
         "user_id": "operator01",
         "name": "Operator LINE-A",
@@ -47,10 +47,11 @@ MOCK_USERS: Dict[str, dict] = {
     },
 }
 
-DB_DIR = "./alarm_db"
+DB_DIR = os.getenv("DB_PATH", "./alarm_db")
 USER_FILE = os.path.join(DB_DIR, "users.json")
 SESSION_FILE = os.path.join(DB_DIR, "sessions.json")
-DEFAULT_PASSWORD = "demo1234"
+DEFAULT_ADMIN_INITIAL_PASSWORD = "change-me-now"
+PLACEHOLDER_INITIAL_PASSWORDS = {DEFAULT_ADMIN_INITIAL_PASSWORD, ""}
 VALID_ROLES = {"operator", "maintenance", "supervisor", "admin"}
 ADMIN_ROLES = {"admin"}
 FULL_ACCESS_ROLES = {"supervisor", "admin"}
@@ -69,7 +70,7 @@ class LogoutRequest(BaseModel):
     token: Optional[str] = None
 
 
-class UpdateMockUserRequest(BaseModel):
+class UpdateUserRequest(BaseModel):
     name: Optional[str] = None
     role: Optional[str] = None
     team: Optional[str] = None
@@ -77,17 +78,30 @@ class UpdateMockUserRequest(BaseModel):
     active: Optional[bool] = None
 
 
-class CreateMockUserRequest(BaseModel):
+class CreateUserRequest(BaseModel):
     user_id: str
     name: Optional[str] = ""
     role: Optional[str] = "operator"
     team: Optional[str] = ""
     line_scope: Optional[List[str]] = None
-    password: Optional[str] = DEFAULT_PASSWORD
+    password: Optional[str] = None
 
 
 class ResetPasswordRequest(BaseModel):
-    password: Optional[str] = DEFAULT_PASSWORD
+    password: Optional[str] = None
+
+
+def bootstrap_user_summaries() -> List[dict]:
+    return [
+        {
+            "user_id": user["user_id"],
+            "name": user["name"],
+            "role": user["role"],
+            "team": user["team"],
+            "line_scope": user["line_scope"],
+        }
+        for user in BOOTSTRAP_USERS.values()
+    ]
 
 
 def get_actor(authorization: Optional[str] = Header(default=None, alias="Authorization")) -> dict:
@@ -103,7 +117,28 @@ def resolve_user(user_id: Optional[str]) -> dict:
     return public_user(users.get(key, {}))
 
 
-def list_mock_users(actor: Optional[dict] = None) -> List[dict]:
+def configured_initial_password() -> str:
+    password = os.getenv("ADMIN_INITIAL_PASSWORD", "").strip()
+    if password:
+        return password
+    return DEFAULT_ADMIN_INITIAL_PASSWORD
+
+
+def initial_password_is_placeholder(password: Optional[str] = None) -> bool:
+    return (password if password is not None else configured_initial_password()).strip() in PLACEHOLDER_INITIAL_PASSWORDS
+
+
+def implicit_initial_password_error() -> Optional[str]:
+    if production_mode() and initial_password_is_placeholder():
+        return "ADMIN_INITIAL_PASSWORD must be set to a non-placeholder value in production"
+    return None
+
+
+def production_mode() -> bool:
+    return os.getenv("ALARM_RAG_ENV", "development").strip().lower() in {"prod", "production"}
+
+
+def list_users(actor: Optional[dict] = None) -> List[dict]:
     users = [public_user(user) for user in load_users().values()]
     if actor is None or is_admin(actor):
         return users
@@ -133,7 +168,10 @@ def is_last_active_admin(user: dict, users: Dict[str, dict]) -> bool:
 
 
 def valid_password(password: str) -> bool:
-    return len(password) >= 6
+    normalized = password.strip()
+    if len(normalized) < 8:
+        return False
+    return normalized.lower() not in {"password", "password1", "12345678", "change-me-now"}
 
 
 def normalize_line_scope(line_scope: Optional[List[str]]) -> List[str]:
@@ -144,7 +182,7 @@ def is_valid_user_id(user_id: str) -> bool:
     return bool(user_id) and user_id.replace("-", "").replace("_", "").isalnum()
 
 
-def build_mock_user(req: CreateMockUserRequest, user_id: str, password: str) -> dict:
+def build_user(req: CreateUserRequest, user_id: str, password: str) -> dict:
     role = req.role or "operator"
     return {
         "user_id": user_id,
@@ -157,7 +195,7 @@ def build_mock_user(req: CreateMockUserRequest, user_id: str, password: str) -> 
     }
 
 
-def validate_create_mock_user(req: CreateMockUserRequest, existing_users: Dict[str, dict]) -> Optional[str]:
+def validate_create_user(req: CreateUserRequest, existing_users: Dict[str, dict]) -> Optional[str]:
     user_id = req.user_id.strip()
     role = req.role or "operator"
     if not user_id:
@@ -168,15 +206,19 @@ def validate_create_mock_user(req: CreateMockUserRequest, existing_users: Dict[s
         return "Invalid role"
     if user_id in existing_users:
         return f"User {user_id} already exists"
-    if not valid_password(req.password or DEFAULT_PASSWORD):
-        return "Password must be at least 6 characters"
+    if not req.password:
+        password_error = implicit_initial_password_error()
+        if password_error:
+            return password_error
+    if not valid_password(req.password or configured_initial_password()):
+        return "Password must be at least 8 characters and not use a common placeholder"
     return None
 
 
 def validate_admin_role_change(
     user_id: str,
     user: dict,
-    req: UpdateMockUserRequest,
+    req: UpdateUserRequest,
     actor: dict,
     users: Dict[str, dict],
 ) -> Optional[str]:
@@ -207,32 +249,45 @@ def permission_denied() -> dict:
     return api_error("Permission denied")
 
 
-@router.get("/mock-users")
-async def api_list_mock_users(actor: dict = Depends(get_actor)):
+async def _api_list_users(actor: dict) -> dict:
+    if not actor_id(actor):
+        return api_error("Not authenticated")
     if actor_role(actor) not in ("admin", "supervisor"):
         return permission_denied()
-    return {"users": list_mock_users(actor)}
+    return {"users": list_users(actor)}
 
 
-@router.post("/mock-users")
-async def api_create_mock_user(req: CreateMockUserRequest, actor: dict = Depends(get_actor)):
+@router.get("/users")
+async def api_list_users(actor: dict = Depends(get_actor)):
+    return await _api_list_users(actor)
+
+
+async def _api_create_user(req: CreateUserRequest, actor: dict) -> dict:
+    if not actor_id(actor):
+        return api_error("Not authenticated")
     if not is_admin(actor):
         return permission_denied()
 
     user_id = req.user_id.strip()
     users = load_users()
-    validation_error = validate_create_mock_user(req, users)
+    validation_error = validate_create_user(req, users)
     if validation_error:
         return api_error(validation_error)
 
-    user = build_mock_user(req, user_id, req.password or DEFAULT_PASSWORD)
+    user = build_user(req, user_id, req.password or configured_initial_password())
     users[user_id] = user
     save_users(users)
     return api_ok(user=public_user(user))
 
 
-@router.patch("/mock-users/{user_id}")
-async def api_update_mock_user(user_id: str, req: UpdateMockUserRequest, actor: dict = Depends(get_actor)):
+@router.post("/users")
+async def api_create_user(req: CreateUserRequest, actor: dict = Depends(get_actor)):
+    return await _api_create_user(req, actor)
+
+
+async def _api_update_user(user_id: str, req: UpdateUserRequest, actor: dict) -> dict:
+    if not actor_id(actor):
+        return api_error("Not authenticated")
     if not is_admin(actor):
         return permission_denied()
 
@@ -261,12 +316,14 @@ async def api_update_mock_user(user_id: str, req: UpdateMockUserRequest, actor: 
     return api_ok(user=public_user(user))
 
 
-@router.patch("/mock-users/{user_id}/password")
-async def api_reset_mock_user_password(
-    user_id: str,
-    req: ResetPasswordRequest,
-    actor: dict = Depends(get_actor),
-):
+@router.patch("/users/{user_id}")
+async def api_update_user(user_id: str, req: UpdateUserRequest, actor: dict = Depends(get_actor)):
+    return await _api_update_user(user_id, req, actor)
+
+
+async def _api_reset_user_password(user_id: str, req: ResetPasswordRequest, actor: dict) -> dict:
+    if not actor_id(actor):
+        return api_error("Not authenticated")
     if not is_admin(actor):
         return permission_denied()
 
@@ -275,9 +332,13 @@ async def api_reset_mock_user_password(
     user = users.get(key)
     if not user:
         return api_error(f"User {user_id} not found")
-    password = req.password or DEFAULT_PASSWORD
+    if not req.password:
+        password_error = implicit_initial_password_error()
+        if password_error:
+            return api_error(password_error)
+    password = req.password or configured_initial_password()
     if not valid_password(password):
-        return api_error("Password must be at least 6 characters")
+        return api_error("Password must be at least 8 characters and not use a common placeholder")
     user["password_hash"] = hash_password(password)
     users[key] = user
     save_users(users)
@@ -285,8 +346,18 @@ async def api_reset_mock_user_password(
     return api_ok(user=public_user(user), sessions_revoked=True)
 
 
-@router.delete("/mock-users/{user_id}/sessions")
-async def api_revoke_mock_user_sessions(user_id: str, actor: dict = Depends(get_actor)):
+@router.patch("/users/{user_id}/password")
+async def api_reset_user_password(
+    user_id: str,
+    req: ResetPasswordRequest,
+    actor: dict = Depends(get_actor),
+):
+    return await _api_reset_user_password(user_id, req, actor)
+
+
+async def _api_revoke_user_sessions(user_id: str, actor: dict) -> dict:
+    if not actor_id(actor):
+        return api_error("Not authenticated")
     if not is_admin(actor):
         return permission_denied()
 
@@ -299,8 +370,15 @@ async def api_revoke_mock_user_sessions(user_id: str, actor: dict = Depends(get_
     return api_ok(revoked=revoke_user_sessions(key))
 
 
+@router.delete("/users/{user_id}/sessions")
+async def api_revoke_user_sessions(user_id: str, actor: dict = Depends(get_actor)):
+    return await _api_revoke_user_sessions(user_id, actor)
+
+
 @router.get("/sessions")
 async def api_list_sessions(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return api_error("Not authenticated")
     if not is_admin(actor):
         return permission_denied()
     users = load_users()
@@ -321,6 +399,8 @@ async def api_list_sessions(actor: dict = Depends(get_actor)):
 
 @router.delete("/sessions/{token_prefix}")
 async def api_revoke_session(token_prefix: str, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return api_error("Not authenticated")
     if not is_admin(actor):
         return permission_denied()
     prefix = token_prefix.strip()
@@ -353,6 +433,16 @@ async def login(req: LoginRequest):
     return {"status": "ok", "token": token, "expires_at": expires_at, "user": public_user(user)}
 
 
+@router.get("/auth/login-config")
+async def login_config():
+    return {
+        "status": "ok",
+        "production": production_mode(),
+        "initial_password_configured": not initial_password_is_placeholder(),
+        "bootstrap_users": bootstrap_user_summaries(),
+    }
+
+
 @router.get("/auth/me")
 async def me(authorization: Optional[str] = Header(default=None, alias="Authorization")):
     current = actor_from_token(authorization)
@@ -376,9 +466,13 @@ def ensure_user_store() -> None:
     os.makedirs(DB_DIR, exist_ok=True)
     if os.path.exists(USER_FILE):
         return
+    initial_password = configured_initial_password()
+    password_error = implicit_initial_password_error()
+    if password_error:
+        raise RuntimeError(password_error)
     users = {
-        user_id: {**user, "password_hash": hash_password(DEFAULT_PASSWORD), "active": True}
-        for user_id, user in MOCK_USERS.items()
+        user_id: {**user, "password_hash": hash_password(initial_password), "active": True}
+        for user_id, user in BOOTSTRAP_USERS.items()
     }
     with open(USER_FILE, "w", encoding="utf-8") as file:
         json.dump(users, file, ensure_ascii=False, indent=2)
@@ -447,6 +541,12 @@ def _parse_session_expiry(session: dict) -> datetime:
 
 
 def session_hours() -> int:
+    env_value = os.getenv("SESSION_TTL_HOURS", "").strip()
+    if env_value:
+        try:
+            return min(max(int(env_value), 1), 72)
+        except ValueError:
+            pass
     try:
         with open(os.path.join(DB_DIR, "system_settings.json"), "r", encoding="utf-8") as file:
             payload = json.load(file)
@@ -557,6 +657,8 @@ def can_view_work_order(actor: dict, order: dict, linked_issue: Optional[dict] =
     if role == "operator":
         return bool(linked_issue) and can_view_issue(actor, linked_issue)
     if role == "maintenance":
+        if order.get("status") in ("completed", "verified"):
+            return False
         assigned_to = str(order.get("assigned_to") or "")
         return not assigned_to or assigned_to == actor_id(actor)
     return False

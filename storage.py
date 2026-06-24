@@ -1,11 +1,26 @@
 import os
 import json
 import hashlib
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-DB_PATH = "./alarm_db"
+def load_local_env(path: str = ".env") -> None:
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8-sig") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_local_env()
+
+DB_PATH = os.getenv("DB_PATH", "./alarm_db")
 MANIFEST_PATH = os.path.join(DB_PATH, "manifest.json")
 INGEST_LOG_PATH = os.path.join(DB_PATH, "ingest_log.jsonl")
 QUERY_LOG_PATH = os.path.join(DB_PATH, "query_log.jsonl")
@@ -30,6 +45,10 @@ def compute_sha256_bytes(data: bytes) -> str:
 def slugify(name: str) -> str:
     base = Path(name).stem
     return "".join(c.lower() if c.isalnum() else "-" for c in base).strip("-") or "doc"
+
+
+def is_safe_path_segment(value: str) -> bool:
+    return re.fullmatch(r"[a-zA-Z0-9_-]+", value or "") is not None
 
 
 def generate_doc_id(filename: str, source_hash: str) -> str:

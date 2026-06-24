@@ -2,7 +2,7 @@
 
 ## Week 1 Scope
 
-- [x] Demo operator page is available at `/alarm-app`.
+- [x] Operator/dashboard alarm pages are available at `/operator` and `/dashboard`.
 - [x] Mock alarm trigger API is available at `/trigger-alarm`.
 - [x] Web banner polling is available at `/pending-alarms`.
 - [x] Auto-created work orders are available through `/work-orders`.
@@ -24,13 +24,13 @@ python scripts/smoke_test.py --base-url http://localhost:8100 --manual 808d --al
 Pass criteria:
 
 - `health` is `PASS`.
-- `/alarm-app` page load is `PASS`.
+- `/operator` page load is `PASS`.
 - `lookup`, `chat`, `ingest:text`, work-order CRUD, banner trigger/poll, and stats checks have no `FAIL`.
 - `upload:pdf` may be `SKIP` if no `--pdf` argument is supplied.
 
 ## Demo Pass Criteria
 
-- A replayed alarm produces a visible banner in `/alarm-app`.
+- A replayed alarm produces a visible banner in `/dashboard` or `/operator`.
 - Clicking the banner can launch a lookup for the alarm code.
 - A work order is created automatically for the trigger.
 - Alarm and work-order stats update after refresh.
@@ -61,7 +61,7 @@ Pass criteria:
 - Seed output shows no `failed` records.
 - `lookup` remains `PASS` and reports metadata when alarm `3000` is found.
 - `work-orders/stats` has non-zero totals after seeding.
-- Recent ingest records include `week2-sop`, `week2-bulletin`, or auto-ingested `workorder` records.
+- Recent ingest records include `week2-sop`, `week2-bulletin`, or Admin-approved `workorder` records.
 
 ## Week 3 Scope
 

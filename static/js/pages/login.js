@@ -25,7 +25,7 @@
       return;
     }
     button.disabled = isSubmitting;
-    button.querySelector('span').textContent = isSubmitting ? '登入中...' : '登入系統';
+    button.querySelector('span').textContent = isSubmitting ? '登入中...' : '登入';
   }
 
   function defaultPathForRole(role) {
@@ -48,21 +48,59 @@
     localStorage.setItem(USER_KEY, JSON.stringify(user));
   }
 
+  async function loadLoginConfig() {
+    const hint = $('loginConfigHint');
+    try {
+      const api = coreApi();
+      if (!api.apiJson) {
+        return;
+      }
+      const data = await api.apiJson('/auth/login-config');
+      if (!hint || data.status !== 'ok') {
+        return;
+      }
+      hint.textContent = data.production
+        ? '角色卡只會帶入使用者 ID，請輸入 bootstrap 時設定的密碼。'
+        : '角色卡只會帶入使用者 ID，請輸入本機開發環境設定的密碼。';
+      if (!data.initial_password_configured) {
+        hint.textContent = '尚未設定初始密碼，請先執行 scripts/bootstrap_env.py 再登入。';
+      }
+    } catch (_) {
+      // Login still works without this optional hint.
+    }
+  }
+
+  function preselectUserFromNextPath() {
+    const url = new URL(window.location.href);
+    const next = url.searchParams.get('next') || '';
+    const username = $('loginUsername');
+    if (!username || username.value.trim()) {
+      return;
+    }
+    if (next.startsWith('/admin')) {
+      username.value = 'admin01';
+      return;
+    }
+    if (next.startsWith('/supervisor') || next.startsWith('/dashboard')) {
+      username.value = 'supervisor01';
+    }
+  }
+
   async function submitLogin(event) {
     event.preventDefault();
     const username = $('loginUsername')?.value.trim() || '';
     const password = $('loginPassword')?.value || '';
     if (!username || !password) {
-      setResult('請輸入帳號與密碼。');
+      setResult('請輸入使用者 ID 與密碼。');
       return;
     }
 
     setSubmitting(true);
-    setResult('正在驗證帳號...', 'loading');
+    setResult('正在驗證帳號密碼...', 'loading');
     try {
       const api = coreApi();
       if (!api.apiJson) {
-        throw new Error('登入核心腳本尚未載入，請重新整理頁面。');
+        throw new Error('Login API 目前無法使用，請重新整理頁面後再試。');
       }
       const data = await api.apiJson('/auth/login', {
         method: 'POST',
@@ -73,7 +111,7 @@
         throw new Error(data.message || '登入失敗');
       }
       saveAuth(data.token, data.user);
-      setResult('登入成功，正在進入系統...', 'success');
+      setResult('Signed in. Opening console...', 'success');
       window.location.href = nextPath(data.user);
     } catch (error) {
       setSubmitting(false);
@@ -89,15 +127,15 @@
         if (username) {
           username.value = button.dataset.user || '';
         }
-        if (password) {
-          password.value = 'demo1234';
-          password.focus();
-        }
+        setResult(`已帶入使用者 ID：${button.dataset.user || ''}。請輸入帳號密碼繼續。`, 'loading');
+        password?.focus();
       });
     });
   }
 
   document.addEventListener('DOMContentLoaded', () => {
+    preselectUserFromNextPath();
+    loadLoginConfig();
     $('loginForm')?.addEventListener('submit', submitLogin);
     bindQuickAccounts();
   });

@@ -1,13 +1,22 @@
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 from urllib import error, request
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from env_utils import EnvConfigError, admin_initial_password, load_project_env
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WORK_ORDERS = ROOT / "mock_data" / "week2_work_orders.json"
 DEFAULT_KNOWLEDGE = ROOT / "mock_data" / "week2_knowledge_records.json"
+
+
+load_project_env()
 
 
 def load_json_array(path: Path) -> list[dict[str, Any]]:
@@ -41,33 +50,40 @@ def request_json(
             return exc.code, json.loads(body)
         except json.JSONDecodeError:
             return exc.code, {"_raw": body}
+    except (TimeoutError, error.URLError) as exc:
+        return 0, {"_error": str(exc)}
 
 
-def login(base_url: str, timeout: int) -> str:
+def login(base_url: str, timeout: int, username: str = "admin01") -> str:
+    try:
+        password = admin_initial_password()
+    except EnvConfigError as exc:
+        print(f"[FAIL] {exc}")
+        return ""
     code, data = request_json(
         base_url,
         "/auth/login",
         "POST",
-        {"username": "admin01", "password": "demo1234"},
+        {"username": username, "password": password},
         timeout,
     )
     return data.get("token") if code == 200 and isinstance(data, dict) else ""
 
 
-def existing_work_order_keys(base_url: str, timeout: int, token: str) -> set[tuple[str, str, str, str]]:
+def existing_work_order_keys(base_url: str, timeout: int, token: str) -> dict[tuple[str, str, str, str], dict[str, Any]]:
     code, data = request_json(base_url, "/work-orders", timeout=timeout, token=token)
     if code != 200:
-        return set()
+        return {}
     orders = data.get("orders") if isinstance(data, dict) else []
     if not isinstance(orders, list):
-        return set()
+        return {}
     return {
         (
             str(order.get("alarm_code") or ""),
             str(order.get("machine_id") or ""),
             str(order.get("source") or ""),
             str(order.get("description") or ""),
-        )
+        ): order
         for order in orders
         if isinstance(order, dict)
     }
@@ -87,7 +103,13 @@ def existing_ingest_titles(base_url: str, collection: str, timeout: int, token: 
     }
 
 
-def seed_work_orders(base_url: str, records: list[dict[str, Any]], timeout: int, token: str) -> tuple[int, int, int]:
+def seed_work_orders(
+    base_url: str,
+    records: list[dict[str, Any]],
+    timeout: int,
+    token: str,
+    verifier_token: str,
+) -> tuple[int, int, int]:
     existing = existing_work_order_keys(base_url, timeout, token)
     created = 0
     skipped = 0
@@ -100,12 +122,18 @@ def seed_work_orders(base_url: str, records: list[dict[str, Any]], timeout: int,
             str(record.get("source") or "week2-history"),
             str(record.get("description") or ""),
         )
+        target_status = str(record.get("status") or "pending")
+        order_id = ""
         if key in existing:
-            skipped += 1
-            print(f"[SKIP] work order {key[0]} {key[1]}")
-            continue
+            existing_order = existing[key]
+            order_id = str(existing_order.get("id") or "")
+            if existing_order.get("status") == target_status:
+                skipped += 1
+                print(f"[SKIP] work order {key[0]} {key[1]}")
+                continue
 
-        create_payload = {
+        if not order_id:
+            create_payload = {
             "alarm_code": str(record.get("alarm_code") or ""),
             "manual": str(record.get("manual") or "808d"),
             "machine_id": str(record.get("machine_id") or ""),
@@ -114,15 +142,17 @@ def seed_work_orders(base_url: str, records: list[dict[str, Any]], timeout: int,
             "description": str(record.get("description") or ""),
             "rag_suggestion": str(record.get("rag_suggestion") or ""),
             "source": str(record.get("source") or "week2-history"),
-        }
-        code, data = request_json(base_url, "/work-orders", "POST", create_payload, timeout, token)
-        order = data.get("order") if isinstance(data, dict) else {}
-        order_id = order.get("id") if isinstance(order, dict) else None
-        if code != 200 or data.get("status") != "ok" or not order_id:
-            failed += 1
-            print(f"[FAIL] create work order {key[0]} HTTP {code}: {data}")
-            continue
+            }
+            code, data = request_json(base_url, "/work-orders", "POST", create_payload, timeout, token)
+            order = data.get("order") if isinstance(data, dict) else {}
+            order_id = order.get("id") if isinstance(order, dict) else None
+            if code != 200 or data.get("status") != "ok" or not order_id:
+                failed += 1
+                print(f"[FAIL] create work order {key[0]} HTTP {code}: {data}")
+                continue
 
+        root_cause = str(record.get("root_cause") or record.get("description") or "Historical mock diagnosis")
+        repair_action = str(record.get("repair_action") or record.get("resolution") or "Historical mock repair action")
         update_payload = {
             "status": str(record.get("status") or "pending"),
             "priority": str(record.get("priority") or "medium"),
@@ -131,16 +161,41 @@ def seed_work_orders(base_url: str, records: list[dict[str, Any]], timeout: int,
             "description": str(record.get("description") or ""),
             "resolution": str(record.get("resolution") or ""),
             "notes": str(record.get("notes") or ""),
+            "completed_by": str(record.get("completed_by") or record.get("assigned_to") or "maintenance-a"),
+            "root_cause": root_cause,
+            "repair_action": repair_action,
         }
+        if target_status == "verified":
+            update_payload["status"] = "completed"
+
         code, data = request_json(base_url, f"/work-orders/{order_id}", "PATCH", update_payload, timeout, token)
-        if code == 200 and data.get("status") == "ok":
-            created += 1
-            existing.add(key)
-            print(f"[ OK ] work order {order_id} {key[0]} {update_payload['status']}")
+        if not (code == 200 and data.get("status") == "ok"):
+            failed += 1
+            print(f"[FAIL] update work order {order_id} HTTP {code}: {data}")
             continue
 
-        failed += 1
-        print(f"[FAIL] update work order {order_id} HTTP {code}: {data}")
+        if target_status == "verified":
+            verify_payload = {
+                **update_payload,
+                "status": "verified",
+                "verified_by": str(record.get("verified_by") or "supervisor01"),
+            }
+            code, data = request_json(
+                base_url,
+                f"/work-orders/{order_id}",
+                "PATCH",
+                verify_payload,
+                timeout,
+                verifier_token or token,
+            )
+            if not (code == 200 and data.get("status") == "ok"):
+                failed += 1
+                print(f"[FAIL] verify work order {order_id} HTTP {code}: {data}")
+                continue
+
+        created += 1
+        existing[key] = {"id": order_id, "status": target_status}
+        print(f"[ OK ] work order {order_id} {key[0]} {target_status}")
 
     return created, skipped, failed
 
@@ -194,10 +249,17 @@ def main() -> int:
     if not token:
         print("[FAIL] login admin01 failed")
         return 1
+    verifier_token = login(args.base_url, args.timeout, "supervisor01")
 
     total_failed = 0
     if not args.skip_work_orders:
-        created, skipped, failed = seed_work_orders(args.base_url, load_json_array(Path(args.work_orders)), args.timeout, token)
+        created, skipped, failed = seed_work_orders(
+            args.base_url,
+            load_json_array(Path(args.work_orders)),
+            args.timeout,
+            token,
+            verifier_token,
+        )
         total_failed += failed
         print(f"Work orders: created={created} skipped={skipped} failed={failed}")
 

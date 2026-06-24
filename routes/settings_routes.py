@@ -6,12 +6,14 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from auth import actor_id, get_actor, is_admin
+from storage import DB_PATH
 
 
 router = APIRouter()
 
-DB_DIR = "./alarm_db"
+DB_DIR = DB_PATH
 SETTINGS_FILE = os.path.join(DB_DIR, "system_settings.json")
+DEFAULT_MANUALS = {"808d", "840d", "840dsl", "furnace_b85t"}
 DEFAULT_SETTINGS = {
     "default_manual": "808d",
     "session_hours": 12,
@@ -46,6 +48,8 @@ def _save_settings(settings: dict) -> None:
 
 @router.get("/system-settings")
 async def get_system_settings(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
     return {"status": "ok", "settings": _load_settings()}
@@ -53,13 +57,17 @@ async def get_system_settings(actor: dict = Depends(get_actor)):
 
 @router.patch("/system-settings")
 async def update_system_settings(req: UpdateSystemSettings, actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
 
     from datetime import datetime
 
     settings = _load_settings()
-    if req.default_manual in ("808d", "840d", "840dsl", "furnace_b85t"):
+    if req.default_manual is not None and req.default_manual not in DEFAULT_MANUALS:
+        return {"status": "error", "message": "Invalid default_manual"}
+    if req.default_manual in DEFAULT_MANUALS:
         settings["default_manual"] = req.default_manual
     if req.session_hours is not None:
         settings["session_hours"] = min(max(req.session_hours, 1), 72)

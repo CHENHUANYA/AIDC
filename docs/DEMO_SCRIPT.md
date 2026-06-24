@@ -5,7 +5,7 @@
 Show the no-vendor MVP loop:
 
 1. A mock machine alarm is sent to `/trigger-alarm`.
-2. The alarm banner appears in `/alarm-app`.
+2. The alarm banner appears in `/dashboard` or `/operator`.
 3. RAG lookup gives the operator an initial troubleshooting direction.
 4. A work order is created automatically.
 5. BI/stat endpoints reflect the alarm, query, and work-order activity.
@@ -28,7 +28,7 @@ uvicorn main:app --host 0.0.0.0 --port 8100 --reload
 Open the operator UI:
 
 ```text
-http://localhost:8100/alarm-app
+http://localhost:8100/dashboard
 ```
 
 ## Demo Flow
@@ -93,10 +93,10 @@ mock_data/n8n_mock_workflow.json
 Demo steps:
 
 1. Start the API at `http://localhost:8100`.
-2. Open `/alarm-app` in the browser.
+2. Open `/dashboard` or `/operator` in the browser.
 3. Run the n8n workflow with `Manual Trigger`.
 4. Confirm the HTTP node returns `status=ok` and a generated `work_order.id`.
-5. Confirm the alarm banner appears in `/alarm-app`.
+5. Confirm the alarm banner appears in `/dashboard` or `/operator`.
 6. Refresh the BI dashboard and confirm alarm and work-order source charts include `n8n-mock`.
 
 Local n8n-equivalent replay:

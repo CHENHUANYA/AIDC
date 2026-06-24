@@ -217,19 +217,19 @@ Suggested feedback fields:
 ## Recommended Next Sprint
 
 1. Add this plan to vendor discussion and confirm user roles.
-2. Add local demo login with three mock users: operator, maintenance, admin.
+2. Productize local login with seeded role accounts and `.env` controlled bootstrap password.
 3. Add issue creation and unresolved issue list for operators.
 4. Link issues to work orders for maintenance.
 5. Add structured feedback fields for LLM correctness and coverage.
 6. Add dashboard counters for open issues, work-order status, correctness, coverage, and technician feedback volume.
 
-## Implemented Demo Scope
+## Implemented Product Scope
 
-The current local demo now includes a lightweight login and role boundary layer:
+The current standalone Alarm RAG app includes a lightweight login and role boundary layer:
 
 | Capability | Status | Notes |
 |---|---|---|
-| Mock users | Implemented | Seeded users: `operator01`, `operator02`, `maintenance01`, `supervisor01`, `admin01`. Default seed password is `demo1234`. |
+| Seeded role users | Implemented | Seeded users: `operator01`, `operator02`, `maintenance01`, `supervisor01`, `admin01`. Initial password comes from `ADMIN_INITIAL_PASSWORD`; existing `alarm_db/users.json` is not overwritten. |
 | Session login | Implemented | `POST /auth/login`, `GET /auth/me`, and `POST /auth/logout` issue bearer sessions persisted in `alarm_db/sessions.json`. |
 | Operator scope | Implemented | Operator issue lists and work-order visibility are limited by `line_scope`. |
 | Maintenance scope | Implemented | Maintenance sees unassigned queue items and their own assigned work orders. |
@@ -239,8 +239,8 @@ The current local demo now includes a lightweight login and role boundary layer:
 | Page guard | Implemented | Frontend redirects users away from pages outside their role's allowed workflow. |
 | System settings | Implemented | Admin-only `GET/PATCH /system-settings` controls session hours, default manual, and operator reopen policy. |
 | Supervisor console | Implemented | `/supervisor` shows KPI strip, pending verification queue, line/machine overview, responsibility view, and merged audit review. |
-| Admin console | Implemented | `/admin` shows mock users, Excel import, PDF/text KB management, system settings, and recent system audit signals. |
-| Mock user admin | Implemented | Admin can update mock user role, line scope, and active state through `PATCH /mock-users/{user_id}`. |
+| Admin console | Implemented | `/admin` shows users, Excel import, PDF/text KB management, system settings, sessions, and recent system audit signals. |
+| User admin | Implemented | Admin can create users, update role/line scope/active state, reset passwords, and revoke sessions through `/users` APIs. |
 | Role console smoke | Implemented | `python scripts/role_console_smoke.py --base-url http://localhost:8100` validates Supervisor/Admin pages, logins, permissions, settings, KB, and stats APIs. |
 
 ## UI Text Cleanup Plan
@@ -295,7 +295,7 @@ Purpose: answer "who can manage data, knowledge, settings, and system-level cont
 | Area | Content | Primary Actions |
 |---|---|---|
 | Header | Admin identity, system scope, logout. | Navigate to operations detail if needed. |
-| User and role summary | Mock users, roles, line scope, active state. | Later: activate/deactivate users and edit scopes. |
+| User and role summary | Users, roles, line scope, active state, password reset, session revoke. | Manage account lifecycle. |
 | Data import | Excel work-order import status and recent import history. | Upload Excel, review import errors. |
 | Knowledge base management | Collection health, documents, ingest log. | Upload PDF, ingest text, delete document, rebuild index. |
 | System settings | Default manual, session hours, operator reopen policy. | Save settings with `updated_by=admin01`. |
@@ -303,7 +303,7 @@ Purpose: answer "who can manage data, knowledge, settings, and system-level cont
 
 Implemented route: `/admin`
 
-Initial implementation is a cleaner admin shell around current Operations capabilities. It adds mock user management, Excel import, PDF/text knowledge-base management, system settings, and recent system audit review. Real identity integration can later replace the mock user editor without changing the role console route.
+Initial implementation is a cleaner admin shell around current Operations capabilities. It adds user management, Excel import, PDF/text knowledge-base management, system settings, session controls, and recent system audit review. Real identity integration can later replace the local user store without changing the role console route.
 
 ## Vendor Questions
 

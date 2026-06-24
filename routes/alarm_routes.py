@@ -1,7 +1,10 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+import os
+import secrets
+
+from fastapi import APIRouter, Depends, Header
 
 from app_context import (
     AlarmTrigger,
@@ -9,6 +12,7 @@ from app_context import (
     build_rag_preview,
     classify_alarm,
     get_engine,
+    is_safe_path_segment,
     parse_alarm_code_int,
     pending_alarms,
 )
@@ -38,11 +42,30 @@ def _priority_from_severity(severity: str, source: Optional[str]) -> str:
     return "medium"
 
 
+def valid_trigger_token(token: str | None) -> bool:
+    expected = os.getenv("ALARM_RAG_TRIGGER_TOKEN", "").strip()
+    provided = (token or "").strip()
+    return bool(expected and provided and secrets.compare_digest(provided, expected))
+
+
+def validate_manual_name(manual_name: str) -> dict | None:
+    if not is_safe_path_segment(manual_name):
+        return {"status": "error", "message": "Invalid manual name"}
+    return None
+
+
 @router.post("/trigger-alarm")
-async def trigger_alarm(req: AlarmTrigger, actor: dict = Depends(get_actor)):
-    if not actor_id(actor):
+async def trigger_alarm(
+    req: AlarmTrigger,
+    actor: dict = Depends(get_actor),
+    trigger_token: str | None = Header(default=None, alias="X-Alarm-RAG-Token"),
+):
+    if not actor_id(actor) and not valid_trigger_token(trigger_token):
         return {"status": "error", "message": "Not authenticated"}
     manual_name = req.manual or "808d"
+    invalid_manual = validate_manual_name(manual_name)
+    if invalid_manual:
+        return invalid_manual
     alarm_info = classify_alarm(parse_alarm_code_int(req.alarm_code), manual_name)
     severity = _normalize_severity(req.severity, alarm_info["severity"])
     now = datetime.now()
@@ -73,7 +96,7 @@ async def trigger_alarm(req: AlarmTrigger, actor: dict = Depends(get_actor)):
             if docs:
                 rag_preview = build_rag_preview(docs)
                 rag_suggestion = "\n\n".join([
-                    f"[頁 {d['meta'].get('page', '')} | {d['meta'].get('title', '')}]\n{d['text'][:500]}"
+                    f"[page {d['meta'].get('page', '')} | {d['meta'].get('title', '')}]\n{d['text'][:500]}"
                     for d in docs
                 ])
     except Exception as exc:
@@ -104,7 +127,7 @@ async def trigger_alarm(req: AlarmTrigger, actor: dict = Depends(get_actor)):
         manual=manual_name,
         machine_id=req.machine_id or "",
         priority=_priority_from_severity(severity, req.source),
-        description=f"警報 {req.alarm_code} 由 {req.source or 'API'} 觸發",
+        description=req.description or f"Alarm {req.alarm_code} reported from {req.source or 'API'}",
         rag_suggestion=rag_suggestion,
         source=req.source or "auto",
         issue_id=issue["issue_id"],

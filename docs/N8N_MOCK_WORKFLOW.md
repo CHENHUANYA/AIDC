@@ -54,16 +54,17 @@ Method:
 POST
 ```
 
-URL:
+URL inside Docker Compose:
 
 ```text
-http://localhost:8100/trigger-alarm
+http://alarm_rag:8000/trigger-alarm
 ```
 
 Headers:
 
 ```text
 Content-Type: application/json
+X-Alarm-RAG-Token: {{$env.ALARM_RAG_TRIGGER_TOKEN}}
 ```
 
 Body:
@@ -94,10 +95,16 @@ The API should return:
 ## Validation Steps
 
 1. Import `mock_data/n8n_mock_workflow.json` into n8n.
+   - CLI example inside compose:
+     ```bash
+     docker compose exec -T n8n n8n import:workflow --input=/mock_data/n8n_mock_workflow.json
+     ```
+   - The workflow JSON includes `"active": false`; this field is required by
+     the n8n CLI import path.
 2. Start the Alarm RAG API at `http://localhost:8100`.
 3. Run the workflow manually once.
 4. Confirm the HTTP node returns `status=ok` and a `work_order.id`.
-5. Open `/alarm-app` and confirm the pending alarm banner appears after polling.
+5. Open `/dashboard` or `/operator` and confirm the pending alarm banner appears after polling.
 6. Open `/operations` or `/work-orders` data and confirm the new order source is `n8n-mock`.
 7. Open the BI dashboard or call `/stats/alarms` and `/work-orders/stats`; both should show `n8n-mock` in `by_source`.
 

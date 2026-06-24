@@ -1,0 +1,254 @@
+import ast
+import os
+import re
+import shutil
+import subprocess
+import unittest
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import urlparse
+
+
+ROOT = Path(__file__).resolve().parents[1]
+HTML_FILES = sorted(ROOT.glob("*.html"))
+PAGE_NAMES = {
+    "admin",
+    "assistant",
+    "dashboard",
+    "login",
+    "maintenance",
+    "operations",
+    "operator",
+    "supervisor",
+}
+PAGE_JS_OVERRIDES = {}
+REMOVED_ASSETS = {
+    "/static/alarm_app.css",
+    "/static/login.css",
+    "/static/css/howto.css",
+    "/static/js/modules/howto.js",
+    "/static/js/pages/legacy.js",
+    "alarm_app.html",
+    "howto.html",
+}
+PAGE_DOM_DYNAMIC_REFS = {
+    "operator": {
+        "editIssueAlarmCode",
+        "editIssueDescription",
+        "editIssueLine",
+        "editIssueMachine",
+        "editIssueSeverity",
+        "operatorNoteInput",
+    },
+}
+
+
+class HtmlRefParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.refs: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        data = dict(attrs)
+        if tag == "link" and data.get("href"):
+            self.refs.append(data["href"])
+        if tag == "script" and data.get("src"):
+            self.refs.append(data["src"])
+
+
+def html_refs(path: Path) -> list[str]:
+    parser = HtmlRefParser()
+    parser.feed(path.read_text(encoding="utf-8"))
+    return parser.refs
+
+
+def script_paths_for_html(path: Path) -> list[Path]:
+    return [
+        ROOT / urlparse(ref).path.lstrip("/")
+        for ref in html_refs(path)
+        if urlparse(ref).path.startswith("/static/") and urlparse(ref).path.endswith(".js")
+    ]
+
+
+def callable_names_from_scripts(html_path: Path) -> set[str]:
+    html = html_path.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in script_paths_for_html(html_path) if path.exists())
+    source += "\n".join(re.findall(r"<script>([\s\S]*?)</script>", html))
+    names = set(re.findall(r"\b(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(", source))
+    names |= set(re.findall(r"window\.([A-Za-z_$][\w$]*)\s*=", source))
+    alarm_app_match = re.search(r"window\.AlarmApp\s*=\s*\{([\s\S]*?)\};", source)
+    if alarm_app_match:
+        names |= set(re.findall(r"^\s*([A-Za-z_$][\w$]*)\s*,", alarm_app_match.group(1), re.MULTILINE))
+    return names
+
+
+def inline_handler_calls(path: Path) -> set[str]:
+    html = path.read_text(encoding="utf-8")
+    calls = set()
+    for handler in re.findall(r"on(?:click|change|keydown|input)=[\"']([^\"']+)[\"']", html):
+        calls |= set(re.findall(r"(?<![.\w$])([A-Za-z_$][\w$]*)\s*\(", handler))
+    return calls - {"alert", "confirm", "document", "if"}
+
+
+def callable_names_from_source(source: str) -> set[str]:
+    names = set(re.findall(r"\b(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(", source))
+    names |= set(re.findall(r"window\.([A-Za-z_$][\w$]*)\s*=", source))
+    for alarm_app_match in re.finditer(r"window\.AlarmApp\s*=\s*\{([\s\S]*?)\};", source):
+        names |= set(re.findall(r"^\s*([A-Za-z_$][\w$]*)\s*,", alarm_app_match.group(1), re.MULTILINE))
+    return names
+
+
+def handler_calls_from_source(source: str) -> set[str]:
+    calls = set()
+    for handler in re.findall(r"on(?:click|change|keydown|input)=[\"']([^\"']+)[\"']", source):
+        calls |= set(re.findall(r"(?<![.\w$])([A-Za-z_$][\w$]*)\s*\(", handler))
+    return calls - {"alert", "confirm", "document", "event", "if", "setTimeout", "window"}
+
+
+def page_access_keys() -> set[str]:
+    source = (ROOT / "static" / "js" / "core" / "api.js").read_text(encoding="utf-8")
+    match = re.search(r"const PAGE_ACCESS\s*=\s*\{([\s\S]*?)\};", source)
+    return set(re.findall(r"^\s*([A-Za-z0-9_]+)\s*:", match.group(1), re.MULTILINE)) if match else set()
+
+
+class StaticAssetIntegrityTests(unittest.TestCase):
+    def test_html_static_references_exist(self):
+        missing = []
+        for path in HTML_FILES:
+            for ref in html_refs(path):
+                asset_path = urlparse(ref).path
+                if asset_path.startswith("/static/") and not (ROOT / asset_path.lstrip("/")).exists():
+                    missing.append(f"{path.name}: {ref}")
+
+        self.assertEqual([], missing)
+
+    def test_each_page_has_matching_css_and_js_bundle(self):
+        missing = []
+        for page in sorted(PAGE_NAMES):
+            html_path = ROOT / f"{page}.html"
+            css_path = ROOT / "static" / "css" / f"{page}.css"
+            js_path = PAGE_JS_OVERRIDES.get(page, ROOT / "static" / "js" / "pages" / f"{page}.js")
+            if not html_path.exists():
+                missing.append(str(html_path.relative_to(ROOT)))
+            if not css_path.exists():
+                missing.append(str(css_path.relative_to(ROOT)))
+            if not js_path.exists():
+                missing.append(str(js_path.relative_to(ROOT)))
+
+        self.assertEqual([], missing)
+
+    def test_removed_legacy_assets_are_not_referenced(self):
+        offenders = []
+        for path in [*HTML_FILES, *ROOT.glob("static/**/*.js"), *ROOT.glob("static/**/*.css")]:
+            text = path.read_text(encoding="utf-8")
+            for removed in REMOVED_ASSETS:
+                if removed in text:
+                    offenders.append(f"{path.relative_to(ROOT)} references {removed}")
+
+        self.assertEqual([], offenders)
+
+    def test_static_html_routes_point_to_existing_files(self):
+        source = (ROOT / "routes" / "static_reference_routes.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        referenced = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Name) or node.func.id != "_read_html":
+                continue
+            if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                referenced.append(node.args[0].value)
+
+        missing = [path for path in referenced if not (ROOT / path).exists()]
+        self.assertEqual([], missing)
+        self.assertTrue({"dashboard.html", "login.html"}.issubset(set(referenced)))
+
+    def test_maintenance_modal_does_not_offer_verification_controls(self):
+        html = (ROOT / "maintenance.html").read_text(encoding="utf-8")
+        js = (ROOT / "static" / "js" / "pages" / "maintenance.js").read_text(encoding="utf-8")
+
+        self.assertNotIn('id="mtEditVerifiedBy"', html)
+        self.assertNotIn('<option value="verified">已驗證</option>', html)
+        self.assertNotIn("mtEditVerifiedBy", js)
+
+    def test_operations_work_order_modal_does_not_offer_verification_status(self):
+        html = (ROOT / "operations.html").read_text(encoding="utf-8")
+
+        self.assertNotIn('value="verified"', html)
+
+    def test_operator_ui_does_not_offer_blocked_core_issue_edits(self):
+        js = (ROOT / "static" / "js" / "pages" / "operator.js").read_text(encoding="utf-8")
+
+        self.assertIn("function canEditOperatorCore(issue) {\n  return false;\n}", js)
+
+    def test_page_js_literal_dom_refs_exist_or_are_dynamic(self):
+        missing = []
+        for page in sorted(PAGE_NAMES):
+            html_path = ROOT / f"{page}.html"
+            js_path = PAGE_JS_OVERRIDES.get(page, ROOT / "static" / "js" / "pages" / f"{page}.js")
+            if not html_path.exists() or not js_path.exists():
+                continue
+            html_ids = set(re.findall(r"id=[\"']([^\"']+)[\"']", html_path.read_text(encoding="utf-8")))
+            js_refs = set(re.findall(
+                r"(?:app\?\.\$|app\.\$)\(['\"]([A-Za-z][A-Za-z0-9_:-]*)['\"]\)",
+                js_path.read_text(encoding="utf-8"),
+            ))
+            allowed_dynamic = PAGE_DOM_DYNAMIC_REFS.get(page, set())
+            for ref in sorted(js_refs - html_ids - allowed_dynamic):
+                missing.append(f"{page}: {ref}")
+
+        self.assertEqual([], missing)
+
+    def test_static_javascript_has_valid_syntax(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not available")
+
+        failures = []
+        for path in sorted(ROOT.glob("static/**/*.js")):
+            result = subprocess.run(
+                [node, "--check", str(path)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                failures.append(f"{path.relative_to(ROOT)}: {result.stderr.strip()}")
+
+        self.assertEqual([], failures)
+
+    def test_routed_pages_have_nonempty_access_rules(self):
+        source = (ROOT / "static" / "js" / "core" / "api.js").read_text(encoding="utf-8")
+        missing = []
+        for page in sorted(PAGE_NAMES - {"login"}):
+            if f"{page}: []" in source:
+                missing.append(page)
+
+        self.assertEqual([], missing)
+
+    def test_static_html_routes_have_frontend_access_rules(self):
+        source = (ROOT / "routes" / "static_reference_routes.py").read_text(encoding="utf-8")
+        routed_pages = set(re.findall(r'_read_html\("([^"]+)\.html"\)', source))
+
+        self.assertEqual(set(), routed_pages - page_access_keys() - {"login"})
+
+    def test_inline_handlers_reference_loaded_functions(self):
+        allowed_globals = {"AlarmApp", "AlarmCoreApi"}
+        missing = []
+        for path in HTML_FILES:
+            callable_names = callable_names_from_scripts(path)
+            for name in sorted(inline_handler_calls(path) - callable_names - allowed_globals):
+                missing.append(f"{path.name}: {name}")
+
+        self.assertEqual([], missing)
+
+    def test_generated_inline_handlers_reference_static_functions(self):
+        source = "\n".join(path.read_text(encoding="utf-8") for path in sorted(ROOT.glob("static/**/*.js")))
+        missing = sorted(handler_calls_from_source(source) - callable_names_from_source(source))
+
+        self.assertEqual([], missing)
+
+
+if __name__ == "__main__":
+    unittest.main()
