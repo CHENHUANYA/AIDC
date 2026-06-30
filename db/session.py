@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -102,6 +103,7 @@ def create_database_engine(url: str | URL | None = None) -> Engine:
 
 _engine: Engine | None = None
 _session_factory: sessionmaker[Session] | None = None
+_current_session: ContextVar[Session | None] = ContextVar("alarm_rag_database_session", default=None)
 
 
 def get_engine() -> Engine:
@@ -120,6 +122,10 @@ def get_session_factory() -> sessionmaker[Session]:
 
 @contextmanager
 def session_scope() -> Iterator[Session]:
+    current = _current_session.get()
+    if current is not None:
+        yield current
+        return
     session = get_session_factory()()
     try:
         yield session
@@ -128,6 +134,25 @@ def session_scope() -> Iterator[Session]:
         session.rollback()
         raise
     finally:
+        session.close()
+
+
+@contextmanager
+def transaction_scope() -> Iterator[Session]:
+    current = _current_session.get()
+    if current is not None:
+        yield current
+        return
+    session = get_session_factory()()
+    token = _current_session.set(session)
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        _current_session.reset(token)
         session.close()
 
 

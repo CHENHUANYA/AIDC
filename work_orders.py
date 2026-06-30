@@ -22,8 +22,12 @@ from pydantic import BaseModel
 
 from audit_history import append_history, field_changes, history_list
 from auth import actor_id, actor_role, can_update_work_order, can_view_work_order, can_verify, get_actor, is_admin, resolve_user
+from repositories.postgres_workflow import PostgresWorkOrderRepository
+from repositories.runtime import postgres_store_enabled
+from services.transactions import postgres_transactional
 
 router = APIRouter()
+postgres_work_orders = PostgresWorkOrderRepository()
 
 DB_DIR = os.getenv("DB_PATH", "./alarm_db")
 WO_FILE = os.path.join(DB_DIR, "work_orders.json")
@@ -244,6 +248,19 @@ def _recent_day_keys(days: int) -> List[str]:
 
 # ----------------- Persistence helpers -----------------
 def _load_orders() -> List[dict]:
+    if postgres_store_enabled():
+        orders = postgres_work_orders.load_all()
+        for order in orders:
+            order.setdefault("kb_candidate", False)
+            order.setdefault("kb_review_status", "not_ready")
+            order.setdefault("kb_review_note", "")
+            order.setdefault("kb_reviewed_by", "")
+            order.setdefault("kb_reviewed_at", "")
+            order.setdefault("kb_ingested_at", "")
+            order.setdefault("kb_ingest_result", None)
+            order.setdefault("kb_duplicate_of", "")
+            _refresh_knowledge_review_state(order, [])
+        return orders
     if not os.path.exists(WO_FILE):
         return []
     try:
@@ -265,6 +282,9 @@ def _load_orders() -> List[dict]:
 
 
 def _save_orders(orders: List[dict]):
+    if postgres_store_enabled():
+        postgres_work_orders.save_all(orders)
+        return
     os.makedirs(DB_DIR, exist_ok=True)
     with open(WO_FILE, "w", encoding="utf-8") as f:
         json.dump(orders, f, ensure_ascii=False, indent=2)
@@ -547,6 +567,7 @@ def sync_work_order_from_issue(issue: dict, user_id: str = "", note: str = "") -
 
 # ----------------- API routes -----------------
 @router.post("/work-orders")
+@postgres_transactional
 async def api_create_order(req: CreateWorkOrder, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -740,6 +761,7 @@ async def api_get_order_history(order_id: str, actor: dict = Depends(get_actor))
 
 
 @router.patch("/work-orders/{order_id}")
+@postgres_transactional
 async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -865,6 +887,7 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
 
 
 @router.delete("/work-orders/{order_id}")
+@postgres_transactional
 async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}

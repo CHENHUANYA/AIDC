@@ -8,6 +8,9 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
 
+from repositories.postgres_auth import PostgresSessionRepository, PostgresUserRepository
+from repositories.runtime import postgres_store_enabled
+
 
 BOOTSTRAP_USERS: Dict[str, dict] = {
     "operator01": {
@@ -59,6 +62,8 @@ VERIFY_ROLES = {"operator", "supervisor"}
 SUPERVISOR_VISIBLE_ROLES = {"maintenance", "supervisor"}
 SESSION_TOKEN_PREFIX_LENGTH = 10
 router = APIRouter()
+postgres_users = PostgresUserRepository()
+postgres_sessions = PostgresSessionRepository()
 
 
 class LoginRequest(BaseModel):
@@ -381,6 +386,9 @@ async def api_list_sessions(actor: dict = Depends(get_actor)):
         return api_error("Not authenticated")
     if not is_admin(actor):
         return permission_denied()
+    if postgres_store_enabled():
+        entries = postgres_sessions.list_active()
+        return api_ok(total=len(entries), sessions=entries)
     users = load_users()
     sessions = prune_expired_sessions(load_sessions())
     save_sessions(sessions)
@@ -406,6 +414,11 @@ async def api_revoke_session(token_prefix: str, actor: dict = Depends(get_actor)
     prefix = token_prefix.strip()
     if len(prefix) != SESSION_TOKEN_PREFIX_LENGTH:
         return api_error(f"token_prefix must be exactly {SESSION_TOKEN_PREFIX_LENGTH} characters")
+    if postgres_store_enabled():
+        try:
+            return api_ok(revoked=postgres_sessions.revoke_prefix(prefix))
+        except ValueError as exc:
+            return api_error(str(exc))
     sessions = load_sessions()
     matched = [token for token in sessions if token.startswith(prefix)]
     if len(matched) > 1:
@@ -426,10 +439,14 @@ async def login(req: LoginRequest):
         return {"status": "error", "message": "Invalid username or password"}
 
     token = secrets.token_urlsafe(32)
+    created_at = datetime.now().isoformat()
     expires_at = (datetime.now() + timedelta(hours=session_hours())).isoformat()
     sessions = prune_expired_sessions(load_sessions())
-    sessions[token] = {"user_id": user["user_id"], "created_at": datetime.now().isoformat(), "expires_at": expires_at}
-    save_sessions(sessions)
+    sessions[token] = {"user_id": user["user_id"], "created_at": created_at, "expires_at": expires_at}
+    if postgres_store_enabled():
+        postgres_sessions.create(token, user["user_id"], created_at, expires_at)
+    else:
+        save_sessions(sessions)
     return {"status": "ok", "token": token, "expires_at": expires_at, "user": public_user(user)}
 
 
@@ -456,6 +473,9 @@ async def logout(req: LogoutRequest, authorization: Optional[str] = Header(defau
     token = req.token or bearer_token(authorization)
     if not token:
         return {"status": "ok"}
+    if postgres_store_enabled():
+        postgres_sessions.delete(token)
+        return {"status": "ok"}
     sessions = load_sessions()
     sessions.pop(token, None)
     save_sessions(sessions)
@@ -463,6 +483,18 @@ async def logout(req: LogoutRequest, authorization: Optional[str] = Header(defau
 
 
 def ensure_user_store() -> None:
+    if postgres_store_enabled():
+        if postgres_users.load_all():
+            return
+        initial_password = configured_initial_password()
+        password_error = implicit_initial_password_error()
+        if password_error:
+            raise RuntimeError(password_error)
+        postgres_users.save_all({
+            user_id: {**user, "password_hash": hash_password(initial_password), "active": True}
+            for user_id, user in BOOTSTRAP_USERS.items()
+        })
+        return
     os.makedirs(DB_DIR, exist_ok=True)
     if os.path.exists(USER_FILE):
         return
@@ -480,6 +512,8 @@ def ensure_user_store() -> None:
 
 def load_users() -> Dict[str, dict]:
     ensure_user_store()
+    if postgres_store_enabled():
+        return postgres_users.load_all()
     try:
         with open(USER_FILE, "r", encoding="utf-8") as file:
             payload = json.load(file)
@@ -489,6 +523,9 @@ def load_users() -> Dict[str, dict]:
 
 
 def save_users(users: Dict[str, dict]) -> None:
+    if postgres_store_enabled():
+        postgres_users.save_all(users)
+        return
     os.makedirs(DB_DIR, exist_ok=True)
     with open(USER_FILE, "w", encoding="utf-8") as file:
         json.dump(users, file, ensure_ascii=False, indent=2)
@@ -513,6 +550,8 @@ def save_sessions(sessions: Dict[str, dict]) -> None:
 
 
 def revoke_user_sessions(user_id: str) -> int:
+    if postgres_store_enabled():
+        return postgres_sessions.revoke_user(user_id)
     sessions = load_sessions()
     before = len(sessions)
     sessions = {
@@ -594,6 +633,12 @@ def actor_from_token(authorization: Optional[str]) -> Optional[dict]:
     token = bearer_token(authorization)
     if not token:
         return None
+    if postgres_store_enabled():
+        session = postgres_sessions.get(token)
+        if not session:
+            return None
+        actor = resolve_user(str(session.get("user_id") or ""))
+        return actor if actor.get("user_id") else None
     sessions = load_sessions()
     session = sessions.get(token)
     if not session:

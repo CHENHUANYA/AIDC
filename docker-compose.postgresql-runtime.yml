@@ -1,0 +1,4 @@
+services:
+  alarm_rag:
+    environment:
+      DATA_STORE: postgresql

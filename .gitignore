@@ -9,6 +9,7 @@ data/
 __pycache__/
 *.pyc
 .env
+.env.postgresql
 .venv/
 venv/
 tests_tmp/

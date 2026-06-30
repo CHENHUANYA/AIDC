@@ -17,10 +17,16 @@ from pydantic import BaseModel
 
 from audit_history import append_history, field_changes, history_list
 from auth import actor_id, actor_role, can_update_issue, can_view_issue, get_actor
+from repositories.postgres_workflow import PostgresIssueRepository
+from repositories.runtime import postgres_store_enabled
+from services.postgres_workflow import create_issue as postgres_create_issue
+from services.postgres_workflow import escalate_issue as postgres_escalate_issue
+from services.transactions import postgres_transactional
 from work_orders import create_order_dict, sync_work_order_from_issue, validate_issue_verification
 
 
 router = APIRouter()
+postgres_issues = PostgresIssueRepository()
 
 DB_DIR = os.getenv("DB_PATH", "./alarm_db")
 ISSUE_FILE = os.path.join(DB_DIR, "issues.json")
@@ -60,6 +66,8 @@ class UpdateIssue(BaseModel):
 
 
 def _load_issues() -> List[dict]:
+    if postgres_store_enabled():
+        return postgres_issues.load_all()
     if not os.path.exists(ISSUE_FILE):
         return []
     try:
@@ -71,6 +79,9 @@ def _load_issues() -> List[dict]:
 
 
 def _save_issues(issues: List[dict]) -> None:
+    if postgres_store_enabled():
+        postgres_issues.save_all(issues)
+        return
     os.makedirs(DB_DIR, exist_ok=True)
     with open(ISSUE_FILE, "w", encoding="utf-8") as file:
         json.dump(issues, file, ensure_ascii=False, indent=2)
@@ -304,12 +315,28 @@ def sync_issue_from_work_order(order: dict) -> Optional[dict]:
 
 
 @router.post("/issues")
+@postgres_transactional
 async def api_create_issue(req: CreateIssue, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("operator", "supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
     created_by = actor_id(actor)
+    if postgres_store_enabled():
+        issue, work_order = postgres_create_issue(
+            machine_id=req.machine_id,
+            description=req.description,
+            source=req.source or "operator",
+            manual=req.manual or "808d",
+            line_id=req.line_id or "",
+            alarm_code=req.alarm_code or "",
+            severity=req.severity or "medium",
+            created_by=created_by,
+            assigned_to=req.assigned_to or "",
+            rag_suggestion=req.rag_suggestion or "",
+            create_work_order=bool(req.create_work_order),
+        )
+        return {"status": "ok", "issue": issue, "work_order": work_order}
     issue = create_issue_dict(
         machine_id=req.machine_id,
         description=req.description,
@@ -451,6 +478,7 @@ async def api_get_issue_history(issue_id: str, actor: dict = Depends(get_actor))
 
 
 @router.patch("/issues/{issue_id}")
+@postgres_transactional
 async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -535,6 +563,7 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
 
 
 @router.post("/issues/{issue_id}/escalate")
+@postgres_transactional
 async def api_escalate_issue(issue_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -545,6 +574,9 @@ async def api_escalate_issue(issue_id: str, actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Permission denied"}
     if issue.get("work_order_id"):
         return {"status": "ok", "issue": issue, "work_order_id": issue["work_order_id"], "created": False}
+    if postgres_store_enabled():
+        issue, work_order, created = postgres_escalate_issue(issue_id, actor_id(actor))
+        return {"status": "ok", "issue": issue, "work_order": work_order, "created": created}
 
     work_order = create_order_dict(
         alarm_code=issue.get("alarm_code") or "SYMPTOM",

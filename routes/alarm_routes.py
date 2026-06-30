@@ -17,6 +17,9 @@ from app_context import (
     pending_alarms,
 )
 from auth import actor_id, get_actor
+from repositories.runtime import postgres_store_enabled
+from services.postgres_workflow import create_issue as postgres_create_issue
+from services.transactions import postgres_transactional
 from storage import ALARM_LOG_PATH, append_jsonl
 from issues import create_issue_dict, set_issue_work_order
 from work_orders import create_order_dict
@@ -55,6 +58,7 @@ def validate_manual_name(manual_name: str) -> dict | None:
 
 
 @router.post("/trigger-alarm")
+@postgres_transactional
 async def trigger_alarm(
     req: AlarmTrigger,
     actor: dict = Depends(get_actor),
@@ -109,6 +113,23 @@ async def trigger_alarm(
         pending_alarms[-1] = entry
     if alarm_history:
         alarm_history[-1] = entry
+
+    if postgres_store_enabled():
+        issue, work_order = postgres_create_issue(
+            machine_id=req.machine_id or "",
+            description=req.description or f"Machine alarm {req.alarm_code} from {req.source or 'API'}",
+            source=req.source or "machine",
+            manual=manual_name,
+            line_id="",
+            alarm_code=req.alarm_code,
+            severity=severity,
+            created_by=req.source or "machine",
+            rag_suggestion=rag_suggestion,
+            create_work_order=True,
+            priority=_priority_from_severity(severity, req.source),
+        )
+        print(f"Alarm triggered: {req.alarm_code} from {req.machine_id or req.source} -> work order {work_order['id']}")
+        return {"status": "ok", "alarm": entry, "issue": issue, "work_order": work_order}
 
     issue = create_issue_dict(
         machine_id=req.machine_id or "",
