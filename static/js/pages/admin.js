@@ -797,11 +797,18 @@ async function loadAdminKb() {
     return;
   }
   const collection = activeAdminCollection();
+  const requestSeq = Number(app.getState('adminKbRequestSeq') || 0) + 1;
+  app.setState('adminKbRequestSeq', requestSeq);
   try {
     const data = await app.apiJson(`/v1/${encodeURIComponent(collection)}/documents`);
+    if (app.getState('adminKbRequestSeq') !== requestSeq || activeAdminCollection() !== collection) {
+      return;
+    }
     renderAdminKb(data.summary || null, data.documents || []);
   } catch (error) {
-    setAdminResult('adminKbResult', app.formatError(error, 'KB 載入失敗'), true);
+    if (app.getState('adminKbRequestSeq') === requestSeq) {
+      setAdminResult('adminKbResult', app.formatError(error, 'KB 載入失敗'), true);
+    }
   }
 }
 

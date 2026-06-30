@@ -57,8 +57,13 @@ const appState = {
 };
 const PAGE_NAME = document.body?.dataset?.page || 'dashboard';
 const PAGE_PATHS = {
+  admin: '/admin',
+  assistant: '/assistant',
+  dashboard: '/dashboard',
   operator: '/operator',
   maintenance: '/maintenance',
+  operations: '/operations',
+  supervisor: '/supervisor',
 };
 
 function getState(key) {
@@ -719,3 +724,4 @@ window.AlarmApp = {
 };
 
 document.addEventListener('DOMContentLoaded', applyAuthChrome);
+

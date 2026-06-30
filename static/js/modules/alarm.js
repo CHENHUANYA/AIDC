@@ -56,8 +56,10 @@ function bannerLookup() {
     return;
   }
 
-  const pendingCode = app.getState('pendingCode');
-  const pendingManual = app.getState('pendingManual');
+  const bannerCodeText = app.$('bannerCode')?.textContent || '';
+  const fallbackCode = bannerCodeText.match(/\d{2,6}/)?.[0] || '';
+  const pendingCode = app.getState('pendingCode') || fallbackCode;
+  const pendingManual = app.getState('pendingManual') || '808d';
   if (!pendingCode) {
     return;
   }
@@ -150,6 +152,15 @@ function renderLog() {
   updateStats();
 }
 
+function refreshLogViews() {
+  const app = getApp();
+  if (app && typeof app.renderLog === 'function' && app.renderLog !== renderLog) {
+    app.renderLog();
+    return;
+  }
+  renderLog();
+}
+
 async function loadAlarmHistory() {
   const app = getApp();
   if (!app) {
@@ -161,12 +172,12 @@ async function loadAlarmHistory() {
     const normalized = (data.recent || []).slice().reverse().map(normalizeAlarmEntry).reverse();
     app.setState('alarmLog', normalized);
     app.writeStorage(app.STORAGE_KEYS.alarmLog, normalized);
-    renderLog();
+    refreshLogViews();
     if (typeof app.loadBI === 'function') {
       app.loadBI();
     }
   } catch (_) {
-    renderLog();
+    refreshLogViews();
   }
 }
 
@@ -188,7 +199,7 @@ async function clearLog() {
 
   app.setState('alarmLog', []);
   localStorage.removeItem(app.STORAGE_KEYS.alarmLog);
-  renderLog();
+  refreshLogViews();
   if (typeof app.loadBI === 'function') {
     app.loadBI();
   }
@@ -204,7 +215,7 @@ function testTrigger() {
   const manual = app.$('testManual').value;
   showBanner(code, manual, `模擬觸發 · ${manual.toUpperCase()}`);
   addToLog(code, manual, 'Manual Test');
-  renderLog();
+  refreshLogViews();
 }
 
 async function pollAlarms() {
@@ -231,7 +242,7 @@ async function pollAlarms() {
     const merged = [...nextEntries.reverse(), ...currentLog].slice(0, 100);
     app.setState('alarmLog', merged);
     app.writeStorage(app.STORAGE_KEYS.alarmLog, merged);
-    renderLog();
+    refreshLogViews();
     if (typeof app.loadBI === 'function') {
       app.loadBI();
     }
@@ -437,3 +448,4 @@ if (alarmApp) {
     loadBI,
   });
 }
+

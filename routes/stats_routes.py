@@ -21,7 +21,7 @@ from app_context import (
     error_log,
     query_log,
 )
-from auth import actor_id, actor_role, get_actor, is_admin
+from auth import actor_id, actor_role, get_actor
 from rag_engine import model_cache_status
 from storage import ALARM_LOG_PATH
 
@@ -65,7 +65,7 @@ async def alarm_stats(actor: dict = Depends(get_actor)):
 async def clear_alarm_stats(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
-    if not is_admin(actor):
+    if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
     alarm_history.clear()
     try:

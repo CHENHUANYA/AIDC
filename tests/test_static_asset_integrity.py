@@ -111,6 +111,12 @@ def page_access_keys() -> set[str]:
     return set(re.findall(r"^\s*([A-Za-z0-9_]+)\s*:", match.group(1), re.MULTILINE)) if match else set()
 
 
+def page_path_keys() -> set[str]:
+    source = (ROOT / "static" / "alarm_app.js").read_text(encoding="utf-8")
+    match = re.search(r"const PAGE_PATHS\s*=\s*\{([\s\S]*?)\};", source)
+    return set(re.findall(r"^\s*([A-Za-z0-9_]+)\s*:", match.group(1), re.MULTILINE)) if match else set()
+
+
 class StaticAssetIntegrityTests(unittest.TestCase):
     def test_html_static_references_exist(self):
         missing = []
@@ -232,6 +238,12 @@ class StaticAssetIntegrityTests(unittest.TestCase):
         routed_pages = set(re.findall(r'_read_html\("([^"]+)\.html"\)', source))
 
         self.assertEqual(set(), routed_pages - page_access_keys() - {"login"})
+
+    def test_alarm_app_navigation_paths_cover_routed_pages(self):
+        source = (ROOT / "routes" / "static_reference_routes.py").read_text(encoding="utf-8")
+        routed_pages = set(re.findall(r'_read_html\("([^"]+)\.html"\)', source)) - {"login"}
+
+        self.assertEqual(set(), routed_pages - page_path_keys())
 
     def test_inline_handlers_reference_loaded_functions(self):
         allowed_globals = {"AlarmApp", "AlarmCoreApi"}
