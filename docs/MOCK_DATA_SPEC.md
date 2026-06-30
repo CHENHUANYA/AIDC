@@ -31,7 +31,7 @@ Example:
 
 ## Week 1 Event Set
 
-The canonical week-1 events live in `mock_data/demo_alarm_events.json`. The set now contains 28 events so BI charts can show source, severity, code, machine, line, and owner distribution without vendor data.
+The canonical week-1 events live in `mock_data/demo_alarm_events.json`. The set now contains 38 events so BI charts can show source, severity, code, machine, line, utility, tooling, and owner distribution without vendor data.
 Every event is explicitly marked with `mock_data: true`, includes `line_id`, and includes an `alarm_group` for grouping by machine, line, severity, and source.
 
 | Scenario | Alarm | Manual | Machine | Purpose |
@@ -41,6 +41,8 @@ Every event is explicitly marked with `mock_data: true`, includes `line_id`, and
 | Emergency stop | emergency stop | 808d | DEMO-STATION | Validate keyword query path |
 | Repeat alarm | 3000 | 808d | CNC-LINE-01 | Validate BI aggregation |
 | Axis/drive/PLC events | 20010, 25010, 300020, 400300 | 808d | CNC-LINE-02..07 | Validate severity, owner, and category distribution |
+| Coolant and hydraulic events | 340100, 340110, 5100, air pressure low | 808d | CNC-LINE-08..09 | Validate utility, pressure, and fixture-clamp scenarios |
+| Tooling and probe events | 6100, 6105, 7100, probe calibration | 808d | CNC-LINE-10 | Validate tool magazine, clamp, and probe-calibration scenarios |
 | Natural-language events | feed hold, safety door, maintenance reminder | 808d | DEMO-STATION, CNC-LINE-05 | Validate keyword query path and low-priority filtering |
 
 ## Scenario Matrix
@@ -89,7 +91,7 @@ docs/VENDOR_MACHINE_MAPPING_EXAMPLE.md
 
 The week-2 work-order seed set lives in `mock_data/week2_work_orders.json`.
 
-It includes completed, verified, in-progress, and assigned records so the work-order board and BI endpoints have realistic status, machine, owner, source, and priority distribution. New records use the `mock-week2-history` source and include `MOCK DATA` in the seeded description or notes.
+It includes 22 completed, verified, in-progress, and assigned records so the work-order board and BI endpoints have realistic status, machine, owner, source, and priority distribution. New records use the `mock-week2-history` source and include `MOCK DATA` in the seeded description or notes.
 
 Seed command:
 
@@ -103,11 +105,11 @@ The week-2 knowledge seed set lives in `mock_data/week2_knowledge_records.json`.
 
 It includes SOP, bulletin, maintenance note, and prior repair records:
 
-- Local SOP records for alarms `3000`, `5000`, `20010`, and `25010`.
+- Local SOP records for alarms `3000`, `5000`, `20010`, `25010`, `340100`, `5100`, `6100`, and `7100`.
 - A safety bulletin for `emergency stop`.
-- Technical bulletins for repeated alarm `3000`, drive escalation, and PLC handshake diagnostics.
-- Maintenance notes for Line B channel state and fixture setup.
-- Prior repair examples for spindle feedback and drive acceleration profile faults.
+- Technical bulletins for repeated alarm `3000`, drive escalation, PLC handshake diagnostics, and utility air pressure dips.
+- Maintenance notes for Line B channel state, fixture setup, and coolant filter pressure.
+- Prior repair examples for spindle feedback, drive acceleration profile faults, and tool clamp confirmation loss.
 
 Knowledge sources are explicitly mock-labeled:
 

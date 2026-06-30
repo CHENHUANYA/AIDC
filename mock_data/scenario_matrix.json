@@ -88,5 +88,75 @@
     "escalation_owner": "safety-lead",
     "mock_data": true,
     "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "340100",
+    "machine_id": "CNC-LINE-08",
+    "line_id": "LINE-E",
+    "likely_cause": "Coolant nozzle blockage, low coolant level, or pump ready signal loss during roughing.",
+    "recommended_first_action": "Pause cycle, check coolant level and nozzle blockage, verify pump ready, and record pressure recovery.",
+    "escalation_owner": "maintenance-e",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "340110",
+    "machine_id": "CNC-LINE-08",
+    "line_id": "LINE-E",
+    "likely_cause": "Coolant filter differential pressure rose after chip-heavy operation.",
+    "recommended_first_action": "Inspect filter basket, clean nozzle screen, and compare pump current before restart.",
+    "escalation_owner": "maintenance-e",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "5100",
+    "machine_id": "CNC-LINE-09",
+    "line_id": "LINE-E",
+    "likely_cause": "Hydraulic clamp pressure or pallet seating did not reach ready state.",
+    "recommended_first_action": "Stop automatic cycle, verify clamp mechanically, check pressure switch, and run a dry clamp cycle.",
+    "escalation_owner": "maintenance-e",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "air pressure low",
+    "machine_id": "CNC-LINE-09",
+    "line_id": "LINE-E",
+    "likely_cause": "Local air regulator or plant air header pressure dipped below utility threshold.",
+    "recommended_first_action": "Check regulator setting, air header pressure, and fixture unclamp timing before controller troubleshooting.",
+    "escalation_owner": "maintenance-e",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "6100",
+    "machine_id": "CNC-LINE-10",
+    "line_id": "LINE-F",
+    "likely_cause": "Tool magazine pocket sensor, home state, or active program tool number mismatch.",
+    "recommended_first_action": "Return magazine home, confirm pocket sensor, compare requested tool number, and run one dry tool-change cycle.",
+    "escalation_owner": "maintenance-f",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "6105",
+    "machine_id": "CNC-LINE-10",
+    "line_id": "LINE-F",
+    "likely_cause": "Tool clamp confirmation switch or bracket lost signal during automatic tool change.",
+    "recommended_first_action": "Stop cycle, verify tool clamp mechanically, check confirmation switch, and repeat tool-change verification.",
+    "escalation_owner": "maintenance-f",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
+  },
+  {
+    "alarm_code": "7100",
+    "machine_id": "CNC-LINE-10",
+    "line_id": "LINE-F",
+    "likely_cause": "Probe calibration offset changed after fixture update or stylus seating issue.",
+    "recommended_first_action": "Check probe stylus and battery, rerun calibration routine, and compare offset delta before release.",
+    "escalation_owner": "maintenance-f",
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - representative scenario matrix row, not vendor data."
   }
 ]

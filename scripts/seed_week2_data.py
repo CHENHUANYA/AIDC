@@ -124,13 +124,25 @@ def seed_work_orders(
         )
         target_status = str(record.get("status") or "pending")
         order_id = ""
+        existing_status = ""
+        skip_initial_update = False
         if key in existing:
             existing_order = existing[key]
             order_id = str(existing_order.get("id") or "")
-            if existing_order.get("status") == target_status:
+            existing_status = str(existing_order.get("status") or "")
+            if existing_status == target_status:
                 skipped += 1
                 print(f"[SKIP] work order {key[0]} {key[1]}")
                 continue
+            if existing_status == "verified":
+                skipped += 1
+                print(f"[SKIP] work order {key[0]} {key[1]} already verified")
+                continue
+            if existing_status == "completed" and target_status != "verified":
+                skipped += 1
+                print(f"[SKIP] work order {key[0]} {key[1]} already completed")
+                continue
+            skip_initial_update = existing_status == "completed" and target_status == "verified"
 
         if not order_id:
             create_payload = {
@@ -168,11 +180,12 @@ def seed_work_orders(
         if target_status == "verified":
             update_payload["status"] = "completed"
 
-        code, data = request_json(base_url, f"/work-orders/{order_id}", "PATCH", update_payload, timeout, token)
-        if not (code == 200 and data.get("status") == "ok"):
-            failed += 1
-            print(f"[FAIL] update work order {order_id} HTTP {code}: {data}")
-            continue
+        if not skip_initial_update:
+            code, data = request_json(base_url, f"/work-orders/{order_id}", "PATCH", update_payload, timeout, token)
+            if not (code == 200 and data.get("status") == "ok"):
+                failed += 1
+                print(f"[FAIL] update work order {order_id} HTTP {code}: {data}")
+                continue
 
         if target_status == "verified":
             verify_payload = {

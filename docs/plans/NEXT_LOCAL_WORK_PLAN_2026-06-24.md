@@ -25,6 +25,7 @@ Current local evidence:
 - Runtime backup and backup health are verified; restore-smoke remains explicit opt-in.
 - Prior local test work orders and linked issues were cleaned after backup `backups/2026-06-24_153422`.
 - Machine mapping and vendor field checklist are documented for future vendor discussion.
+- Mock data depth now includes 38 alarm events, 22 historical work orders, 19 knowledge records, 16 scenario rows, and 11 machine mappings across Lines A-F plus training.
 
 Current boundary:
 
@@ -98,29 +99,40 @@ python scripts/data_maintenance.py backup-health --verify
 
 ## Workstream 3: Mock Data Depth
 
+Status: completed on 2026-06-24
+
 Priority: high
 
 Goal: make the local demo look closer to a real factory scenario without waiting for vendor data.
 
-Tasks:
+Completed:
 
-1. Add more representative mock alarm groups by machine, line, severity, and source.
-2. Expand knowledge records with SOP, bulletin, maintenance note, and prior repair examples.
-3. Add a small scenario matrix that maps:
-   - alarm code,
-   - machine,
-   - likely cause,
-   - recommended first action,
-   - escalation owner.
-4. Keep all new records clearly marked as mock data.
-5. Extend machine mapping tests if new machines or alarm-code relationships are added.
+1. Expanded mock machine coverage to 11 mapped assets across Lines A-F plus the training station.
+2. Expanded `mock_data/demo_alarm_events.json` to 38 events with machine, line, severity, source, and alarm-group coverage.
+3. Added coolant, hydraulic/air-pressure, tool-magazine, tool-clamp, and probe-calibration scenarios for Lines E and F.
+4. Expanded `mock_data/week2_knowledge_records.json` to 19 SOP, bulletin, maintenance-note, and prior-repair records.
+5. Expanded `mock_data/week2_work_orders.json` to 22 records across completed, verified, in-progress, and assigned states.
+6. Expanded `mock_data/scenario_matrix.json` to 16 rows mapping alarm code, machine, line, likely cause, recommended first action, and escalation owner.
+7. Kept new records explicitly marked as mock data and updated `docs/MOCK_DATA_SPEC.md`.
+8. Extended `tests/test_machine_mapping_example.py` to assert the new factory scenario groups, knowledge categories, and work-order distribution.
+9. Updated `scripts/seed_week2_data.py` so repeated seeding safely skips existing completed or verified work orders instead of failing on valid terminal states.
 
-Acceptance:
+Acceptance completed:
 
 ```bash
 python scripts/seed_week2_data.py --base-url http://localhost:8100
+# Work orders: created=0 skipped=22 failed=0
+# Knowledge: created=0 skipped=19 failed=0
+
 python scripts/smoke_test.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --require-week2-data
+# Total=25 PASS=24 FAIL=0 SKIP=1
+# week2:work-orders count=22
+
 pytest tests/test_machine_mapping_example.py -q
+# 7 passed
+
+python scripts/week4_acceptance.py --offline
+# 17 PASS / 0 FAIL; alarm-events=38, work-orders=22, knowledge=19
 ```
 
 ## Workstream 4: Operator / Maintenance Flow Refinement
@@ -192,11 +204,10 @@ pytest tests/test_delivery_scripts.py tests/test_repository_hygiene.py -q
 
 ## Recommended Order
 
-1. Record and verify the local demo package.
-2. Expand mock data and scenario matrix.
-3. Refine role-based UI only where demo friction remains.
-4. Prepare vendor answer sheet and field checklist.
-5. Keep production-boundary docs updated after every demo-facing change.
+1. Record and verify the local demo package using the expanded mock-data set.
+2. Refine role-based UI only where demo friction remains.
+3. Prepare vendor answer sheet and field checklist.
+4. Keep production-boundary docs updated after every demo-facing change.
 
 ## Stop Conditions
 

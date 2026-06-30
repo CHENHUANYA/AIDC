@@ -94,5 +94,61 @@
     "source": "mock-week2-prior-repair",
     "mock_data": true,
     "text": "MOCK DATA. Prior repair example for CNC-LINE-07. Symptom: critical drive event during acceleration stress-test cycle. Root cause: acceleration profile exceeded demo drive limit after a parameter copy. Repair action: restored approved drive profile, checked acceleration ramp, completed dry run, and required drive-specialist signoff."
+  },
+  {
+    "collection": "808d",
+    "code": "340100",
+    "title": "[MOCK] SOP: Coolant pressure below minimum",
+    "source": "mock-week2-sop",
+    "mock_data": true,
+    "text": "MOCK DATA. Coolant pressure SOP for CNC-LINE-08. Symptom: coolant pressure drops during roughing or washdown. Checks: coolant level, pump ready signal, filter differential pressure, nozzle blockage, and recent coolant mix. Recovery: pause cycle, clear chips from nozzle, verify pump ready, refill if needed, and document pressure reading before restart."
+  },
+  {
+    "collection": "808d",
+    "code": "5100",
+    "title": "[MOCK] SOP: Hydraulic clamp pressure not ready",
+    "source": "mock-week2-sop",
+    "mock_data": true,
+    "text": "MOCK DATA. Hydraulic clamp SOP for CNC-LINE-09. Symptom: fixture clamp pressure does not reach ready before cycle start. Checks: hydraulic unit pressure, clamp confirmation switch, pallet seating, and utility air assist. Recovery: stop automatic cycle, verify clamp mechanically, reset clamp request, then run a dry clamp cycle before production."
+  },
+  {
+    "collection": "808d",
+    "code": "6100",
+    "title": "[MOCK] SOP: Tool magazine index not confirmed",
+    "source": "mock-week2-sop",
+    "mock_data": true,
+    "text": "MOCK DATA. Tool magazine SOP for CNC-LINE-10. Symptom: tool magazine does not confirm pocket position before tool change. Checks: magazine home state, pocket sensor, tool number in the active program, and manual override state. Recovery: return magazine to home, confirm pocket sensor, run a single tool-change dry cycle, and escalate if pocket position differs from program request."
+  },
+  {
+    "collection": "808d",
+    "code": "7100",
+    "title": "[MOCK] SOP: Probe calibration check failed",
+    "source": "mock-week2-sop",
+    "mock_data": true,
+    "text": "MOCK DATA. Probe calibration SOP for Line F. Symptom: probe calibration check fails after fixture offset update or tool change. Checks: probe battery, stylus seating, calibration artifact, active work offset, and recent crash history. Recovery: rerun calibration routine, compare offset delta, and require supervisor verification before releasing the cell."
+  },
+  {
+    "collection": "808d",
+    "code": "air pressure low",
+    "title": "[MOCK] Technical bulletin: Utility air pressure dips",
+    "source": "mock-week2-bulletin",
+    "mock_data": true,
+    "text": "MOCK DATA. Utility air bulletin for fixture and tool-change demos. If air pressure dips below the demo threshold, compare plant air header pressure, local regulator setting, fixture unclamp timing, and tool clamp confirmation. Do not chase controller faults until the utility reading is stable."
+  },
+  {
+    "collection": "808d",
+    "code": "340110",
+    "title": "[MOCK] Maintenance note: Coolant filter differential pressure",
+    "source": "mock-week2-maintenance-note",
+    "mock_data": true,
+    "text": "MOCK DATA. Maintenance note for coolant filter alarms. Alarm 340110 usually appears after long roughing cycles or chip-heavy material. First action: inspect filter basket, clean nozzle screen, verify pump current, and record whether pressure recovers after filter cleaning."
+  },
+  {
+    "collection": "808d",
+    "code": "6105",
+    "title": "[MOCK] Prior repair: Tool clamp confirmation loss",
+    "source": "mock-week2-prior-repair",
+    "mock_data": true,
+    "text": "MOCK DATA. Prior repair example for CNC-LINE-10. Symptom: tool clamp confirmation dropped during automatic tool change. Root cause: worn clamp confirmation switch bracket. Repair action: adjusted bracket, verified clamp signal through ten tool-change cycles, and added bracket inspection to weekly maintenance."
   }
 ]

@@ -11,7 +11,10 @@
     "operator_scope": "LINE-A",
     "maintenance_scope": "LINE-A",
     "criticality": "high",
-    "common_alarm_codes": ["3000", "30010"],
+    "common_alarm_codes": [
+      "3000",
+      "30010"
+    ],
     "mock_data": true,
     "mock_data_note": "MOCK DATA - replace with vendor machine master data before pilot use.",
     "gateway_source": "n8n-mock",
@@ -29,7 +32,10 @@
     "operator_scope": "LINE-A",
     "maintenance_scope": "LINE-A",
     "criticality": "high",
-    "common_alarm_codes": ["5000", "20010"],
+    "common_alarm_codes": [
+      "5000",
+      "20010"
+    ],
     "mock_data": true,
     "mock_data_note": "MOCK DATA - replace with vendor machine master data before pilot use.",
     "gateway_source": "n8n-mock",
@@ -47,7 +53,11 @@
     "operator_scope": "LINE-B",
     "maintenance_scope": "LINE-B",
     "criticality": "medium",
-    "common_alarm_codes": ["3000", "7000", "20020"],
+    "common_alarm_codes": [
+      "3000",
+      "7000",
+      "20020"
+    ],
     "mock_data": true,
     "mock_data_note": "MOCK DATA - replace with vendor machine master data before pilot use.",
     "gateway_source": "manual-test",
@@ -65,7 +75,11 @@
     "operator_scope": "LINE-B",
     "maintenance_scope": "LINE-B",
     "criticality": "medium",
-    "common_alarm_codes": ["12000", "12010", "20010"],
+    "common_alarm_codes": [
+      "12000",
+      "12010",
+      "20010"
+    ],
     "mock_data": true,
     "mock_data_note": "MOCK DATA - replace with vendor machine master data before pilot use.",
     "gateway_source": "n8n-mock",
@@ -83,7 +97,11 @@
     "operator_scope": "LINE-C",
     "maintenance_scope": "LINE-C",
     "criticality": "high",
-    "common_alarm_codes": ["25000", "25010", "maintenance reminder"],
+    "common_alarm_codes": [
+      "25000",
+      "25010",
+      "maintenance reminder"
+    ],
     "mock_data": true,
     "mock_data_note": "MOCK DATA - replace with vendor machine master data before pilot use.",
     "gateway_source": "manual-test",
@@ -101,7 +119,12 @@
     "operator_scope": "LINE-C",
     "maintenance_scope": "CONTROLS",
     "criticality": "medium",
-    "common_alarm_codes": ["400100", "400200", "400300", "operator acknowledgement"],
+    "common_alarm_codes": [
+      "400100",
+      "400200",
+      "400300",
+      "operator acknowledgement"
+    ],
     "mock_data": true,
     "mock_data_note": "MOCK DATA - replace with vendor machine master data before pilot use.",
     "gateway_source": "opcua-mock",
@@ -119,7 +142,11 @@
     "operator_scope": "LINE-D",
     "maintenance_scope": "DRIVE",
     "criticality": "critical",
-    "common_alarm_codes": ["300000", "300010", "300020"],
+    "common_alarm_codes": [
+      "300000",
+      "300010",
+      "300020"
+    ],
     "mock_data": true,
     "mock_data_note": "MOCK DATA - replace with vendor machine master data before pilot use.",
     "gateway_source": "n8n-mock",
@@ -137,10 +164,82 @@
     "operator_scope": "TRAINING",
     "maintenance_scope": "SAFETY",
     "criticality": "medium",
-    "common_alarm_codes": ["emergency stop", "feed hold", "operator acknowledgement", "safety door"],
+    "common_alarm_codes": [
+      "emergency stop",
+      "feed hold",
+      "operator acknowledgement",
+      "safety door"
+    ],
     "mock_data": true,
     "mock_data_note": "MOCK DATA - replace or remove before pilot use.",
     "gateway_source": "manual-test",
     "vendor_replacement": "Remove or replace with real training, test, or safety station IDs."
+  },
+  {
+    "machine_id": "CNC-LINE-08",
+    "display_name": "Line E Coolant Cell 08",
+    "line_id": "LINE-E",
+    "cell_id": "CELL-E1",
+    "controller_model": "SINUMERIK 808D with coolant monitoring",
+    "manual": "808d",
+    "location": "Demo plant / coolant and washdown area",
+    "owner_team": "maintenance-e",
+    "operator_scope": "LINE-E",
+    "maintenance_scope": "LINE-E",
+    "criticality": "medium",
+    "common_alarm_codes": [
+      "340100",
+      "340110",
+      "coolant level low"
+    ],
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - replace with vendor machine master data before pilot use.",
+    "gateway_source": "opcua-mock",
+    "vendor_replacement": "Confirm whether coolant pressure and filter state arrive through PLC, OPC-UA, or MES."
+  },
+  {
+    "machine_id": "CNC-LINE-09",
+    "display_name": "Line E Hydraulic Fixture Cell 09",
+    "line_id": "LINE-E",
+    "cell_id": "CELL-E2",
+    "controller_model": "SINUMERIK 808D with hydraulic fixture monitoring",
+    "manual": "808d",
+    "location": "Demo plant / hydraulic fixture area",
+    "owner_team": "maintenance-e",
+    "operator_scope": "LINE-E",
+    "maintenance_scope": "LINE-E",
+    "criticality": "high",
+    "common_alarm_codes": [
+      "5100",
+      "hydraulic pressure low",
+      "air pressure low"
+    ],
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - replace with vendor machine master data before pilot use.",
+    "gateway_source": "n8n-mock",
+    "vendor_replacement": "Map real pressure switch, clamp confirmation, and utility alarm sources."
+  },
+  {
+    "machine_id": "CNC-LINE-10",
+    "display_name": "Line F Tooling and Probe Cell 10",
+    "line_id": "LINE-F",
+    "cell_id": "CELL-F1",
+    "controller_model": "SINUMERIK 808D with tool magazine and probe checks",
+    "manual": "808d",
+    "location": "Demo plant / tooling area",
+    "owner_team": "maintenance-f",
+    "operator_scope": "LINE-F",
+    "maintenance_scope": "LINE-F",
+    "criticality": "high",
+    "common_alarm_codes": [
+      "6100",
+      "6105",
+      "7100",
+      "probe calibration"
+    ],
+    "mock_data": true,
+    "mock_data_note": "MOCK DATA - replace with vendor machine master data before pilot use.",
+    "gateway_source": "manual-test",
+    "vendor_replacement": "Confirm tool magazine, tool clamp, and probe calibration fields from the vendor controller data."
   }
 ]

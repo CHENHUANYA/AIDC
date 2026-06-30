@@ -1,6 +1,6 @@
 # MVP Week 4 Acceptance Report
 
-- Generated: 2026-06-24T15:16:23
+- Generated: 2026-06-24T20:17:09
 - Base URL: `http://localhost:8100`
 - Result: `17 PASS / 0 FAIL`
 
@@ -19,9 +19,9 @@
 | `file:mock_data/week2_work_orders.json` | PASS | mock_data/week2_work_orders.json |
 | `file:mock_data/week2_knowledge_records.json` | PASS | mock_data/week2_knowledge_records.json |
 | `file:mock_data/n8n_mock_workflow.json` | PASS | mock_data/n8n_mock_workflow.json |
-| `mock:alarm-events` | PASS | count=20, required>=20 |
-| `mock:work-orders` | PASS | count=10, required>=10 |
-| `mock:knowledge` | PASS | count=6, required>=5 |
+| `mock:alarm-events` | PASS | count=38, required>=20 |
+| `mock:work-orders` | PASS | count=22, required>=10 |
+| `mock:knowledge` | PASS | count=19, required>=5 |
 | `n8n:nodes` | PASS | nodes=6 |
 
 ## Decision

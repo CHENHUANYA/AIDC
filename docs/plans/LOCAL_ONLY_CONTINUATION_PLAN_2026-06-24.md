@@ -13,7 +13,7 @@
 | 項目 | 狀態 | 備註 |
 |---|---|---|
 | 無廠商 demo 主流程 | 已完成 | mock alarm -> RAG -> issue/work order -> feedback -> BI |
-| 模擬資料 | 已完成 | alarm events 20 筆、work orders 10 筆、knowledge records 6 筆 |
+| 模擬資料 | 已完成 | alarm events 38 筆、work orders 22 筆、knowledge records 19 筆 |
 | n8n mock workflow | 已完成 | workflow contract check 通過 |
 | 角色頁面 | 已完成 | Login、Operator、Maintenance、Supervisor、Admin 等頁面已存在 |
 | 驗收文件 | 已完成 | Demo、recording、MVP checklist、Week 4 report 已建立 |
