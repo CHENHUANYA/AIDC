@@ -62,6 +62,7 @@ def audits_for(session, entity_type: str, entity_id) -> list[dict]:
             "to_status": record.to_status,
             "changes": list(record.changes or []),
             "created_at": iso(record.created_at),
+            "_request_id": record.request_id,
         }
         for record in records
     ]
@@ -154,7 +155,7 @@ def add_missing_audits(session, entity_type: str, entity_id, business_key: str, 
         )
     ).all())
     for entry in entries:
-        request_id = audit_key(entity_type, business_key, entry)
+        request_id = str(entry.get("_request_id") or audit_key(entity_type, business_key, entry))
         if request_id in existing:
             continue
         actor_ref = str(entry.get("user_id") or "")
@@ -236,11 +237,15 @@ class PostgresIssueRepository:
                     issue.version += 1
                 add_missing_audits(session, "issue", issue.id, issue_no, payload.get("issue_history") or [], users)
                 existing_notes = {
-                    (note.note, note.created_by_ref, iso(note.created_at))
+                    (note.note, note.created_by_ref, iso(parse_datetime(note.created_at)))
                     for note in session.scalars(select(IssueNote).where(IssueNote.issue_id == issue.id)).all()
                 }
                 for note in payload.get("operator_notes") or []:
-                    key = (str(note.get("note") or ""), str(note.get("created_by") or ""), str(note.get("created_at") or ""))
+                    key = (
+                        str(note.get("note") or ""),
+                        str(note.get("created_by") or ""),
+                        iso(parse_datetime(note.get("created_at"))),
+                    )
                     if key in existing_notes or not key[0]:
                         continue
                     session.add(IssueNote(

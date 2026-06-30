@@ -35,6 +35,7 @@ def test_business_keys_and_issue_work_order_link_are_unique():
         "users": {("user_id",)},
         "issues": {("issue_no",)},
         "work_orders": {("work_order_no",), ("issue_id",)},
+        "documents": {("collection", "document_key")},
     }
     for table_name, required in expected.items():
         table = Base.metadata.tables[table_name]

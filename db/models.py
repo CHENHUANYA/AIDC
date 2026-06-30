@@ -224,6 +224,7 @@ class Feedback(Base):
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
+    legacy_key: Mapped[str | None] = mapped_column(String(96), unique=True)
     answer_id: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     issue_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("issues.id", ondelete="SET NULL"))
     work_order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("work_orders.id", ondelete="SET NULL"))
@@ -244,10 +245,11 @@ class Feedback(Base):
 
 class Document(Base):
     __tablename__ = "documents"
-    __table_args__ = (UniqueConstraint("collection", "filename", name="uq_documents_collection_filename"),)
+    __table_args__ = (UniqueConstraint("collection", "document_key", name="uq_documents_collection_document_key"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
     collection: Mapped[str] = mapped_column(String(128), nullable=False)
+    document_key: Mapped[str] = mapped_column(String(255), nullable=False)
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     current_version_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("document_versions.id", name="fk_documents_current_version", use_alter=True, ondelete="SET NULL")
