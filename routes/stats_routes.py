@@ -23,10 +23,14 @@ from app_context import (
 )
 from auth import actor_id, actor_role, get_actor
 from rag_engine import model_cache_status
+from repositories.postgres_content import PostgresAlarmRepository, PostgresFeedbackRepository
+from repositories.runtime import postgres_store_enabled
 from storage import ALARM_LOG_PATH
 
 
 router = APIRouter()
+postgres_alarms = PostgresAlarmRepository()
+postgres_feedback = PostgresFeedbackRepository()
 
 
 @router.get("/stats/alarms")
@@ -35,12 +39,13 @@ async def alarm_stats(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
+    alarms = postgres_alarms.load_all() if postgres_store_enabled() else alarm_history
     today = datetime.now().strftime("%Y-%m-%d")
-    today_alarms = [alarm for alarm in alarm_history if alarm.get("date") == today]
+    today_alarms = [alarm for alarm in alarms if alarm.get("date") == today]
     by_manual: Dict[str, int] = {}
     by_source: Dict[str, int] = {}
     by_day: Dict[str, int] = {}
-    for alarm in alarm_history:
+    for alarm in alarms:
         manual = alarm.get("manual") or "unknown"
         source = alarm.get("source") or "unknown"
         alarm_date = alarm.get("date") or ""
@@ -52,12 +57,12 @@ async def alarm_stats(actor: dict = Depends(get_actor)):
     recent_days = sorted(by_day.items(), key=lambda item: item[0], reverse=True)[:7]
     recent_days.reverse()
     return {
-        "total": len(alarm_history),
+        "total": len(alarms),
         "today": len(today_alarms),
         "by_manual": by_manual,
         "by_source": by_source,
         "daily": [{"date": day, "count": count} for day, count in recent_days],
-        "recent": alarm_history[-50:],
+        "recent": alarms[-50:],
     }
 
 
@@ -68,6 +73,9 @@ async def clear_alarm_stats(actor: dict = Depends(get_actor)):
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
     alarm_history.clear()
+    if postgres_store_enabled():
+        postgres_alarms.clear()
+        return {"status": "ok"}
     try:
         if os.path.exists(ALARM_LOG_PATH):
             os.remove(ALARM_LOG_PATH)
@@ -97,9 +105,12 @@ async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
         "expected_fix": req.expected_fix,
         "kb_candidate": req.kb_candidate,
     }
-    os.makedirs(os.path.dirname(FEEDBACK_LOG), exist_ok=True)
-    with open(FEEDBACK_LOG, "a", encoding="utf-8") as file:
-        file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    if postgres_store_enabled():
+        postgres_feedback.add(entry)
+    else:
+        os.makedirs(os.path.dirname(FEEDBACK_LOG), exist_ok=True)
+        with open(FEEDBACK_LOG, "a", encoding="utf-8") as file:
+            file.write(json.dumps(entry, ensure_ascii=False) + "\n")
     return {"status": "ok"}
 
 
@@ -109,18 +120,19 @@ async def feedback_stats(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
-    if not os.path.exists(FEEDBACK_LOG):
-        return {"total": 0, "good": 0, "bad": 0, "entries": []}
     entries = []
-    with open(FEEDBACK_LOG, "r", encoding="utf-8") as file:
-        for line in file:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entries.append(json.loads(line))
-            except Exception:
-                pass
+    if postgres_store_enabled():
+        entries = postgres_feedback.load_all()
+    elif os.path.exists(FEEDBACK_LOG):
+        with open(FEEDBACK_LOG, "r", encoding="utf-8") as file:
+            for line in file:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except Exception:
+                    pass
     good = sum(1 for entry in entries if entry.get("feedback") == "good")
     bad = sum(1 for entry in entries if entry.get("feedback") == "bad")
     evaluated = [

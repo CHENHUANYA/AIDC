@@ -6,10 +6,13 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from auth import actor_id, get_actor, is_admin
+from repositories.postgres_content import PostgresSettingsRepository
+from repositories.runtime import postgres_store_enabled
 from storage import DB_PATH
 
 
 router = APIRouter()
+postgres_settings = PostgresSettingsRepository()
 
 DB_DIR = DB_PATH
 SETTINGS_FILE = os.path.join(DB_DIR, "system_settings.json")
@@ -30,6 +33,8 @@ class UpdateSystemSettings(BaseModel):
 
 
 def _load_settings() -> dict:
+    if postgres_store_enabled():
+        return {**DEFAULT_SETTINGS, **postgres_settings.load_all()}
     if not os.path.exists(SETTINGS_FILE):
         return dict(DEFAULT_SETTINGS)
     try:
@@ -40,7 +45,10 @@ def _load_settings() -> dict:
     return {**DEFAULT_SETTINGS, **payload} if isinstance(payload, dict) else dict(DEFAULT_SETTINGS)
 
 
-def _save_settings(settings: dict) -> None:
+def _save_settings(settings: dict, updated_by: str = "") -> None:
+    if postgres_store_enabled():
+        postgres_settings.save_all(settings, updated_by)
+        return
     os.makedirs(DB_DIR, exist_ok=True)
     with open(SETTINGS_FILE, "w", encoding="utf-8") as file:
         json.dump(settings, file, ensure_ascii=False, indent=2)
@@ -75,5 +83,5 @@ async def update_system_settings(req: UpdateSystemSettings, actor: dict = Depend
         settings["allow_operator_reopen"] = req.allow_operator_reopen
     settings["updated_by"] = actor_id(actor)
     settings["updated_at"] = datetime.now().isoformat()
-    _save_settings(settings)
+    _save_settings(settings, actor_id(actor))
     return {"status": "ok", "settings": settings}

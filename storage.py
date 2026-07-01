@@ -6,6 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from repositories.postgres_content import PostgresDocumentRepository
+from repositories.runtime import postgres_store_enabled
+
 def load_local_env(path: str = ".env") -> None:
     if not os.path.exists(path):
         return
@@ -26,6 +29,7 @@ INGEST_LOG_PATH = os.path.join(DB_PATH, "ingest_log.jsonl")
 QUERY_LOG_PATH = os.path.join(DB_PATH, "query_log.jsonl")
 ERROR_LOG_PATH = os.path.join(DB_PATH, "error_log.jsonl")
 ALARM_LOG_PATH = os.path.join(DB_PATH, "alarm_log.jsonl")
+postgres_documents = PostgresDocumentRepository()
 
 
 def ensure_db_dir():
@@ -56,6 +60,15 @@ def generate_doc_id(filename: str, source_hash: str) -> str:
 
 
 def load_manifest() -> Dict[str, Any]:
+    if postgres_store_enabled():
+        collections = {}
+        for summary in postgres_documents.list_collections():
+            name = summary["name"]
+            collections[name] = {
+                "documents": postgres_documents.load_collection(name),
+                "updated_at": summary.get("updated_at"),
+            }
+        return {"collections": collections}
     ensure_db_dir()
     if not os.path.exists(MANIFEST_PATH):
         return {"collections": {}}
@@ -67,12 +80,20 @@ def load_manifest() -> Dict[str, Any]:
 
 
 def save_manifest(manifest: Dict[str, Any]):
+    if postgres_store_enabled():
+        for collection, payload in manifest.get("collections", {}).items():
+            for document in payload.get("documents", []):
+                postgres_documents.upsert(str(collection), document)
+        return
     ensure_db_dir()
     with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
 
 
 def upsert_document_entry(collection: str, doc_entry: Dict[str, Any]):
+    if postgres_store_enabled():
+        postgres_documents.upsert(collection, doc_entry)
+        return
     manifest = load_manifest()
     collections = manifest.setdefault("collections", {})
     col = collections.setdefault(collection, {"documents": []})
@@ -91,6 +112,9 @@ def upsert_document_entry(collection: str, doc_entry: Dict[str, Any]):
 
 
 def remove_document_entry(collection: str, doc_id: str):
+    if postgres_store_enabled():
+        postgres_documents.remove(collection, doc_id)
+        return
     manifest = load_manifest()
     col = manifest.get("collections", {}).get(collection)
     if not col:
@@ -102,6 +126,8 @@ def remove_document_entry(collection: str, doc_id: str):
 
 
 def find_document_by_hash(collection: str, source_hash: str) -> Optional[Dict[str, Any]]:
+    if postgres_store_enabled():
+        return postgres_documents.find_by_hash(collection, source_hash)
     manifest = load_manifest()
     col = manifest.get("collections", {}).get(collection, {})
     for doc in col.get("documents", []):
@@ -111,6 +137,8 @@ def find_document_by_hash(collection: str, source_hash: str) -> Optional[Dict[st
 
 
 def get_documents(collection: str) -> List[Dict[str, Any]]:
+    if postgres_store_enabled():
+        return postgres_documents.load_collection(collection)
     manifest = load_manifest()
     col = manifest.get("collections", {}).get(collection, {})
     return col.get("documents", [])
@@ -135,6 +163,8 @@ def build_legacy_document_entry(collection: str, sections: List[dict]) -> Option
 
 
 def list_collections_summary() -> List[Dict[str, Any]]:
+    if postgres_store_enabled():
+        return postgres_documents.list_collections()
     manifest = load_manifest()
     out = []
     for name, col in manifest.get("collections", {}).items():

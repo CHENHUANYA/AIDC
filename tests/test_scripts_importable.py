@@ -9,6 +9,8 @@ SCRIPT_MODULES = [
     "scripts.model_cache",
     "scripts.n8n_workflow_check",
     "scripts.preflight_check",
+    "scripts.postgresql_phase4_cutover",
+    "scripts.postgresql_phase4_runtime_acceptance",
     "scripts.production_boundary_check",
     "scripts.regression_checks",
     "scripts.replay_demo_alarms",

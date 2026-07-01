@@ -45,6 +45,7 @@ def create_issue(
     created_by: str = "",
     assigned_to: str = "",
     rag_suggestion: str = "",
+    alarm_event_id=None,
     create_work_order: bool = False,
     priority: str | None = None,
 ) -> tuple[dict, dict | None]:
@@ -53,6 +54,7 @@ def create_issue(
         now = datetime.now(timezone.utc)
         issue = Issue(
             issue_no=f"ISS-{now.strftime('%Y%m%d')}-{str(uuid.uuid4())[:6]}",
+            alarm_event_id=alarm_event_id,
             source=source or "operator",
             manual=manual or "808d",
             machine_id=machine_id,

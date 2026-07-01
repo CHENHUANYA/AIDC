@@ -17,6 +17,7 @@ from app_context import (
     pending_alarms,
 )
 from auth import actor_id, get_actor
+from repositories.postgres_content import PostgresAlarmRepository
 from repositories.runtime import postgres_store_enabled
 from services.postgres_workflow import create_issue as postgres_create_issue
 from services.transactions import postgres_transactional
@@ -26,6 +27,7 @@ from work_orders import create_order_dict
 
 
 router = APIRouter()
+postgres_alarms = PostgresAlarmRepository()
 
 
 def _normalize_severity(value: Optional[str], fallback: str) -> str:
@@ -89,7 +91,11 @@ async def trigger_alarm(
         pending_alarms.pop(0)
     if len(alarm_history) > 1000:
         alarm_history.pop(0)
-    append_jsonl(ALARM_LOG_PATH, entry)
+    alarm_event_id = None
+    if postgres_store_enabled():
+        alarm_event_id = postgres_alarms.add(entry)
+    else:
+        append_jsonl(ALARM_LOG_PATH, entry)
 
     rag_suggestion = ""
     rag_preview = ""
@@ -125,6 +131,7 @@ async def trigger_alarm(
             severity=severity,
             created_by=req.source or "machine",
             rag_suggestion=rag_suggestion,
+            alarm_event_id=alarm_event_id,
             create_work_order=True,
             priority=_priority_from_severity(severity, req.source),
         )

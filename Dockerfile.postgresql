@@ -3,6 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 ARG RAG_PRELOAD_MODELS=0
+ARG TORCH_VERSION=2.5.1+cpu
+ARG PYTORCH_CPU_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 ENV HF_HOME=/app/hf_cache
 ENV HF_HUB_OFFLINE=1
@@ -10,6 +12,8 @@ ENV TRANSFORMERS_OFFLINE=1
 ENV RAG_HF_LOCAL_ONLY=true
 
 COPY requirements.txt requirements-postgresql.txt ./
+RUN python -m pip --isolated install --default-timeout=1000 --no-cache-dir \
+      --index-url ${PYTORCH_CPU_INDEX_URL} torch==${TORCH_VERSION}
 RUN python -m pip --isolated install --default-timeout=1000 --no-cache-dir -r requirements-postgresql.txt
 
 COPY . .
