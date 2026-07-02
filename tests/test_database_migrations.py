@@ -7,14 +7,19 @@ from scripts.database_check import REQUIRED_TABLES
 def test_alembic_has_one_expected_head():
     script = ScriptDirectory.from_config(Config("alembic.ini"))
 
-    assert script.get_heads() == ["20260630_0003"]
+    assert script.get_heads() == ["20260701_0004"]
 
 
 def test_revision_chain_is_linear_and_starts_at_base():
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     revisions = list(script.walk_revisions())
 
-    assert [revision.revision for revision in revisions] == ["20260630_0003", "20260630_0002", "20260630_0001"]
+    assert [revision.revision for revision in revisions] == [
+        "20260701_0004",
+        "20260630_0003",
+        "20260630_0002",
+        "20260630_0001",
+    ]
     assert revisions[-1].down_revision is None
 
 

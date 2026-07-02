@@ -96,3 +96,5 @@ def test_alembic_revision_and_compose_overlay_exist():
     assert "postgres:17.10" in compose
     assert "condition: service_healthy" in compose
     assert "127.0.0.1" in compose
+    assert "shared_preload_libraries=pg_stat_statements" in compose
+    assert "track_io_timing=on" in compose
