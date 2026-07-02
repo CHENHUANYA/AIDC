@@ -45,6 +45,7 @@ python scripts/regression_checks.py --base-url http://localhost:8100 --manual 80
 python scripts/role_console_smoke.py --base-url http://localhost:8100
 python scripts/runtime_soak.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --duration-seconds 60 --interval-seconds 10
 python scripts/production_boundary_check.py --base-url http://localhost:8100 --allow-http-local --skip-stream
+python -m scripts.postgresql_pilot_readiness
 python scripts/browser_e2e_responsive.py
 python scripts/n8n_workflow_check.py
 python scripts/data_maintenance.py --dry-run backup-runtime --include-mock-data

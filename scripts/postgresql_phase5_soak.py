@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.postgresql_concurrency_check import run_check as run_concurrency_check
@@ -22,6 +23,8 @@ def percentile(values: list[int], fraction: float) -> int:
 
 
 def run_soak(base_url: str, source: Path, duration_seconds: int, interval_seconds: float, max_failures: int) -> dict:
+    started_at = datetime.now(timezone.utc)
+    soak_started = time.monotonic()
     before_counts = database_counts()
     before_settings = database_settings()
     before_fingerprints = legacy_fingerprints(source)
@@ -47,6 +50,8 @@ def run_soak(base_url: str, source: Path, duration_seconds: int, interval_second
             time.sleep(min(max(interval_seconds, 0), remaining))
 
     concurrency = run_concurrency_check(4)
+    completed_at = datetime.now(timezone.utc)
+    elapsed_seconds = time.monotonic() - soak_started
     after_counts = database_counts()
     after_settings = database_settings()
     fingerprint_comparison = compare_fingerprints(before_fingerprints, legacy_fingerprints(source))
@@ -59,6 +64,9 @@ def run_soak(base_url: str, source: Path, duration_seconds: int, interval_second
     }
     return {
         "status": "ok" if all(checks.values()) else "fail",
+        "started_at": started_at.isoformat(),
+        "completed_at": completed_at.isoformat(),
+        "elapsed_seconds": round(elapsed_seconds, 3),
         "duration_seconds": duration_seconds,
         "iterations": iterations,
         "failures": failures,

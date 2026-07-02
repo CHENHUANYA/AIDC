@@ -55,3 +55,8 @@
 1. `MVP_WEEK4_ACCEPTANCE_REPORT.md` 可視為可再生的歷史輸出。
 2. `plans/MVP_NO_VENDOR_PLAN.md` 可在角色權限與真實整合規劃穩定後移到 archive。
 3. `DEMO_SCRIPT.md` 與 `DEMO_RECORDING_SCRIPT.md` 內容若合併，需同步更新 acceptance checklist 與 week4 acceptance script。
+
+## PostgreSQL Pilot Readiness
+
+- POSTGRESQL_PHASE6_RUNBOOK.md：Pilot 上線閘門、四小時 soak 與異地備份／PITR／HA 證據契約。
+- POSTGRESQL_PHASE6_BASELINE_2026-07-02.md：Phase 6 readiness gate 的首輪 NOT READY 基準。

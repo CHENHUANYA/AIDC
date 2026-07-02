@@ -1,0 +1,153 @@
+import json
+from datetime import datetime, timedelta, timezone
+
+from scripts import postgresql_pilot_readiness as readiness
+
+
+NOW = datetime.now(timezone.utc).isoformat()
+
+
+def write_json(path, payload):
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_secret_checks_do_not_expose_values(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    postgres_env = tmp_path / ".env.postgresql"
+    env.write_text(
+        "ALARM_RAG_ENV=production\n"
+        "ADMIN_INITIAL_PASSWORD=AdminSecret-0123456789\n"
+        "ALARM_RAG_TRIGGER_TOKEN=trigger-012345678901234567890123456789\n"
+        "N8N_ENCRYPTION_KEY=n8n-key-012345678901234567890123456789\n",
+        encoding="utf-8",
+    )
+    postgres_env.write_text(
+        "POSTGRES_PASSWORD=postgres-01234567890123456789\nPOSTGRES_BIND_ADDRESS=127.0.0.1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(readiness, "tracked_paths", lambda: set())
+
+    checks = readiness.secret_checks(env, postgres_env)
+
+    assert all(check.status == "PASS" for check in checks)
+    rendered = json.dumps([readiness.asdict(check) for check in checks])
+    assert "AdminSecret-0123456789" not in rendered
+    assert "postgres-01234567890123456789" not in rendered
+
+
+def test_secret_checks_reject_placeholders_duplicates_and_public_database(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    postgres_env = tmp_path / ".env.postgresql"
+    duplicate = "same-secret-value-that-is-long-enough-123456"
+    env.write_text(
+        "ALARM_RAG_ENV=development\n"
+        "ADMIN_INITIAL_PASSWORD=change-me-now\n"
+        f"ALARM_RAG_TRIGGER_TOKEN={duplicate}\n"
+        f"N8N_ENCRYPTION_KEY={duplicate}\n",
+        encoding="utf-8",
+    )
+    postgres_env.write_text(
+        "POSTGRES_PASSWORD=replace-with-a-long-random-password\nPOSTGRES_BIND_ADDRESS=0.0.0.0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(readiness, "tracked_paths", lambda: set())
+
+    checks = readiness.secret_checks(env, postgres_env)
+    failed = {check.name for check in checks if check.status == "FAIL"}
+
+    assert {"ADMIN_INITIAL_PASSWORD", "POSTGRES_PASSWORD", "secret-uniqueness", "production-mode", "postgres-private-bind"} <= failed
+
+
+def test_soak_gate_requires_actual_elapsed_time_not_requested_duration(tmp_path):
+    report = write_json(
+        tmp_path / "soak.json",
+        {
+            "status": "ok",
+            "completed_at": NOW,
+            "duration_seconds": 14400,
+            "elapsed_seconds": 30,
+            "failures": [],
+            "checks": {"database_counts_restored": True},
+        },
+    )
+
+    checks = readiness.soak_checks(report, min_hours=4, max_age_days=30)
+
+    assert next(check for check in checks if check.name == "actual-duration").status == "FAIL"
+
+
+def test_external_evidence_contracts_accept_complete_reports(tmp_path):
+    offsite = write_json(
+        tmp_path / "offsite.json",
+        {
+            "status": "ok",
+            "completed_at": NOW,
+            "encrypted": True,
+            "remote": True,
+            "immutable": True,
+            "restore_verified": True,
+            "artifact_sha256": "a" * 64,
+        },
+    )
+    pitr = write_json(
+        tmp_path / "pitr.json",
+        {
+            "status": "ok",
+            "completed_at": NOW,
+            "recovery_target_time": NOW,
+            "data_checks_passed": True,
+            "rpo_seconds": 30,
+            "rto_seconds": 120,
+        },
+    )
+    ha = write_json(
+        tmp_path / "ha.json",
+        {
+            "status": "ok",
+            "completed_at": NOW,
+            "failover_performed": True,
+            "writes_verified_after_failover": True,
+            "data_consistency_passed": True,
+            "split_brain_prevention_verified": True,
+            "rto_seconds": 45,
+        },
+    )
+
+    checks = [
+        *readiness.offsite_checks(offsite, 30),
+        *readiness.pitr_checks(pitr, 300, 3600, 30),
+        *readiness.ha_checks(ha, 300, 30),
+    ]
+
+    assert all(check.status == "PASS" for check in checks)
+
+
+def test_build_report_is_not_ready_when_any_check_fails():
+    report = readiness.build_report(
+        [
+            readiness.Check("a", "pass", "PASS", "ok"),
+            readiness.Check("b", "fail", "FAIL", "missing"),
+        ]
+    )
+
+    assert report["status"] == "not_ready"
+    assert report["summary"] == {"pass": 1, "fail": 1, "total": 2}
+
+
+def test_future_dated_evidence_is_rejected(tmp_path):
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    report = write_json(
+        tmp_path / "soak.json",
+        {
+            "status": "ok",
+            "completed_at": future,
+            "elapsed_seconds": 14400,
+            "failures": [],
+            "checks": {"database_counts_restored": True},
+        },
+    )
+
+    checks = readiness.soak_checks(report, min_hours=4, max_age_days=30)
+
+    assert next(check for check in checks if check.name == "evidence-age").status == "FAIL"
