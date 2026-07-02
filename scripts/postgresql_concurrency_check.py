@@ -5,11 +5,12 @@ import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 
 from db.models import AuditEvent, Issue, WorkOrder
 from db.session import session_scope, transaction_scope
 from repositories.runtime import require_known_data_store
+from scripts.postgresql_test_cleanup import cleanup_workflow_records
 from services.postgres_workflow import create_issue, escalate_issue
 
 
@@ -20,15 +21,7 @@ def cleanup(marker: str) -> None:
     with transaction_scope():
         with session_scope() as session:
             issues = session.scalars(select(Issue).where(Issue.description == marker)).all()
-            issue_ids = [issue.id for issue in issues]
-            orders = session.scalars(select(WorkOrder).where(WorkOrder.issue_id.in_(issue_ids or [None]))).all()
-            entity_ids = [item.id for item in issues] + [item.id for item in orders]
-            if entity_ids:
-                session.execute(delete(AuditEvent).where(AuditEvent.entity_id.in_(entity_ids)))
-            for order in orders:
-                session.delete(order)
-            for issue in issues:
-                session.delete(issue)
+            cleanup_workflow_records(session, [issue.id for issue in issues])
 
 
 def run_check(workers: int = 4) -> dict:

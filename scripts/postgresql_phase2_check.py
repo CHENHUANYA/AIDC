@@ -7,11 +7,12 @@ import uuid
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
-from db.models import AuditEvent, Issue, LoginSession, User, WorkOrder
+from db.models import Issue, LoginSession, User
 from db.session import session_scope
 from repositories.postgres_auth import PostgresSessionRepository, PostgresUserRepository, token_digest
 from repositories.postgres_workflow import PostgresIssueRepository, PostgresWorkOrderRepository
 from repositories.runtime import postgres_store_enabled
+from scripts.postgresql_test_cleanup import cleanup_workflow_records, workflow_orphan_audit_count
 from services.postgres_workflow import create_issue, escalate_issue
 
 
@@ -21,14 +22,7 @@ TEST_PREFIX = "phase2-check-"
 def cleanup() -> None:
     with session_scope() as session:
         issue_ids = list(session.scalars(select(Issue.id).where(Issue.description.like(f"{TEST_PREFIX}%"))).all())
-        order_ids = list(session.scalars(select(WorkOrder.id).where(WorkOrder.issue_id.in_(issue_ids or [uuid.uuid4()]))).all())
-        entity_ids = [*issue_ids, *order_ids]
-        if entity_ids:
-            session.execute(delete(AuditEvent).where(AuditEvent.entity_id.in_(entity_ids)))
-        if order_ids:
-            session.execute(delete(WorkOrder).where(WorkOrder.id.in_(order_ids)))
-        if issue_ids:
-            session.execute(delete(Issue).where(Issue.id.in_(issue_ids)))
+        cleanup_workflow_records(session, issue_ids)
         user_ids = list(session.scalars(select(User.id).where(User.user_id.like(f"{TEST_PREFIX}%"))).all())
         if user_ids:
             session.execute(delete(LoginSession).where(LoginSession.user_id.in_(user_ids)))
@@ -40,6 +34,8 @@ def run_checks() -> dict:
         raise RuntimeError("DATA_STORE must be postgresql for the Phase 2 check")
 
     cleanup()
+    with session_scope() as session:
+        baseline_orphans = workflow_orphan_audit_count(session)
     suffix = uuid.uuid4().hex[:8]
     user_id = f"{TEST_PREFIX}{suffix}"
     raw_token = secrets.token_urlsafe(32)
@@ -100,10 +96,14 @@ def run_checks() -> dict:
             with session_scope() as db:
                 rollback_ok = db.scalar(select(func.count()).select_from(Issue).where(Issue.description == rollback_marker)) == 0
         results["constraint_rollback"] = rollback_ok
-        results["status"] = "ok" if all(value is True for value in results.values()) else "fail"
-        return results
     finally:
         cleanup()
+
+    with session_scope() as session:
+        final_orphans = workflow_orphan_audit_count(session)
+    results["cleanup_no_audit_drift"] = final_orphans == baseline_orphans
+    results["status"] = "ok" if all(value is True for value in results.values()) else "fail"
+    return results
 
 
 def main() -> int:

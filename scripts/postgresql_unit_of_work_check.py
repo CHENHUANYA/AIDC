@@ -3,23 +3,27 @@ from __future__ import annotations
 import json
 import uuid
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 
 from db.models import Issue
 from db.session import session_scope, transaction_scope
+from scripts.postgresql_test_cleanup import cleanup_workflow_records, workflow_orphan_audit_count
 from services.postgres_workflow import create_issue
 
 
 PREFIX = "phase2-uow-"
 
 
-def cleanup() -> None:
+def cleanup() -> dict[str, int]:
     with session_scope() as session:
-        session.execute(delete(Issue).where(Issue.description.like(f"{PREFIX}%")))
+        issue_ids = session.scalars(select(Issue.id).where(Issue.description.like(f"{PREFIX}%"))).all()
+        return cleanup_workflow_records(session, issue_ids)
 
 
 def run_checks() -> dict:
     cleanup()
+    with session_scope() as session:
+        baseline_orphans = workflow_orphan_audit_count(session)
     rollback_marker = f"{PREFIX}{uuid.uuid4().hex}-rollback"
     commit_marker = f"{PREFIX}{uuid.uuid4().hex}-commit"
     results: dict[str, object] = {}
@@ -56,10 +60,18 @@ def run_checks() -> dict:
                 select(func.count()).select_from(Issue).where(Issue.description == commit_marker)
             )
         results["outer_commit"] = commit_count == 1
-        results["status"] = "ok" if all(value is True for value in results.values()) else "fail"
-        return results
     finally:
         cleanup()
+
+    with session_scope() as session:
+        remaining = int(session.scalar(
+            select(func.count()).select_from(Issue).where(Issue.description.like(f"{PREFIX}%"))
+        ) or 0)
+        final_orphans = workflow_orphan_audit_count(session)
+    results["cleanup_removed_test_issues"] = remaining == 0
+    results["cleanup_no_audit_drift"] = final_orphans == baseline_orphans
+    results["status"] = "ok" if all(value is True for value in results.values()) else "fail"
+    return results
 
 
 def main() -> int:
