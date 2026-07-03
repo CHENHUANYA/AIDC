@@ -64,3 +64,5 @@
 - POSTGRESQL_PITR_LOCAL_EXECUTION_REPORT_2026-07-03.md：named restore point 本機實演結果與正式環境邊界。
 - POSTGRESQL_ENCRYPTED_BACKUP_RUNBOOK.md：AES-256-GCM 備份封裝、驗證與安全還原流程。
 - POSTGRESQL_ENCRYPTED_BACKUP_LOCAL_REPORT_2026-07-03.md：本機加密、竄改防護與 scratch restore 實演結果。
+- POSTGRESQL_HA_RUNBOOK.md：Physical streaming replica、受控 promotion 與 cleanup 操作手冊。
+- POSTGRESQL_HA_LOCAL_EXECUTION_REPORT_2026-07-03.md：本機 failover、RPO／RTO 與正式 HA 邊界。

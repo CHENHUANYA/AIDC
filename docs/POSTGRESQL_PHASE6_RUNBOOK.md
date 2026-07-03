@@ -108,6 +108,9 @@ exports/postgresql_ha_drill.json：
   "writes_verified_after_failover": true,
   "data_consistency_passed": true,
   "split_brain_prevention_verified": true,
+  "quorum_verified": true,
+  "fencing_verified": true,
+  "client_reconnect_verified": true,
   "rto_seconds": 120
 }
 ~~~

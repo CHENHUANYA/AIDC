@@ -261,6 +261,9 @@ def ha_checks(path: Path, max_rto_seconds: float, max_age_days: float) -> list[C
         boolean_check("ha", "post-failover-writes", payload, "writes_verified_after_failover"),
         boolean_check("ha", "data-consistency", payload, "data_consistency_passed"),
         boolean_check("ha", "split-brain-prevention", payload, "split_brain_prevention_verified"),
+        boolean_check("ha", "quorum", payload, "quorum_verified"),
+        boolean_check("ha", "fencing", payload, "fencing_verified"),
+        boolean_check("ha", "client-reconnect", payload, "client_reconnect_verified"),
         metric_check("ha", "rto", payload.get("rto_seconds"), max_rto_seconds),
         evidence_age_check("ha", payload, max_age_days),
     ]

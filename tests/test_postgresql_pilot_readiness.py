@@ -118,6 +118,9 @@ def test_external_evidence_contracts_accept_complete_reports(tmp_path):
             "writes_verified_after_failover": True,
             "data_consistency_passed": True,
             "split_brain_prevention_verified": True,
+            "quorum_verified": True,
+            "fencing_verified": True,
+            "client_reconnect_verified": True,
             "rto_seconds": 45,
         },
     )

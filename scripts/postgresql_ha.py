@@ -185,6 +185,56 @@ def drop_replication_role(container: str, user: str, database: str, role: str) -
     psql_scalar(container, user, database, f"DROP ROLE IF EXISTS {role};")
 
 
+def add_replication_hba_rule(
+    container: str,
+    user: str,
+    database: str,
+    role: str,
+) -> None:
+    validate_name(role, "replication role")
+    begin = f"# BEGIN alarm-rag-ha {role}"
+    end = f"# END alarm-rag-ha {role}"
+    rule = f"\n{begin}\nhost replication {role} all scram-sha-256\n{end}\n"
+    result = run_command(
+        ["docker", "exec", "--interactive", container, "sh", "-c", 'cat >> "$PGDATA/pg_hba.conf"'],
+        check=False,
+        input_text=rule,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Could not append temporary replication pg_hba rule: {result.stderr.strip()}")
+    try:
+        reloaded = psql_scalar(container, user, database, "SELECT pg_reload_conf();")
+        if reloaded != "t":
+            raise RuntimeError("PostgreSQL rejected pg_hba reload")
+    except Exception:
+        remove_replication_hba_rule(container, user, database, role)
+        raise
+
+
+def remove_replication_hba_rule(
+    container: str,
+    user: str,
+    database: str,
+    role: str,
+) -> None:
+    if not NAME.fullmatch(role):
+        return
+    expression = f"/BEGIN alarm-rag-ha {role}/,/END alarm-rag-ha {role}/d"
+    result = docker_exec(
+        container,
+        "sed",
+        "-i",
+        expression,
+        "/var/lib/postgresql/data/pg_hba.conf",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Could not remove temporary replication pg_hba rule: {result.stderr.strip()}")
+    reloaded = psql_scalar(container, user, database, "SELECT pg_reload_conf();")
+    if reloaded != "t":
+        raise RuntimeError("PostgreSQL rejected pg_hba cleanup reload")
+
+
 def write_env_file(path: Path, password: str) -> None:
     if path.exists():
         raise FileExistsError(f"Refusing to overwrite HA secret file: {path}")
@@ -365,6 +415,7 @@ def run_drill(
     password = secrets.token_urlsafe(32)
     initially_running = container_running(primary)
     role_created = False
+    hba_added = False
     volume_created = False
     report: dict[str, Any] = {}
     baseline_counts: dict[str, int] = {}
@@ -380,6 +431,8 @@ def run_drill(
         baseline_revision = current_revision(primary, user, database)
         create_replication_role(primary, user, database, role, password)
         role_created = True
+        add_replication_hba_rule(primary, user, database, role)
+        hba_added = True
         write_env_file(env_file, password)
         run_command(["docker", "volume", "create", volume])
         volume_created = True
@@ -407,13 +460,18 @@ def run_drill(
         primary_fenced = not container_running(primary)
         if not primary_fenced:
             raise RuntimeError("Primary was not stopped before replica promotion")
-        docker_exec(
-            replica,
-            "pg_ctl",
-            "--pgdata", "/var/lib/postgresql/data",
-            "promote",
-            "--wait",
+        promotion = run_command(
+            [
+                "docker", "exec", "--user", "postgres", replica,
+                "pg_ctl",
+                "--pgdata", "/var/lib/postgresql/data",
+                "promote",
+                "--wait",
+            ],
+            check=False,
         )
+        if promotion.returncode != 0:
+            raise RuntimeError(f"Replica promotion failed: {promotion.stderr.strip()}")
         wait_postgres(replica, user, database, startup_timeout, recovery=False)
         insert_marker(replica, user, database, post_marker)
         rto_seconds = time.monotonic() - outage_started
@@ -445,6 +503,9 @@ def run_drill(
             "writes_verified_after_failover": checks["post_failover_write"],
             "data_consistency_passed": checks["table_counts"] and checks["alembic_revision"],
             "split_brain_prevention_verified": False,
+            "quorum_verified": False,
+            "fencing_verified": False,
+            "client_reconnect_verified": False,
             "local_primary_stopped_before_promotion": primary_fenced,
             "rpo_seconds": 0,
             "rto_seconds": round(rto_seconds, 3),
@@ -468,6 +529,8 @@ def run_drill(
                 run_command(["docker", "start", primary])
             wait_postgres(primary, user, database, startup_timeout, recovery=False)
             delete_marker(primary, user, database, pre_marker)
+            if hba_added:
+                remove_replication_hba_rule(primary, user, database, role)
             if role_created:
                 drop_replication_role(primary, user, database, role)
             if baseline_counts:
@@ -524,6 +587,9 @@ def main() -> int:
             "writes_verified_after_failover": False,
             "data_consistency_passed": False,
             "split_brain_prevention_verified": False,
+            "quorum_verified": False,
+            "fencing_verified": False,
+            "client_reconnect_verified": False,
             "error": f"{type(exc).__name__}: {exc}",
         }
     write_report(Path(args.report), report)
