@@ -220,6 +220,10 @@ def offsite_checks(path: Path, max_age_days: float) -> list[Check]:
         boolean_check("offsite-backup", "remote", payload, "remote"),
         boolean_check("offsite-backup", "immutable", payload, "immutable"),
         boolean_check("offsite-backup", "restore-verified", payload, "restore_verified"),
+        boolean_check("offsite-backup", "database-restore-verified", payload, "database_restore_verified"),
+        boolean_check("offsite-backup", "external-key-management", payload, "key_managed_externally"),
+        boolean_check("offsite-backup", "retention-lock", payload, "retention_lock_verified"),
+        boolean_check("offsite-backup", "separate-failure-domain", payload, "separate_failure_domain"),
         Check("offsite-backup", "artifact-checksum", "PASS" if valid_checksum else "FAIL", "valid SHA-256" if valid_checksum else "missing or invalid SHA-256"),
         evidence_age_check("offsite-backup", payload, max_age_days),
     ]

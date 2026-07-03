@@ -67,6 +67,10 @@ exports/postgresql_offsite_backup.json：
   "remote": true,
   "immutable": true,
   "restore_verified": true,
+  "database_restore_verified": true,
+  "key_managed_externally": true,
+  "retention_lock_verified": true,
+  "separate_failure_domain": true,
   "artifact_sha256": "<64 hex characters>"
 }
 ~~~

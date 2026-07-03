@@ -12,6 +12,7 @@ SCRIPT_MODULES = [
     "scripts.postgresql_backup",
     "scripts.postgresql_concurrency_check",
     "scripts.postgresql_health",
+    "scripts.postgresql_offsite_backup",
     "scripts.postgresql_pilot_readiness",
     "scripts.postgresql_phase4_cutover",
     "scripts.postgresql_phase4_runtime_acceptance",

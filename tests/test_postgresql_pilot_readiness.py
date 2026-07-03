@@ -89,6 +89,10 @@ def test_external_evidence_contracts_accept_complete_reports(tmp_path):
             "remote": True,
             "immutable": True,
             "restore_verified": True,
+            "database_restore_verified": True,
+            "key_managed_externally": True,
+            "retention_lock_verified": True,
+            "separate_failure_domain": True,
             "artifact_sha256": "a" * 64,
         },
     )

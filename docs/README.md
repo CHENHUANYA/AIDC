@@ -62,3 +62,5 @@
 - POSTGRESQL_PHASE6_BASELINE_2026-07-02.md：Phase 6 readiness gate 的首輪 NOT READY 基準。
 - POSTGRESQL_PITR_RUNBOOK.md：WAL archiving、physical base backup 與隔離 PITR 還原操作手冊。
 - POSTGRESQL_PITR_LOCAL_EXECUTION_REPORT_2026-07-03.md：named restore point 本機實演結果與正式環境邊界。
+- POSTGRESQL_ENCRYPTED_BACKUP_RUNBOOK.md：AES-256-GCM 備份封裝、驗證與安全還原流程。
+- POSTGRESQL_ENCRYPTED_BACKUP_LOCAL_REPORT_2026-07-03.md：本機加密、竄改防護與 scratch restore 實演結果。
