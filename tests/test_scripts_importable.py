@@ -16,6 +16,7 @@ SCRIPT_MODULES = [
     "scripts.postgresql_phase4_cutover",
     "scripts.postgresql_phase4_runtime_acceptance",
     "scripts.postgresql_phase5_soak",
+    "scripts.postgresql_pitr",
     "scripts.production_boundary_check",
     "scripts.regression_checks",
     "scripts.replay_demo_alarms",

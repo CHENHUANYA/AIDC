@@ -44,6 +44,7 @@ Phase 5 soak 現在會額外寫入 started_at、completed_at 與由 monotonic cl
 ~~~powershell
 python -m scripts.postgresql_phase5_soak `
   --base-url https://<pilot-host> `
+  --environment pilot `
   --source alarm_db `
   --duration-seconds 14400 `
   --interval-seconds 1 `
@@ -60,6 +61,7 @@ exports/postgresql_offsite_backup.json：
 ~~~json
 {
   "status": "ok",
+  "environment": "pilot",
   "completed_at": "2026-07-02T12:00:00+08:00",
   "encrypted": true,
   "remote": true,
@@ -78,6 +80,7 @@ exports/postgresql_pitr_drill.json：
 ~~~json
 {
   "status": "ok",
+  "environment": "pilot",
   "completed_at": "2026-07-02T12:00:00+08:00",
   "recovery_target_time": "2026-07-02T11:42:00+08:00",
   "data_checks_passed": true,
@@ -95,6 +98,7 @@ exports/postgresql_ha_drill.json：
 ~~~json
 {
   "status": "ok",
+  "environment": "pilot",
   "completed_at": "2026-07-02T12:00:00+08:00",
   "failover_performed": true,
   "writes_verified_after_failover": true,
@@ -105,6 +109,8 @@ exports/postgresql_ha_drill.json：
 ~~~
 
 預設 HA RTO 上限 300 秒。拓撲、quorum、fencing 與流量切換方式屬部署決策，未選定前不得用單機 container restart 冒充 HA failover。
+
+四類外部 evidence 都必須明確標示 environment=pilot 或 production。environment=local 的短測或 Docker 演練即使其他欄位全數通過，正式閘門仍會拒絕。
 
 ## 7. Secret rotation 邊界
 

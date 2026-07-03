@@ -60,3 +60,5 @@
 
 - POSTGRESQL_PHASE6_RUNBOOK.md：Pilot 上線閘門、四小時 soak 與異地備份／PITR／HA 證據契約。
 - POSTGRESQL_PHASE6_BASELINE_2026-07-02.md：Phase 6 readiness gate 的首輪 NOT READY 基準。
+- POSTGRESQL_PITR_RUNBOOK.md：WAL archiving、physical base backup 與隔離 PITR 還原操作手冊。
+- POSTGRESQL_PITR_LOCAL_EXECUTION_REPORT_2026-07-03.md：named restore point 本機實演結果與正式環境邊界。

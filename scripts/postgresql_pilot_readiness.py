@@ -22,6 +22,7 @@ SECRET_RULES = {
     "N8N_ENCRYPTION_KEY": 32,
     "POSTGRES_PASSWORD": 20,
 }
+FORMAL_ENVIRONMENTS = {"pilot", "production"}
 
 
 @dataclass(frozen=True)
@@ -176,6 +177,17 @@ def evidence_age_check(category: str, payload: dict[str, Any], max_age_days: flo
     return Check(category, "evidence-age", "PASS" if ok else "FAIL", detail)
 
 
+def formal_environment_check(category: str, payload: dict[str, Any]) -> Check:
+    environment = payload.get("environment")
+    ok = environment in FORMAL_ENVIRONMENTS
+    return Check(
+        category,
+        "formal-environment",
+        "PASS" if ok else "FAIL",
+        f"environment={environment!r}, required=pilot|production",
+    )
+
+
 def soak_checks(path: Path, min_hours: float, max_age_days: float) -> list[Check]:
     payload, error = load_json_report(path)
     if payload is None:
@@ -187,6 +199,7 @@ def soak_checks(path: Path, min_hours: float, max_age_days: float) -> list[Check
     failures = payload.get("failures")
     return [
         Check("soak", "status", "PASS" if payload.get("status") == "ok" else "FAIL", f"status={payload.get('status')!r}"),
+        formal_environment_check("soak", payload),
         Check("soak", "actual-duration", "PASS" if elapsed_ok else "FAIL", f"elapsed_seconds={elapsed!r}, required>={min_hours * 3600:g}"),
         Check("soak", "runtime-checks", "PASS" if checks_ok else "FAIL", "all passed" if checks_ok else "missing or failed checks"),
         Check("soak", "zero-failures", "PASS" if failures == [] else "FAIL", f"failure_count={len(failures) if isinstance(failures, list) else 'invalid'}"),
@@ -202,6 +215,7 @@ def offsite_checks(path: Path, max_age_days: float) -> list[Check]:
     valid_checksum = isinstance(checksum, str) and bool(SHA256.fullmatch(checksum))
     return [
         Check("offsite-backup", "status", "PASS" if payload.get("status") == "ok" else "FAIL", f"status={payload.get('status')!r}"),
+        formal_environment_check("offsite-backup", payload),
         boolean_check("offsite-backup", "encrypted", payload, "encrypted"),
         boolean_check("offsite-backup", "remote", payload, "remote"),
         boolean_check("offsite-backup", "immutable", payload, "immutable"),
@@ -223,6 +237,7 @@ def pitr_checks(path: Path, max_rpo_seconds: float, max_rto_seconds: float, max_
     valid_target = parse_time(payload.get("recovery_target_time")) is not None
     return [
         Check("pitr", "status", "PASS" if payload.get("status") == "ok" else "FAIL", f"status={payload.get('status')!r}"),
+        formal_environment_check("pitr", payload),
         Check("pitr", "recovery-target", "PASS" if valid_target else "FAIL", "valid" if valid_target else "missing or invalid"),
         boolean_check("pitr", "data-checks", payload, "data_checks_passed"),
         metric_check("pitr", "rpo", payload.get("rpo_seconds"), max_rpo_seconds),
@@ -237,6 +252,7 @@ def ha_checks(path: Path, max_rto_seconds: float, max_age_days: float) -> list[C
         return [Check("ha", "report", "FAIL", error)]
     return [
         Check("ha", "status", "PASS" if payload.get("status") == "ok" else "FAIL", f"status={payload.get('status')!r}"),
+        formal_environment_check("ha", payload),
         boolean_check("ha", "failover-performed", payload, "failover_performed"),
         boolean_check("ha", "post-failover-writes", payload, "writes_verified_after_failover"),
         boolean_check("ha", "data-consistency", payload, "data_consistency_passed"),

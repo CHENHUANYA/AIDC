@@ -1,0 +1,33 @@
+services:
+  postgres_wal_archive_init:
+    image: postgres:17.10
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["mkdir -p /archive && chown 999:999 /archive && chmod 700 /archive"]
+    volumes:
+      - alarm_rag_postgres_wal_archive:/archive
+    restart: "no"
+
+  postgres:
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=test ! -f /archive/%f && cp %p /archive/%f
+      - -c
+      - archive_timeout=60s
+    volumes:
+      - alarm_rag_postgres_wal_archive:/archive
+    depends_on:
+      postgres_wal_archive_init:
+        condition: service_completed_successfully
+
+volumes:
+  alarm_rag_postgres_wal_archive:

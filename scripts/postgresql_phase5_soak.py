@@ -22,7 +22,14 @@ def percentile(values: list[int], fraction: float) -> int:
     return ordered[index]
 
 
-def run_soak(base_url: str, source: Path, duration_seconds: int, interval_seconds: float, max_failures: int) -> dict:
+def run_soak(
+    base_url: str,
+    source: Path,
+    duration_seconds: int,
+    interval_seconds: float,
+    max_failures: int,
+    environment: str = "local",
+) -> dict:
     started_at = datetime.now(timezone.utc)
     soak_started = time.monotonic()
     before_counts = database_counts()
@@ -64,6 +71,7 @@ def run_soak(base_url: str, source: Path, duration_seconds: int, interval_second
     }
     return {
         "status": "ok" if all(checks.values()) else "fail",
+        "environment": environment,
         "started_at": started_at.isoformat(),
         "completed_at": completed_at.isoformat(),
         "elapsed_seconds": round(elapsed_seconds, 3),
@@ -91,6 +99,7 @@ def main() -> int:
     parser.add_argument("--duration-seconds", type=int, default=60)
     parser.add_argument("--interval-seconds", type=float, default=1)
     parser.add_argument("--max-failures", type=int, default=0)
+    parser.add_argument("--environment", choices=("local", "pilot", "production"), default="local")
     parser.add_argument("--report", default="")
     args = parser.parse_args()
     report = run_soak(
@@ -99,6 +108,7 @@ def main() -> int:
         args.duration_seconds,
         args.interval_seconds,
         args.max_failures,
+        args.environment,
     )
     if args.report:
         output = Path(args.report)

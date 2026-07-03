@@ -64,6 +64,7 @@ def test_soak_gate_requires_actual_elapsed_time_not_requested_duration(tmp_path)
         tmp_path / "soak.json",
         {
             "status": "ok",
+            "environment": "pilot",
             "completed_at": NOW,
             "duration_seconds": 14400,
             "elapsed_seconds": 30,
@@ -82,6 +83,7 @@ def test_external_evidence_contracts_accept_complete_reports(tmp_path):
         tmp_path / "offsite.json",
         {
             "status": "ok",
+            "environment": "pilot",
             "completed_at": NOW,
             "encrypted": True,
             "remote": True,
@@ -94,6 +96,7 @@ def test_external_evidence_contracts_accept_complete_reports(tmp_path):
         tmp_path / "pitr.json",
         {
             "status": "ok",
+            "environment": "pilot",
             "completed_at": NOW,
             "recovery_target_time": NOW,
             "data_checks_passed": True,
@@ -105,6 +108,7 @@ def test_external_evidence_contracts_accept_complete_reports(tmp_path):
         tmp_path / "ha.json",
         {
             "status": "ok",
+            "environment": "pilot",
             "completed_at": NOW,
             "failover_performed": True,
             "writes_verified_after_failover": True,
@@ -141,6 +145,7 @@ def test_future_dated_evidence_is_rejected(tmp_path):
         tmp_path / "soak.json",
         {
             "status": "ok",
+            "environment": "pilot",
             "completed_at": future,
             "elapsed_seconds": 14400,
             "failures": [],
@@ -151,3 +156,22 @@ def test_future_dated_evidence_is_rejected(tmp_path):
     checks = readiness.soak_checks(report, min_hours=4, max_age_days=30)
 
     assert next(check for check in checks if check.name == "evidence-age").status == "FAIL"
+
+
+def test_local_pitr_report_cannot_clear_formal_readiness(tmp_path):
+    report = write_json(
+        tmp_path / "pitr.json",
+        {
+            "status": "ok",
+            "environment": "local",
+            "completed_at": NOW,
+            "recovery_target_time": NOW,
+            "data_checks_passed": True,
+            "rpo_seconds": 0,
+            "rto_seconds": 60,
+        },
+    )
+
+    checks = readiness.pitr_checks(report, 300, 3600, 30)
+
+    assert next(check for check in checks if check.name == "formal-environment").status == "FAIL"

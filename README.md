@@ -82,3 +82,4 @@ python scripts/data_maintenance.py restore-runtime --backup backups/YYYY-MM-DD_H
 
 More deployment notes live in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 Delivery closeout status lives in [docs/DELIVERY_RISK_STATUS.md](docs/DELIVERY_RISK_STATUS.md).
+PostgreSQL PITR rehearsal instructions live in [docs/POSTGRESQL_PITR_RUNBOOK.md](docs/POSTGRESQL_PITR_RUNBOOK.md).
