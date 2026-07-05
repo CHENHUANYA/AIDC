@@ -197,10 +197,41 @@ def soak_checks(path: Path, min_hours: float, max_age_days: float) -> list[Check
     checks_payload = payload.get("checks")
     checks_ok = isinstance(checks_payload, dict) and bool(checks_payload) and all(value is True for value in checks_payload.values())
     failures = payload.get("failures")
+    expected_peak = payload.get("expected_peak_rps")
+    multiplier = payload.get("load_multiplier")
+    target_rps = payload.get("target_rps")
+    achieved_rps = payload.get("achieved_rps")
+    workers = payload.get("workers")
+    double_peak = (
+        isinstance(expected_peak, (int, float))
+        and not isinstance(expected_peak, bool)
+        and expected_peak > 0
+        and isinstance(multiplier, (int, float))
+        and not isinstance(multiplier, bool)
+        and multiplier >= 2
+        and isinstance(target_rps, (int, float))
+        and not isinstance(target_rps, bool)
+        and target_rps >= expected_peak * 2
+        and isinstance(achieved_rps, (int, float))
+        and not isinstance(achieved_rps, bool)
+        and achieved_rps >= target_rps * 0.90
+        and isinstance(workers, int)
+        and not isinstance(workers, bool)
+        and workers >= 2
+    )
     return [
         Check("soak", "status", "PASS" if payload.get("status") == "ok" else "FAIL", f"status={payload.get('status')!r}"),
         formal_environment_check("soak", payload),
         Check("soak", "actual-duration", "PASS" if elapsed_ok else "FAIL", f"elapsed_seconds={elapsed!r}, required>={min_hours * 3600:g}"),
+        Check(
+            "soak",
+            "double-peak-load",
+            "PASS" if double_peak else "FAIL",
+            (
+                f"expected_peak_rps={expected_peak!r}, multiplier={multiplier!r}, "
+                f"target_rps={target_rps!r}, achieved_rps={achieved_rps!r}, workers={workers!r}"
+            ),
+        ),
         Check("soak", "runtime-checks", "PASS" if checks_ok else "FAIL", "all passed" if checks_ok else "missing or failed checks"),
         Check("soak", "zero-failures", "PASS" if failures == [] else "FAIL", f"failure_count={len(failures) if isinstance(failures, list) else 'invalid'}"),
         evidence_age_check("soak", payload, max_age_days),

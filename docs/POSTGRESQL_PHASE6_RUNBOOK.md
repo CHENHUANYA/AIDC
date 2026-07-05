@@ -39,20 +39,22 @@ python -m scripts.postgresql_pilot_readiness `
 
 ## 3. 四小時 Pilot soak
 
-Phase 5 soak 現在會額外寫入 started_at、completed_at 與由 monotonic clock 量得的 elapsed_seconds。閘門採用 elapsed_seconds，不採信單純填入的要求時長。
+Pilot load harness 會寫入 started_at、completed_at 與由 monotonic clock 量得的 elapsed_seconds。閘門採用 elapsed_seconds，不採信單純填入的要求時長；同時要求達成兩倍宣告尖峰。
 
 ~~~powershell
-python -m scripts.postgresql_phase5_soak `
+python -m scripts.postgresql_pilot_load `
   --base-url https://<pilot-host> `
   --environment pilot `
   --source alarm_db `
   --duration-seconds 14400 `
-  --interval-seconds 1 `
+  --workers <pilot-workers> `
+  --expected-peak-rps <signed-peak-rps> `
+  --load-multiplier 2 `
   --max-failures 0 `
   --report exports\postgresql_pilot_soak.json
 ~~~
 
-此命令必須在核准的 Pilot server、以至少兩倍預期尖峰負載執行。本機空載跑滿四小時不等同 Pilot 驗收。
+此命令必須在核准的 Pilot server、以至少兩倍經簽核的預期尖峰負載執行。本機空載跑滿四小時或任意調低 expected peak 都不等同 Pilot 驗收。
 
 ## 4. 異地備份證據契約
 

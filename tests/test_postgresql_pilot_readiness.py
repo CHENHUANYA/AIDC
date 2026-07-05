@@ -68,6 +68,11 @@ def test_soak_gate_requires_actual_elapsed_time_not_requested_duration(tmp_path)
             "completed_at": NOW,
             "duration_seconds": 14400,
             "elapsed_seconds": 30,
+            "workers": 4,
+            "expected_peak_rps": 5,
+            "load_multiplier": 2,
+            "target_rps": 10,
+            "achieved_rps": 10,
             "failures": [],
             "checks": {"database_counts_restored": True},
         },
@@ -155,6 +160,11 @@ def test_future_dated_evidence_is_rejected(tmp_path):
             "environment": "pilot",
             "completed_at": future,
             "elapsed_seconds": 14400,
+            "workers": 4,
+            "expected_peak_rps": 5,
+            "load_multiplier": 2,
+            "target_rps": 10,
+            "achieved_rps": 10,
             "failures": [],
             "checks": {"database_counts_restored": True},
         },
@@ -182,3 +192,26 @@ def test_local_pitr_report_cannot_clear_formal_readiness(tmp_path):
     checks = readiness.pitr_checks(report, 300, 3600, 30)
 
     assert next(check for check in checks if check.name == "formal-environment").status == "FAIL"
+
+
+def test_soak_gate_rejects_less_than_double_peak_load(tmp_path):
+    report = write_json(
+        tmp_path / "soak.json",
+        {
+            "status": "ok",
+            "environment": "pilot",
+            "completed_at": NOW,
+            "elapsed_seconds": 14400,
+            "workers": 4,
+            "expected_peak_rps": 5,
+            "load_multiplier": 1.5,
+            "target_rps": 7.5,
+            "achieved_rps": 7.5,
+            "failures": [],
+            "checks": {"database_counts_restored": True},
+        },
+    )
+
+    checks = readiness.soak_checks(report, min_hours=4, max_age_days=30)
+
+    assert next(check for check in checks if check.name == "double-peak-load").status == "FAIL"

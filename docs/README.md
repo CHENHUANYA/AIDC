@@ -66,3 +66,5 @@
 - POSTGRESQL_ENCRYPTED_BACKUP_LOCAL_REPORT_2026-07-03.md：本機加密、竄改防護與 scratch restore 實演結果。
 - POSTGRESQL_HA_RUNBOOK.md：Physical streaming replica、受控 promotion 與 cleanup 操作手冊。
 - POSTGRESQL_HA_LOCAL_EXECUTION_REPORT_2026-07-03.md：本機 failover、RPO／RTO 與正式 HA 邊界。
+- POSTGRESQL_PILOT_LOAD_RUNBOOK.md：多 worker、兩倍尖峰、四小時 Pilot load／soak 操作手冊。
+- POSTGRESQL_PILOT_LOAD_LOCAL_REPORT_2026-07-05.md：30 秒本機負載、延遲與資料回復實演結果。
