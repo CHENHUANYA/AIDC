@@ -238,6 +238,29 @@ def soak_checks(path: Path, min_hours: float, max_age_days: float) -> list[Check
     ]
 
 
+def secret_rotation_checks(path: Path, max_age_days: float) -> list[Check]:
+    payload, error = load_json_report(path)
+    if payload is None:
+        return [Check("secret-rotation", "report", "FAIL", error)]
+    return [
+        Check(
+            "secret-rotation",
+            "status",
+            "PASS" if payload.get("status") == "ok" else "FAIL",
+            f"status={payload.get('status')!r}",
+        ),
+        formal_environment_check("secret-rotation", payload),
+        boolean_check("secret-rotation", "secret-manager", payload, "secret_manager_managed"),
+        boolean_check("secret-rotation", "database-password", payload, "database_password_rotated"),
+        boolean_check("secret-rotation", "old-credentials", payload, "old_credentials_revoked"),
+        boolean_check("secret-rotation", "sessions", payload, "sessions_revoked"),
+        boolean_check("secret-rotation", "services", payload, "services_recreated"),
+        boolean_check("secret-rotation", "connectivity", payload, "connectivity_verified"),
+        boolean_check("secret-rotation", "change-record", payload, "change_recorded"),
+        evidence_age_check("secret-rotation", payload, max_age_days),
+    ]
+
+
 def offsite_checks(path: Path, max_age_days: float) -> list[Check]:
     payload, error = load_json_report(path)
     if payload is None:
@@ -320,6 +343,10 @@ def main() -> int:
     parser.add_argument("--postgres-env-file", default=str(ROOT / ".env.postgresql"))
     parser.add_argument("--backup", default="")
     parser.add_argument("--backup-max-age-hours", type=float, default=24)
+    parser.add_argument(
+        "--secret-rotation-report",
+        default=str(ROOT / "exports" / "postgresql_secret_rotation.json"),
+    )
     parser.add_argument("--soak-report", default=str(ROOT / "exports" / "postgresql_pilot_soak.json"))
     parser.add_argument("--min-soak-hours", type=float, default=4)
     parser.add_argument("--offsite-report", default=str(ROOT / "exports" / "postgresql_offsite_backup.json"))
@@ -334,6 +361,7 @@ def main() -> int:
 
     checks: list[Check] = []
     checks.extend(secret_checks(Path(args.env_file), Path(args.postgres_env_file)))
+    checks.extend(secret_rotation_checks(Path(args.secret_rotation_report), args.max_evidence_age_days))
     checks.extend(backup_checks(args.backup, args.backup_max_age_hours))
     checks.extend(soak_checks(Path(args.soak_report), args.min_soak_hours, args.max_evidence_age_days))
     checks.extend(offsite_checks(Path(args.offsite_report), args.max_evidence_age_days))

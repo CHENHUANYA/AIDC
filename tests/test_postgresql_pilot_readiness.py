@@ -84,6 +84,21 @@ def test_soak_gate_requires_actual_elapsed_time_not_requested_duration(tmp_path)
 
 
 def test_external_evidence_contracts_accept_complete_reports(tmp_path):
+    rotation = write_json(
+        tmp_path / "rotation.json",
+        {
+            "status": "ok",
+            "environment": "pilot",
+            "completed_at": NOW,
+            "secret_manager_managed": True,
+            "database_password_rotated": True,
+            "old_credentials_revoked": True,
+            "sessions_revoked": True,
+            "services_recreated": True,
+            "connectivity_verified": True,
+            "change_recorded": True,
+        },
+    )
     offsite = write_json(
         tmp_path / "offsite.json",
         {
@@ -131,6 +146,7 @@ def test_external_evidence_contracts_accept_complete_reports(tmp_path):
     )
 
     checks = [
+        *readiness.secret_rotation_checks(rotation, 30),
         *readiness.offsite_checks(offsite, 30),
         *readiness.pitr_checks(pitr, 300, 3600, 30),
         *readiness.ha_checks(ha, 300, 30),

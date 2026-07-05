@@ -37,6 +37,25 @@ python -m scripts.postgresql_pilot_readiness `
 - HA 必須有實際 failover、切換後寫入、資料一致性、防 split-brain 與 RTO 證據。
 - 外部證據預設不得超過 30 天。
 
+Secret rotation 除 env 語法外，還必須提供 exports/postgresql_secret_rotation.json：
+
+~~~json
+{
+  "status": "ok",
+  "environment": "pilot",
+  "completed_at": "2026-07-05T12:00:00+08:00",
+  "secret_manager_managed": true,
+  "database_password_rotated": true,
+  "old_credentials_revoked": true,
+  "sessions_revoked": true,
+  "services_recreated": true,
+  "connectivity_verified": true,
+  "change_recorded": true
+}
+~~~
+
+只有本機 .env.postgresql 與隨機密碼仍不足以通過正式 rotation gate。
+
 ## 3. 四小時 Pilot soak
 
 Pilot load harness 會寫入 started_at、completed_at 與由 monotonic clock 量得的 elapsed_seconds。閘門採用 elapsed_seconds，不採信單純填入的要求時長；同時要求達成兩倍宣告尖峰。

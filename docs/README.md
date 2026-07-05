@@ -68,3 +68,5 @@
 - POSTGRESQL_HA_LOCAL_EXECUTION_REPORT_2026-07-03.md：本機 failover、RPO／RTO 與正式 HA 邊界。
 - POSTGRESQL_PILOT_LOAD_RUNBOOK.md：多 worker、兩倍尖峰、四小時 Pilot load／soak 操作手冊。
 - POSTGRESQL_PILOT_LOAD_LOCAL_REPORT_2026-07-05.md：30 秒本機負載、延遲與資料回復實演結果。
+- POSTGRESQL_SECRET_ROTATION_RUNBOOK.md：PostgreSQL password rotation、回滾與正式 evidence 操作手冊。
+- POSTGRESQL_SECRET_ROTATION_LOCAL_REPORT_2026-07-05.md：舊密碼拒絕、Session 撤銷與服務重建實演結果。
