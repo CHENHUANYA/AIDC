@@ -25,6 +25,7 @@ load_local_env()
 from pydantic import BaseModel
 
 from rag_engine import AlarmRAGEngine
+from secret_values import secret_value
 from storage import (
     ALARM_LOG_PATH,
     DB_PATH,
@@ -53,7 +54,7 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral-nemo:latest")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
 SCHOOL_API_BASE_URL = os.getenv("SCHOOL_API_BASE_URL", "").rstrip("/")
-SCHOOL_API_KEY = os.getenv("SCHOOL_API_KEY", "")
+SCHOOL_API_KEY = secret_value("SCHOOL_API_KEY")
 SCHOOL_API_MODEL = os.getenv("SCHOOL_API_MODEL", "gpt-oss-120b")
 SCHOOL_API_FALLBACK_TO_OLLAMA = os.getenv("SCHOOL_API_FALLBACK_TO_OLLAMA", "true").strip().lower() == "true"
 LLM_TIMEOUT_SECONDS = env_float("RAG_LLM_TIMEOUT_SECONDS", 20)

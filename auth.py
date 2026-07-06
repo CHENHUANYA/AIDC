@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from repositories.postgres_auth import PostgresSessionRepository, PostgresUserRepository
 from repositories.runtime import postgres_store_enabled
+from secret_values import secret_value
 
 
 BOOTSTRAP_USERS: Dict[str, dict] = {
@@ -123,7 +124,7 @@ def resolve_user(user_id: Optional[str]) -> dict:
 
 
 def configured_initial_password() -> str:
-    password = os.getenv("ADMIN_INITIAL_PASSWORD", "").strip()
+    password = secret_value("ADMIN_INITIAL_PASSWORD").strip()
     if password:
         return password
     return DEFAULT_ADMIN_INITIAL_PASSWORD

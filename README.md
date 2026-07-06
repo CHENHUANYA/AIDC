@@ -87,3 +87,4 @@ Encrypted PostgreSQL backup instructions live in [docs/POSTGRESQL_ENCRYPTED_BACK
 PostgreSQL HA rehearsal instructions live in [docs/POSTGRESQL_HA_RUNBOOK.md](docs/POSTGRESQL_HA_RUNBOOK.md).
 PostgreSQL Pilot load instructions live in [docs/POSTGRESQL_PILOT_LOAD_RUNBOOK.md](docs/POSTGRESQL_PILOT_LOAD_RUNBOOK.md).
 PostgreSQL secret rotation instructions live in [docs/POSTGRESQL_SECRET_ROTATION_RUNBOOK.md](docs/POSTGRESQL_SECRET_ROTATION_RUNBOOK.md).
+PostgreSQL file-secret injection instructions live in [docs/POSTGRESQL_FILE_SECRET_RUNBOOK.md](docs/POSTGRESQL_FILE_SECRET_RUNBOOK.md).

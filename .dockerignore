@@ -9,6 +9,7 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.postgresql
 .pytest_cache/
 pytest-cache-files-*/
 tests_tmp/

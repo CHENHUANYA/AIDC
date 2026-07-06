@@ -44,6 +44,8 @@ class RepositoryHygieneTests(unittest.TestCase):
 
         self.assertIn(".env", gitignore)
         self.assertIn(".env", dockerignore)
+        self.assertIn(".env.postgresql", gitignore)
+        self.assertIn(".env.postgresql", dockerignore)
 
     def test_env_example_uses_placeholders_for_generated_secrets(self):
         values = {}

@@ -6,9 +6,6 @@ services:
         RAG_PRELOAD_MODELS: ${RAG_PRELOAD_MODELS:-0}
     container_name: alarm_rag
     restart: unless-stopped
-    env_file:
-      - path: .env
-        required: false
     environment:
       ALARM_RAG_ENV: ${ALARM_RAG_ENV:-production}
       ALARM_RAG_CORS_ORIGINS: ${ALARM_RAG_CORS_ORIGINS:-http://localhost:8100,http://127.0.0.1:8100}
@@ -23,6 +20,12 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-mistral-nemo:latest}
       RAG_LLM_TIMEOUT_SECONDS: ${RAG_LLM_TIMEOUT_SECONDS:-90}
+      SCHOOL_API_BASE_URL: ${SCHOOL_API_BASE_URL:-}
+      SCHOOL_API_KEY: ${SCHOOL_API_KEY:-}
+      SCHOOL_API_MODEL: ${SCHOOL_API_MODEL:-gpt-oss-120b}
+      SCHOOL_API_FALLBACK_TO_OLLAMA: ${SCHOOL_API_FALLBACK_TO_OLLAMA:-true}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      RAG_RERANKER_MODEL: ${RAG_RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
       VECTOR_STORE: ${VECTOR_STORE:-qdrant}
       QDRANT_HOST: qdrant
       QDRANT_PORT: ${QDRANT_PORT:-6333}

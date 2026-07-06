@@ -11,6 +11,8 @@ from sqlalchemy import URL, create_engine, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
+from secret_values import secret_value
+
 
 class DatabaseNotConfigured(RuntimeError):
     pass
@@ -62,7 +64,7 @@ class DatabaseSettings:
             url = URL.create(
                 drivername="postgresql+psycopg",
                 username=os.getenv("POSTGRES_USER", "alarm_rag"),
-                password=os.getenv("POSTGRES_PASSWORD", ""),
+                password=secret_value("POSTGRES_PASSWORD"),
                 host=os.getenv("POSTGRES_HOST", "localhost"),
                 port=env_int("POSTGRES_PORT", 5432),
                 database=os.getenv("POSTGRES_DB", "alarm_rag"),

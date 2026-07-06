@@ -19,6 +19,7 @@ from app_context import (
 from auth import actor_id, get_actor
 from repositories.postgres_content import PostgresAlarmRepository
 from repositories.runtime import postgres_store_enabled
+from secret_values import secret_value
 from services.postgres_workflow import create_issue as postgres_create_issue
 from services.transactions import postgres_transactional
 from storage import ALARM_LOG_PATH, append_jsonl
@@ -48,7 +49,7 @@ def _priority_from_severity(severity: str, source: Optional[str]) -> str:
 
 
 def valid_trigger_token(token: str | None) -> bool:
-    expected = os.getenv("ALARM_RAG_TRIGGER_TOKEN", "").strip()
+    expected = secret_value("ALARM_RAG_TRIGGER_TOKEN").strip()
     provided = (token or "").strip()
     return bool(expected and provided and secrets.compare_digest(provided, expected))
 

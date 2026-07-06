@@ -1,7 +1,12 @@
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from secret_values import secret_value
 PLACEHOLDER_ADMIN_PASSWORDS = {"", "change-me-now"}
 
 
@@ -39,9 +44,7 @@ def normalize_local_container_paths() -> None:
 
 
 def env_value(name: str) -> str:
-    import os
-
-    return os.getenv(name, "").strip()
+    return secret_value(name).strip()
 
 
 def admin_initial_password(required: bool = True) -> str:

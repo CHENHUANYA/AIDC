@@ -74,6 +74,25 @@ locally. Replace them with a newly issued provider key, then run:
 python scripts/rag_runtime_check.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --require-vector-coverage --check-school-api
 ```
 
+### PostgreSQL file-secret injection
+
+For the PostgreSQL runtime, stage the rotated password into the ignored local
+secret directory and add the secrets overlay last:
+
+```bash
+python scripts/stage_postgresql_secret.py
+docker compose --env-file .env --env-file .env.postgresql \
+  -f docker-compose.yml \
+  -f docker-compose.postgresql.yml \
+  -f docker-compose.postgresql-secrets.yml up -d
+```
+
+The final overlay uses an explicit application environment allowlist. Both the
+application and PostgreSQL containers receive `POSTGRES_PASSWORD_FILE`, not
+`POSTGRES_PASSWORD`. Re-run the staging command after every database password
+rotation, then force-recreate both services. See
+`docs/POSTGRESQL_FILE_SECRET_RUNBOOK.md` for verification and rollback details.
+
 ## Updates
 
 ```bash
