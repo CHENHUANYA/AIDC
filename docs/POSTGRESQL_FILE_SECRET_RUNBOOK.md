@@ -8,7 +8,7 @@ managed Vault/KMS/secret-manager deployment.
 
 - `.env` contains the App runtime configuration.
 - `.env.postgresql` contains the current rotated PostgreSQL credential.
-- Docker Compose supports `!reset` and `!override` (2.24.4 or newer).
+- Docker Compose supports `!reset` (2.24.4 or newer).
 - Use the same Compose project name that owns the retained PostgreSQL volume.
 
 ## Stage the local secret
@@ -50,8 +50,9 @@ docker compose -p aidc_phase1 --env-file .env --env-file .env.postgresql `
 ```
 
 Change `aidc_phase1` only when intentionally selecting a different named
-volume. After a password rotation, stage the new secret and force-recreate the
-App and PostgreSQL containers; `restart` alone does not apply Compose changes.
+volume. The rotation script detects `POSTGRES_PASSWORD_FILE`, updates the
+staged file atomically, and force-recreates the App and PostgreSQL containers
+with the secrets overlay. A plain `restart` does not apply Compose changes.
 
 ## Verification
 
@@ -59,7 +60,7 @@ App and PostgreSQL containers; `restart` alone does not apply Compose changes.
 2. Inspect container environment key names and verify raw
    `POSTGRES_PASSWORD` is absent.
 3. Verify `/run/secrets/postgres_password` is mounted in both containers.
-4. Call `http://127.0.0.1:8100/health`.
+4. Call `http://127.0.0.1:8100/ready` and require HTTP 200.
 5. Compare critical PostgreSQL row counts with the pre-change baseline.
 
 Never print the secret file or include its value in a report.

@@ -4,6 +4,8 @@ vector_store.py - abstraction layer for interchangeable vector backends (Chroma 
 import os
 from typing import List, Optional
 
+from secret_values import secret_value
+
 
 def _warn(message: str):
     print(f"[WARN][vector_store] {message}")
@@ -90,7 +92,10 @@ class QdrantStore(BaseVectorStore):
         from qdrant_client.http import models as qm
         host = os.getenv("QDRANT_HOST", "localhost")
         port = int(os.getenv("QDRANT_PORT", "6333"))
-        self.client = QdrantClient(host=host, port=port)
+        api_key = secret_value("QDRANT_API_KEY")
+        if not api_key:
+            raise RuntimeError("QDRANT_API_KEY or QDRANT_API_KEY_FILE must be configured")
+        self.client = QdrantClient(host=host, port=port, api_key=api_key)
         self.qm = qm
 
     def ensure_collection(self, collection: str):

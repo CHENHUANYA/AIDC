@@ -6,6 +6,8 @@ from typing import Dict
 
 import numpy as np
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from app_context import (
     FEEDBACK_LOG,
@@ -22,6 +24,7 @@ from app_context import (
     query_log,
 )
 from auth import actor_id, actor_role, get_actor
+from db.session import get_engine
 from rag_engine import model_cache_status
 from repositories.postgres_content import PostgresAlarmRepository, PostgresFeedbackRepository
 from repositories.runtime import postgres_store_enabled
@@ -226,6 +229,22 @@ async def health():
         "model_cache": model_cache_status(),
         "collections": collections,
     }
+
+
+@router.get("/ready")
+async def ready():
+    if postgres_store_enabled():
+        try:
+            with get_engine().connect() as connection:
+                database_ready = connection.scalar(text("SELECT 1")) == 1
+        except Exception:
+            database_ready = False
+        if not database_ready:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "unavailable", "checks": {"database": "unavailable"}},
+            )
+    return {"status": "ok", "checks": {"database": "ok" if postgres_store_enabled() else "not-required"}}
 
 
 def _last_llm_source() -> str:

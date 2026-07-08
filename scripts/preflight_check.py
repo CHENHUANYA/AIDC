@@ -20,6 +20,7 @@ PLACEHOLDER_VALUES = {
     "change-me-now",
     "replace-with-a-random-trigger-token",
     "replace-with-a-long-random-string",
+    "replace-with-a-long-random-qdrant-api-key",
 }
 
 
@@ -42,7 +43,7 @@ def env_value(name: str) -> str:
 def check_env(results: list[Check]) -> None:
     env_path = ROOT / ".env"
     record(results, "env:file", env_path.exists(), ".env exists" if env_path.exists() else ".env is missing")
-    required = ["ADMIN_INITIAL_PASSWORD", "ALARM_RAG_TRIGGER_TOKEN", "N8N_ENCRYPTION_KEY"]
+    required = ["ADMIN_INITIAL_PASSWORD", "ALARM_RAG_TRIGGER_TOKEN", "N8N_ENCRYPTION_KEY", "QDRANT_API_KEY"]
     for key in required:
         value = env_value(key)
         if not value:
@@ -67,6 +68,17 @@ def check_ports(results: list[Check]) -> None:
             record(results, f"port:{key}", False, f"invalid integer: {value}")
             continue
         record(results, f"port:{key}", 1 <= port <= 65535, str(port))
+
+
+def check_bind_addresses(results: list[Check]) -> None:
+    for key in ["ALARM_RAG_BIND_ADDRESS", "QDRANT_BIND_ADDRESS", "N8N_BIND_ADDRESS"]:
+        value = env_value(key) or "127.0.0.1"
+        if value in {"127.0.0.1", "localhost", "::1"}:
+            record(results, f"bind:{key}", True, value)
+        elif value in {"0.0.0.0", "::"}:
+            record(results, f"bind:{key}", False, f"{value} exposes the service beyond loopback", warn=True)
+        else:
+            record(results, f"bind:{key}", False, value, warn=True)
 
 
 def check_paths(results: list[Check]) -> None:
@@ -107,9 +119,20 @@ def check_compose(results: list[Check]) -> None:
     record(
         results,
         "compose:alarm-healthcheck",
-        "http://localhost:8000/health" in compose_text,
-        "configured" if "http://localhost:8000/health" in compose_text else "missing",
+        "http://localhost:8000/ready" in compose_text,
+        "configured" if "http://localhost:8000/ready" in compose_text else "missing",
     )
+    for service, expected in {
+        "alarm-port-bind": "${ALARM_RAG_BIND_ADDRESS:-127.0.0.1}:${ALARM_RAG_PORT:-8100}:8000",
+        "qdrant-port-bind": "${QDRANT_BIND_ADDRESS:-127.0.0.1}:${QDRANT_HTTP_PORT:-6333}:6333",
+        "n8n-port-bind": "${N8N_BIND_ADDRESS:-127.0.0.1}:${N8N_PORT:-5678}:5678",
+    }.items():
+        record(
+            results,
+            f"compose:{service}",
+            expected in compose_text,
+            "configured" if expected in compose_text else "missing",
+        )
     for key in ["N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", "N8N_RUNNERS_ENABLED"]:
         record(
             results,
@@ -178,6 +201,7 @@ def main() -> int:
     results: list[Check] = []
     check_env(results)
     check_ports(results)
+    check_bind_addresses(results)
     check_paths(results)
     check_compose(results)
     check_n8n_workflow(results)

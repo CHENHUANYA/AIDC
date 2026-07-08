@@ -1,0 +1,38 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+    "alarm_db",
+    "backups",
+    "data",
+    "exports",
+    "hf_cache",
+    "n8n_data",
+    "qdrant_data",
+    "tests_tmp",
+]
+
+[tool.ruff.lint]
+# Start with correctness rules across the existing codebase. Style/import
+# cleanup can be widened incrementally without making the initial gate noisy.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+ignore_missing_imports = true
+explicit_package_bases = true
+follow_imports = "skip"
+files = [
+    "auth.py",
+    "secret_values.py",
+    "repositories/contracts.py",
+    "repositories/postgres_auth.py",
+    "routes/stats_routes.py",
+    "scripts/preflight_check.py",
+    "scripts/stage_postgresql_secret.py",
+    "scripts/postgresql_pilot_load.py",
+    "scripts/postgresql_secret_rotation.py",
+    "vector_store.py",
+]
+exclude = "(alarm_db|backups|data|exports|hf_cache|n8n_data|qdrant_data|tests_tmp)/"

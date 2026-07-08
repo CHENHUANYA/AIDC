@@ -30,6 +30,25 @@ from scripts.postgresql_test_cleanup import cleanup_workflow_records, workflow_o
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def read_container_secret(container: str, path: str) -> str:
+    result = subprocess.run(
+        ["docker", "exec", container, "cat", "--", path],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+    )
+    value = result.stdout
+    if value.endswith("\r\n"):
+        value = value[:-2]
+    elif value.endswith("\n"):
+        value = value[:-1]
+    if not value or "\n" in value or "\r" in value or "\x00" in value:
+        raise RuntimeError("PostgreSQL container secret file is empty or malformed")
+    return value
+
+
 def load_postgres_environment_from_container(
     container: str,
     host: str = "127.0.0.1",
@@ -51,12 +70,25 @@ def load_postgres_environment_from_container(
             for entry in entries
             if isinstance(entry, str) and "=" in entry
         )
-        if key in {"POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"}
+        if key in {"POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_PASSWORD_FILE"}
     }
-    missing = {"POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"} - values.keys()
+    missing = {"POSTGRES_DB", "POSTGRES_USER"} - values.keys()
     if missing:
         raise RuntimeError(f"PostgreSQL container environment is missing: {', '.join(sorted(missing))}")
-    os.environ.update(values)
+    password = values.get("POSTGRES_PASSWORD", "")
+    password_file = values.get("POSTGRES_PASSWORD_FILE", "")
+    if bool(password) == bool(password_file):
+        raise RuntimeError(
+            "PostgreSQL container must configure exactly one of POSTGRES_PASSWORD or POSTGRES_PASSWORD_FILE"
+        )
+    if password_file:
+        password = read_container_secret(container, password_file)
+    os.environ.update({
+        "POSTGRES_DB": values["POSTGRES_DB"],
+        "POSTGRES_USER": values["POSTGRES_USER"],
+        "POSTGRES_PASSWORD": password,
+    })
+    os.environ.pop("POSTGRES_PASSWORD_FILE", None)
     os.environ["POSTGRES_HOST"] = host
     os.environ["POSTGRES_PORT"] = str(port)
     os.environ["POSTGRES_ENABLED"] = "true"

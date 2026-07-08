@@ -66,13 +66,30 @@ def test_stage_postgresql_secret_rejects_placeholder(tmp_path: Path):
         stage_secret(env_file, tmp_path / "secret")
 
 
-def test_postgresql_secret_overlay_uses_file_mount_and_environment_allowlist():
+@pytest.mark.parametrize(
+    "line",
+    [
+        "POSTGRES_PASSWORD=secret-value'\n",
+        'POSTGRES_PASSWORD="secret-value\n',
+        "POSTGRES_PASSWORD= secret-value\n",
+    ],
+)
+def test_stage_postgresql_secret_rejects_malformed_values(tmp_path: Path, line: str):
+    env_file = tmp_path / ".env.postgresql"
+    env_file.write_text(line, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="malformed quoting|surrounding whitespace"):
+        stage_secret(env_file, tmp_path / "secret")
+
+
+def test_postgresql_secret_overlay_only_changes_password_source():
     overlay = (ROOT / "docker-compose.postgresql-secrets.yml").read_text(encoding="utf-8")
 
-    assert "environment: !override" in overlay
-    assert "POSTGRES_PASSWORD: !reset null" in overlay
+    assert "environment: !override" not in overlay
+    assert 'POSTGRES_PASSWORD: ""' in overlay
+    assert overlay.count("POSTGRES_PASSWORD: !reset null") == 1
     assert overlay.count("POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password") == 2
     assert "file: ${POSTGRES_PASSWORD_SECRET_FILE" in overlay
+    assert "ALARM_RAG_ENV" not in overlay
 
 
 def test_runtime_secret_consumers_do_not_read_sensitive_values_directly():
@@ -81,6 +98,7 @@ def test_runtime_secret_consumers_do_not_read_sensitive_values_directly():
         "app_context.py": "SCHOOL_API_KEY",
         "routes/alarm_routes.py": "ALARM_RAG_TRIGGER_TOKEN",
         "db/session.py": "POSTGRES_PASSWORD",
+        "vector_store.py": "QDRANT_API_KEY",
     }
     for relative_path, name in consumers.items():
         text = (ROOT / relative_path).read_text(encoding="utf-8")

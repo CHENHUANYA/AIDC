@@ -87,6 +87,19 @@ class FrontendApiContractTests(unittest.TestCase):
 
         self.assertEqual([], unmatched)
 
+    def test_role_home_routes_keep_supervisor_workbench_distinct_from_dashboard(self):
+        source = (ROOT / "static" / "js" / "core" / "api.js").read_text(encoding="utf-8")
+
+        self.assertIn("supervisor: '/supervisor'", source)
+        self.assertNotIn("supervisor: '/dashboard'", source)
+
+    def test_admin_user_updates_send_optimistic_lock_version(self):
+        source = (ROOT / "static" / "js" / "pages" / "admin.js").read_text(encoding="utf-8")
+
+        self.assertIn("expected_updated_at", source)
+        self.assertIn("user.updated_at", source)
+        self.assertIn("JSON.stringify(body)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

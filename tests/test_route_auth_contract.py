@@ -15,6 +15,7 @@ PUBLIC_GET_EXCEPTIONS = {
     ("routes/chat_lookup_routes.py", "models_collection"),
     ("routes/chat_lookup_routes.py", "models_default"),
     ("routes/stats_routes.py", "health"),
+    ("routes/stats_routes.py", "ready"),
     ("routes/static_reference_routes.py", "serve_admin"),
     ("routes/static_reference_routes.py", "serve_app"),
     ("routes/static_reference_routes.py", "serve_assistant"),

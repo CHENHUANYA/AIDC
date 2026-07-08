@@ -66,3 +66,32 @@ def test_container_environment_loader_does_not_return_password():
         "user": "alarm_rag",
     }
     assert "secret-value" not in json.dumps(result)
+
+
+def test_container_environment_loader_supports_password_file():
+    inspect = type(
+        "Completed",
+        (),
+        {
+            "stdout": json.dumps(
+                [
+                    "POSTGRES_DB=alarm_rag",
+                    "POSTGRES_USER=alarm_rag",
+                    "POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password",
+                ]
+            )
+        },
+    )()
+    secret = type("Completed", (), {"stdout": "file-secret\n"})()
+    with patch.dict(os.environ, {}, clear=True):
+        with (
+            patch.object(load.subprocess, "run", side_effect=[inspect, secret]) as run,
+            patch.object(load, "reset_database_state_for_tests"),
+        ):
+            result = load.load_postgres_environment_from_container("postgres")
+
+        assert os.environ["POSTGRES_PASSWORD"] == "file-secret"
+        assert "POSTGRES_PASSWORD_FILE" not in os.environ
+
+    assert result["database"] == "alarm_rag"
+    assert run.call_count == 2

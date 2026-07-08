@@ -20,6 +20,7 @@ class BootstrapEnvTests(unittest.TestCase):
             "ADMIN_INITIAL_PASSWORD": "already-set",
             "ALARM_RAG_TRIGGER_TOKEN": "already-set",
             "N8N_ENCRYPTION_KEY": "already-set",
+            "QDRANT_API_KEY": "already-set",
         }, rotate=True)
 
         self.assertEqual(set(bootstrap_env.PLACEHOLDERS), set(updates))

@@ -17,6 +17,7 @@ PLACEHOLDERS = {
     "ADMIN_INITIAL_PASSWORD": "change-me-now",
     "ALARM_RAG_TRIGGER_TOKEN": "replace-with-a-random-trigger-token",
     "N8N_ENCRYPTION_KEY": "replace-with-a-long-random-string",
+    "QDRANT_API_KEY": "replace-with-a-long-random-qdrant-api-key",
 }
 
 
@@ -74,7 +75,7 @@ def secret_updates(values: dict[str, str], rotate: bool = False) -> dict[str, st
 
 
 def reset_password_for_users(user_ids: list[str], password: str) -> list[str]:
-    from auth import hash_password, load_users, revoke_user_sessions, save_users
+    from auth import hash_password, load_users, revoke_user_sessions, save_user
 
     users = load_users()
     updated: list[str] = []
@@ -87,8 +88,8 @@ def reset_password_for_users(user_ids: list[str], password: str) -> list[str]:
         updated.append(user_id)
     if not updated:
         return []
-    save_users(users)
     for user_id in updated:
+        save_user(user_id, users[user_id])
         revoke_user_sessions(user_id)
     return updated
 
@@ -141,7 +142,7 @@ def main() -> int:
     parser.add_argument(
         "--rotate-secrets",
         action="store_true",
-        help="force-generate ADMIN_INITIAL_PASSWORD, ALARM_RAG_TRIGGER_TOKEN, and N8N_ENCRYPTION_KEY",
+        help="force-generate App, n8n, and Qdrant deployment secrets",
     )
     args = parser.parse_args()
 

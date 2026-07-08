@@ -2,13 +2,13 @@ import hashlib
 import json
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
 
-from repositories.postgres_auth import PostgresSessionRepository, PostgresUserRepository
+from repositories.postgres_auth import ConcurrentUserUpdateError, PostgresSessionRepository, PostgresUserRepository
 from repositories.runtime import postgres_store_enabled
 from secret_values import secret_value
 
@@ -82,6 +82,7 @@ class UpdateUserRequest(BaseModel):
     team: Optional[str] = None
     line_scope: Optional[List[str]] = None
     active: Optional[bool] = None
+    expected_updated_at: Optional[str] = None
 
 
 class CreateUserRequest(BaseModel):
@@ -190,6 +191,7 @@ def is_valid_user_id(user_id: str) -> bool:
 
 def build_user(req: CreateUserRequest, user_id: str, password: str) -> dict:
     role = req.role or "operator"
+    now = datetime.now(timezone.utc).isoformat()
     return {
         "user_id": user_id,
         "name": (req.name or user_id).strip(),
@@ -198,6 +200,8 @@ def build_user(req: CreateUserRequest, user_id: str, password: str) -> dict:
         "team": (req.team or "").strip(),
         "active": True,
         "password_hash": hash_password(password),
+        "created_at": now,
+        "updated_at": now,
     }
 
 
@@ -251,6 +255,16 @@ def api_error(message: str) -> dict:
     return {"status": "error", "message": message}
 
 
+def concurrency_error() -> dict:
+    return api_error("User was updated by another administrator; reload and retry")
+
+
+def same_user_version(expected: Optional[str], user: dict) -> bool:
+    if expected is None:
+        return True
+    return str(user.get("updated_at") or "") == expected
+
+
 def permission_denied() -> dict:
     return api_error("Permission denied")
 
@@ -282,8 +296,8 @@ async def _api_create_user(req: CreateUserRequest, actor: dict) -> dict:
 
     user = build_user(req, user_id, req.password or configured_initial_password())
     users[user_id] = user
-    save_users(users)
-    return api_ok(user=public_user(user))
+    saved_user = save_user(user_id, user)
+    return api_ok(user=public_user(saved_user))
 
 
 @router.post("/users")
@@ -305,6 +319,8 @@ async def _api_update_user(user_id: str, req: UpdateUserRequest, actor: dict) ->
     validation_error = validate_admin_role_change(key, user, req, actor, users)
     if validation_error:
         return api_error(validation_error)
+    if not same_user_version(req.expected_updated_at, user):
+        return concurrency_error()
 
     if req.name is not None:
         user["name"] = req.name.strip()
@@ -318,8 +334,12 @@ async def _api_update_user(user_id: str, req: UpdateUserRequest, actor: dict) ->
         user["active"] = req.active
 
     users[key] = user
-    save_users(users)
-    return api_ok(user=public_user(user))
+    try:
+        saved_user = save_user(key, user, expected_updated_at=req.expected_updated_at)
+    except ConcurrentUserUpdateError:
+        return concurrency_error()
+    revoked = revoke_user_sessions(key) if req.active is False else 0
+    return api_ok(user=public_user(saved_user), sessions_revoked=revoked)
 
 
 @router.patch("/users/{user_id}")
@@ -347,9 +367,9 @@ async def _api_reset_user_password(user_id: str, req: ResetPasswordRequest, acto
         return api_error("Password must be at least 8 characters and not use a common placeholder")
     user["password_hash"] = hash_password(password)
     users[key] = user
-    save_users(users)
+    saved_user = save_user(key, user)
     revoke_user_sessions(key)
-    return api_ok(user=public_user(user), sessions_revoked=True)
+    return api_ok(user=public_user(saved_user), sessions_revoked=True)
 
 
 @router.patch("/users/{user_id}/password")
@@ -440,8 +460,9 @@ async def login(req: LoginRequest):
         return {"status": "error", "message": "Invalid username or password"}
 
     token = secrets.token_urlsafe(32)
-    created_at = datetime.now().isoformat()
-    expires_at = (datetime.now() + timedelta(hours=session_hours())).isoformat()
+    now = datetime.now(timezone.utc)
+    created_at = now.isoformat()
+    expires_at = (now + timedelta(hours=session_hours())).isoformat()
     sessions = prune_expired_sessions(load_sessions())
     sessions[token] = {"user_id": user["user_id"], "created_at": created_at, "expires_at": expires_at}
     if postgres_store_enabled():
@@ -532,6 +553,22 @@ def save_users(users: Dict[str, dict]) -> None:
         json.dump(users, file, ensure_ascii=False, indent=2)
 
 
+def save_user(user_id: str, user: dict, expected_updated_at: Optional[str] = None) -> dict:
+    if postgres_store_enabled():
+        return postgres_users.save_one(user_id, user, expected_updated_at=expected_updated_at)
+    users = load_users()
+    current = users.get(user_id, {})
+    if not same_user_version(expected_updated_at, current):
+        raise ConcurrentUserUpdateError(f"User {user_id} was updated by another request")
+    saved = dict(user)
+    if not saved.get("created_at"):
+        saved["created_at"] = current.get("created_at") or datetime.now(timezone.utc).isoformat()
+    saved["updated_at"] = datetime.now(timezone.utc).isoformat()
+    users[user_id] = saved
+    save_users(users)
+    return saved
+
+
 def load_sessions() -> Dict[str, dict]:
     os.makedirs(DB_DIR, exist_ok=True)
     if not os.path.exists(SESSION_FILE):
@@ -565,7 +602,7 @@ def revoke_user_sessions(user_id: str) -> int:
 
 
 def prune_expired_sessions(sessions: Dict[str, dict]) -> Dict[str, dict]:
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     return {
         token: session
         for token, session in sessions.items()
@@ -575,9 +612,12 @@ def prune_expired_sessions(sessions: Dict[str, dict]) -> Dict[str, dict]:
 
 def _parse_session_expiry(session: dict) -> datetime:
     try:
-        return datetime.fromisoformat(str(session.get("expires_at") or ""))
+        parsed = datetime.fromisoformat(str(session.get("expires_at") or "").replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.astimezone(timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except ValueError:
-        return datetime.now() - timedelta(seconds=1)
+        return datetime.now(timezone.utc) - timedelta(seconds=1)
 
 
 def session_hours() -> int:
@@ -620,6 +660,8 @@ def public_user(user: dict) -> dict:
         "line_scope": user.get("line_scope") if isinstance(user.get("line_scope"), list) else [],
         "team": str(user.get("team") or ""),
         "active": bool(user.get("active", True)),
+        "created_at": str(user.get("created_at") or ""),
+        "updated_at": str(user.get("updated_at") or ""),
     }
 
 
@@ -639,18 +681,22 @@ def actor_from_token(authorization: Optional[str]) -> Optional[dict]:
         if not session:
             return None
         actor = resolve_user(str(session.get("user_id") or ""))
-        return actor if actor.get("user_id") else None
+        return actor if actor.get("user_id") and actor.get("active", True) else None
     sessions = load_sessions()
     session = sessions.get(token)
     if not session:
         return None
     expires_at = _parse_session_expiry(session)
-    if expires_at < datetime.now():
+    if expires_at < datetime.now(timezone.utc):
         sessions.pop(token, None)
         save_sessions(sessions)
         return None
     actor = resolve_user(str(session.get("user_id") or ""))
-    return actor if actor.get("user_id") else None
+    if not actor.get("user_id") or not actor.get("active", True):
+        sessions.pop(token, None)
+        save_sessions(sessions)
+        return None
+    return actor
 
 
 def has_full_access(actor: dict) -> bool:
@@ -701,7 +747,7 @@ def can_view_work_order(actor: dict, order: dict, linked_issue: Optional[dict] =
     if role in FULL_ACCESS_ROLES:
         return True
     if role == "operator":
-        return bool(linked_issue) and can_view_issue(actor, linked_issue)
+        return linked_issue is not None and can_view_issue(actor, linked_issue)
     if role == "maintenance":
         if order.get("status") in ("completed", "verified"):
             return False

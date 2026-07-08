@@ -13,6 +13,10 @@ from db.session import session_scope
 TOKEN_PREFIX_LENGTH = 10
 
 
+class ConcurrentUserUpdateError(RuntimeError):
+    """Raised when a caller tries to save a stale user record."""
+
+
 def token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -20,12 +24,24 @@ def token_digest(token: str) -> str:
 def parse_datetime(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
+        # Older callers emitted local wall-clock timestamps without an offset.
+        # Interpret those as local time before normalizing instead of relabeling
+        # them as UTC, which shifts expiry in every non-UTC deployment.
+        return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def iso(value: datetime | None) -> str:
     return value.isoformat() if value else ""
+
+
+def same_instant(left: str, right: datetime | None) -> bool:
+    if not left or right is None:
+        return False
+    try:
+        return parse_datetime(left) == right.astimezone(timezone.utc)
+    except ValueError:
+        return False
 
 
 def user_dict(user: User) -> dict:
@@ -37,7 +53,18 @@ def user_dict(user: User) -> dict:
         "team": user.team,
         "active": user.active,
         "password_hash": user.password_hash,
+        "created_at": iso(user.created_at),
+        "updated_at": iso(user.updated_at),
     }
+
+
+def apply_user_payload(user: User, user_id: str, payload: dict) -> None:
+    user.name = str(payload.get("name") or user_id)
+    user.role = str(payload.get("role") or "operator")
+    user.team = str(payload.get("team") or "")
+    user.line_scope = [str(item) for item in payload.get("line_scope", [])]
+    user.password_hash = str(payload.get("password_hash") or "")
+    user.active = bool(payload.get("active", True))
 
 
 class PostgresUserRepository:
@@ -57,12 +84,23 @@ class PostgresUserRepository:
                 if user is None:
                     user = User(user_id=user_id)
                     session.add(user)
-                user.name = str(payload.get("name") or user_id)
-                user.role = str(payload.get("role") or "operator")
-                user.team = str(payload.get("team") or "")
-                user.line_scope = [str(item) for item in payload.get("line_scope", [])]
-                user.password_hash = str(payload.get("password_hash") or "")
-                user.active = bool(payload.get("active", True))
+                apply_user_payload(user, user_id, payload)
+
+    def save_one(self, user_id: str, payload: dict, expected_updated_at: str | None = None) -> dict:
+        """Upsert one account without rewriting unrelated, possibly stale rows."""
+        with session_scope() as session:
+            user = session.scalar(select(User).where(User.user_id == user_id).with_for_update())
+            if user is None:
+                if expected_updated_at:
+                    raise ConcurrentUserUpdateError(f"User {user_id} no longer matches the expected version")
+                user = User(user_id=user_id)
+                session.add(user)
+            elif expected_updated_at and not same_instant(expected_updated_at, user.updated_at):
+                raise ConcurrentUserUpdateError(f"User {user_id} was updated by another request")
+            apply_user_payload(user, user_id, payload)
+            session.flush()
+            session.refresh(user)
+            return user_dict(user)
 
 
 class PostgresSessionRepository:
@@ -82,12 +120,17 @@ class PostgresSessionRepository:
         digest = token_digest(token)
         now = datetime.now(timezone.utc)
         with session_scope() as session:
-            record = session.scalar(select(LoginSession).where(LoginSession.token_hash == digest))
-            if record is None or record.revoked_at is not None or record.expires_at <= now:
-                if record is not None:
-                    session.delete(record)
+            row = session.execute(
+                select(LoginSession, User.user_id, User.active)
+                .join(User, User.id == LoginSession.user_id)
+                .where(LoginSession.token_hash == digest)
+            ).one_or_none()
+            if row is None:
                 return None
-            user_id = session.scalar(select(User.user_id).where(User.id == record.user_id))
+            record, user_id, active = row
+            if record.revoked_at is not None or record.expires_at <= now or not active:
+                session.delete(record)
+                return None
             record.last_seen_at = now
             return {
                 "user_id": str(user_id or ""),
@@ -130,7 +173,11 @@ class PostgresSessionRepository:
             rows = session.execute(
                 select(LoginSession, User.user_id, User.role)
                 .join(User, User.id == LoginSession.user_id)
-                .where(LoginSession.revoked_at.is_(None), LoginSession.expires_at > now)
+                .where(
+                    LoginSession.revoked_at.is_(None),
+                    LoginSession.expires_at > now,
+                    User.active.is_(True),
+                )
                 .order_by(LoginSession.expires_at)
             ).all()
             return [

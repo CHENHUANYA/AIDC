@@ -171,11 +171,13 @@ function renderAdminRoleOptions(selectedRole) {
 
 function editedAdminUserPayload(userId) {
   const app = adminApp();
+  const user = (app?.getState('adminUsers') || []).find((item) => String(item.user_id || '') === String(userId));
   return {
     name: app?.$(`adminName_${userId}`)?.value || '',
     team: app?.$(`adminTeam_${userId}`)?.value || '',
     role: app?.$(`adminRole_${userId}`)?.value || 'operator',
     line_scope: adminScopeList(app?.$(`adminScope_${userId}`)?.value),
+    ...(user?.updated_at ? { expected_updated_at: user.updated_at } : {}),
   };
 }
 
@@ -1004,11 +1006,16 @@ async function patchAdminUser(userId, payload) {
   if (!app) {
     return;
   }
+  const user = (app.getState('adminUsers') || []).find((item) => String(item.user_id || '') === String(userId));
+  const body = {
+    ...payload,
+    ...(payload.expected_updated_at || !user?.updated_at ? {} : { expected_updated_at: user.updated_at }),
+  };
   try {
     await adminJson(`/users/${encodeURIComponent(userId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
     }, '使用者更新失敗');
     await loadAdminConsole();
   } catch (error) {

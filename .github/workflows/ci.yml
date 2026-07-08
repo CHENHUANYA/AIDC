@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  python:
+    name: Python quality and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-postgresql.txt
+            requirements-dev.txt
+
+      - name: Prepare CI env files
+        run: |
+          cp .env.example .env
+          cp .env.postgresql.example .env.postgresql
+          sed -i 's/^ADMIN_INITIAL_PASSWORD=.*/ADMIN_INITIAL_PASSWORD=ci-admin-password-change-me-1234567890/' .env
+          sed -i 's/^ALARM_RAG_TRIGGER_TOKEN=.*/ALARM_RAG_TRIGGER_TOKEN=ci-trigger-token-change-me-1234567890/' .env
+          sed -i 's/^N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=ci-n8n-encryption-key-change-me-1234567890/' .env
+          sed -i 's/^QDRANT_API_KEY=.*/QDRANT_API_KEY=ci-qdrant-api-key-change-me-1234567890/' .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-postgres-password-change-me-1234567890/' .env.postgresql
+          mkdir -p backups/postgresql-local-secrets
+          printf '%s' 'ci-postgres-password-change-me-1234567890' > backups/postgresql-local-secrets/postgres_password
+          chmod 600 backups/postgresql-local-secrets/postgres_password
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: mypy
+        run: mypy
+
+      - name: Pytest
+        run: python -m pytest -q --basetemp tests_tmp/pytest-ci
+
+  compose:
+    name: Compose configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare CI env files
+        run: |
+          cp .env.example .env
+          cp .env.postgresql.example .env.postgresql
+          sed -i 's/^ADMIN_INITIAL_PASSWORD=.*/ADMIN_INITIAL_PASSWORD=ci-admin-password-change-me-1234567890/' .env
+          sed -i 's/^ALARM_RAG_TRIGGER_TOKEN=.*/ALARM_RAG_TRIGGER_TOKEN=ci-trigger-token-change-me-1234567890/' .env
+          sed -i 's/^N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=ci-n8n-encryption-key-change-me-1234567890/' .env
+          sed -i 's/^QDRANT_API_KEY=.*/QDRANT_API_KEY=ci-qdrant-api-key-change-me-1234567890/' .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-postgres-password-change-me-1234567890/' .env.postgresql
+          mkdir -p backups/postgresql-local-secrets
+          printf '%s' 'ci-postgres-password-change-me-1234567890' > backups/postgresql-local-secrets/postgres_password
+          chmod 600 backups/postgresql-local-secrets/postgres_password
+
+      - name: Validate base Compose config
+        run: docker compose --env-file .env config --quiet
+
+      - name: Validate PostgreSQL file-secret Compose config
+        run: >
+          docker compose -p aidc_phase1
+          --env-file .env
+          --env-file .env.postgresql
+          -f docker-compose.yml
+          -f docker-compose.postgresql.yml
+          -f docker-compose.postgresql-pitr.yml
+          -f docker-compose.postgresql-runtime.yml
+          -f docker-compose.postgresql-secrets.yml
+          config --quiet

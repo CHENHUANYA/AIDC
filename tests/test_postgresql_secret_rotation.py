@@ -41,6 +41,31 @@ def test_compose_command_uses_env_files_instead_of_secret_values(tmp_path):
     assert all("PASSWORD=" not in item for item in command)
 
 
+def test_compose_command_adds_secret_overlay_for_file_mode(tmp_path):
+    command = rotation.compose_command(
+        "project",
+        tmp_path / ".env.postgresql",
+        "up",
+        "-d",
+        "postgres",
+        file_secret=True,
+    )
+
+    assert rotation.SECRETS_COMPOSE_FILE in command
+
+
+def test_container_password_reads_file_secret_without_exposing_it_in_environment():
+    environment = {
+        "POSTGRES_PASSWORD_FILE": "/run/secrets/postgres_password",
+    }
+    with patch.object(rotation, "read_container_secret", return_value="file-secret") as read:
+        password, file_mode = rotation.container_password("postgres", environment)
+
+    assert password == "file-secret"
+    assert file_mode is True
+    read.assert_called_once_with("postgres", "/run/secrets/postgres_password")
+
+
 def test_secret_sql_failure_redacts_stderr():
     completed = type(
         "Completed",

@@ -6,7 +6,8 @@ Delivery closeout status is tracked in `docs/DELIVERY_RISK_STATUS.md`.
 
 1. Install Docker Desktop.
 2. Copy `.env.example` to `.env`.
-3. Set `ADMIN_INITIAL_PASSWORD`, `N8N_ENCRYPTION_KEY`, and `ALARM_RAG_TRIGGER_TOKEN`, or generate them:
+3. Set `ADMIN_INITIAL_PASSWORD`, `N8N_ENCRYPTION_KEY`,
+   `ALARM_RAG_TRIGGER_TOKEN`, and `QDRANT_API_KEY`, or generate them:
 
 ```powershell
 python scripts/bootstrap_env.py --show-admin-password
@@ -60,9 +61,11 @@ python scripts/bootstrap_env.py --rotate-secrets --reset-bootstrap-passwords --s
 docker compose up -d --force-recreate alarm_rag n8n
 ```
 
-This regenerates `ADMIN_INITIAL_PASSWORD`, `ALARM_RAG_TRIGGER_TOKEN`, and
-`N8N_ENCRYPTION_KEY` in `.env`, then resets seeded role-account passwords to the
-new admin password. Re-import or update n8n workflows after rotation so they use
+This regenerates `ADMIN_INITIAL_PASSWORD`, `ALARM_RAG_TRIGGER_TOKEN`,
+`N8N_ENCRYPTION_KEY`, and `QDRANT_API_KEY` in `.env`, then resets seeded
+role-account passwords to the new admin password. Recreate `qdrant`
+and `alarm_rag` together so both receive the new API key. Re-import or
+update n8n workflows after rotation so they use
 the new `ALARM_RAG_TRIGGER_TOKEN`. If real n8n credentials are stored, changing
 `N8N_ENCRYPTION_KEY` can make old encrypted credentials unreadable; export or
 recreate them during the rotation window.
@@ -87,10 +90,11 @@ docker compose --env-file .env --env-file .env.postgresql \
   -f docker-compose.postgresql-secrets.yml up -d
 ```
 
-The final overlay uses an explicit application environment allowlist. Both the
-application and PostgreSQL containers receive `POSTGRES_PASSWORD_FILE`, not
-`POSTGRES_PASSWORD`. Re-run the staging command after every database password
-rotation, then force-recreate both services. See
+The final overlay changes only the PostgreSQL password source, so it cannot
+drift from the base application environment. Both containers receive
+`POSTGRES_PASSWORD_FILE`, not `POSTGRES_PASSWORD`. The rotation script detects
+this mode, updates the staged file atomically, and includes the secrets overlay
+when recreating both services. See
 `docs/POSTGRESQL_FILE_SECRET_RUNBOOK.md` for verification and rollback details.
 
 ## Updates
@@ -186,13 +190,20 @@ python scripts/bootstrap_env.py --reset-bootstrap-passwords --show-admin-passwor
 Default host ports are:
 
 ```text
+ALARM_RAG_BIND_ADDRESS=127.0.0.1
 ALARM_RAG_PORT=8100
-QDRANT_HTTP_PORT=6333
+N8N_BIND_ADDRESS=127.0.0.1
 N8N_PORT=5678
+QDRANT_BIND_ADDRESS=127.0.0.1
+QDRANT_HTTP_PORT=6333
 ```
 
 Change these in `.env` if the host already has a service on one of those ports.
-The compose-internal Qdrant and n8n ports stay at `6333` and `5678`.
+Alarm RAG, Qdrant, and n8n are bound to loopback by default. Put a reverse
+proxy or another explicit network boundary in front of Alarm RAG for LAN/public
+access, and do not change any `*_BIND_ADDRESS` to `0.0.0.0` unless that boundary
+is already in place. Qdrant also requires `QDRANT_API_KEY`. The compose-internal
+ports stay at `8000`, `6333`, and `5678`.
 
 ## Upload Limits
 
@@ -335,4 +346,4 @@ Stop containers before a full restore when replacing `alarm_db/`, `n8n_data/`, o
 
 ## Reverse Proxy
 
-Put Caddy, Nginx, or another proxy in front of port `8100` for TLS and public access. Keep n8n private unless it is separately authenticated and protected.
+Put Caddy, Nginx, or another proxy in front of `127.0.0.1:8100` for TLS and public access. Keep n8n bound to loopback unless it is separately authenticated and protected.

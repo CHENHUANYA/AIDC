@@ -29,11 +29,12 @@ services:
       VECTOR_STORE: ${VECTOR_STORE:-qdrant}
       QDRANT_HOST: qdrant
       QDRANT_PORT: ${QDRANT_PORT:-6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?Set QDRANT_API_KEY in .env}
       QDRANT_VECTOR_SIZE: ${QDRANT_VECTOR_SIZE:-1024}
       QDRANT_UPSERT_BATCH_SIZE: ${QDRANT_UPSERT_BATCH_SIZE:-64}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
     ports:
-      - "${ALARM_RAG_PORT:-8100}:8000"
+      - "${ALARM_RAG_BIND_ADDRESS:-127.0.0.1}:${ALARM_RAG_PORT:-8100}:8000"
     volumes:
       - ./alarm_db:/app/alarm_db
       - ./data:/app/data
@@ -56,7 +57,7 @@ services:
       qdrant:
         condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=5).read()"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -71,8 +72,10 @@ services:
     image: qdrant/qdrant:v1.12.4
     container_name: alarm_rag_qdrant
     restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?Set QDRANT_API_KEY in .env}
     ports:
-      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_BIND_ADDRESS:-127.0.0.1}:${QDRANT_HTTP_PORT:-6333}:6333"
     volumes:
       - ./qdrant_data:/qdrant/storage
     healthcheck:
@@ -92,7 +95,7 @@ services:
     container_name: alarm_rag_n8n
     restart: unless-stopped
     ports:
-      - "${N8N_PORT:-5678}:5678"
+      - "${N8N_BIND_ADDRESS:-127.0.0.1}:${N8N_PORT:-5678}:5678"
     environment:
       N8N_HOST: localhost
       N8N_PORT: 5678

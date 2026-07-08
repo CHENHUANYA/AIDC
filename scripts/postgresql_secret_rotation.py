@@ -31,6 +31,7 @@ COMPOSE_FILES = (
     "docker-compose.postgresql-pitr.yml",
     "docker-compose.postgresql-runtime.yml",
 )
+SECRETS_COMPOSE_FILE = "docker-compose.postgresql-secrets.yml"
 
 
 def run_command(
@@ -60,6 +61,44 @@ def inspect_container_env(container: str) -> dict[str, str]:
             if isinstance(entry, str) and "=" in entry
         )
     }
+
+
+def read_container_secret(container: str, path: str) -> str:
+    result = run_command(["docker", "exec", container, "cat", "--", path], check=False)
+    if result.returncode != 0:
+        raise RuntimeError("Unable to read PostgreSQL container secret file")
+    value = result.stdout
+    if value.endswith("\r\n"):
+        value = value[:-2]
+    elif value.endswith("\n"):
+        value = value[:-1]
+    if not value or "\n" in value or "\r" in value or "\x00" in value:
+        raise RuntimeError("PostgreSQL container secret file is empty or malformed")
+    return value
+
+
+def container_password(container: str, environment: dict[str, str]) -> tuple[str, bool]:
+    password = environment.get("POSTGRES_PASSWORD", "")
+    password_file = environment.get("POSTGRES_PASSWORD_FILE", "")
+    if bool(password) == bool(password_file):
+        raise RuntimeError(
+            "PostgreSQL container must configure exactly one of POSTGRES_PASSWORD or POSTGRES_PASSWORD_FILE"
+        )
+    return (read_container_secret(container, password_file), True) if password_file else (password, False)
+
+
+def configured_secret_path(postgres_env: Path) -> Path:
+    values: dict[str, str] = {}
+    for path in (ENV_PATH, postgres_env):
+        if path.is_file():
+            _, parsed = parse_env_lines(path.read_text(encoding="utf-8-sig"))
+            values.update(parsed)
+    configured = values.get(
+        "POSTGRES_PASSWORD_SECRET_FILE",
+        "./backups/postgresql-local-secrets/postgres_password",
+    )
+    path = Path(configured)
+    return path if path.is_absolute() else ROOT / path
 
 
 def container_running(container: str) -> bool:
@@ -165,7 +204,12 @@ def atomic_write_secret(path: Path, text: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def compose_command(project: str, postgres_env: Path, *args: str) -> list[str]:
+def compose_command(
+    project: str,
+    postgres_env: Path,
+    *args: str,
+    file_secret: bool = False,
+) -> list[str]:
     command = [
         "docker", "compose",
         "-p", project,
@@ -174,12 +218,14 @@ def compose_command(project: str, postgres_env: Path, *args: str) -> list[str]:
     ]
     for compose_file in COMPOSE_FILES:
         command.extend(["-f", compose_file])
+    if file_secret:
+        command.extend(["-f", SECRETS_COMPOSE_FILE])
     command.extend(args)
     return command
 
 
-def recreate_services(project: str, postgres_env: Path) -> None:
-    run_command(compose_command(project, postgres_env, "up", "-d", "qdrant"))
+def recreate_services(project: str, postgres_env: Path, *, file_secret: bool = False) -> None:
+    run_command(compose_command(project, postgres_env, "up", "-d", "qdrant", file_secret=file_secret))
     run_command(
         compose_command(
             project,
@@ -189,6 +235,7 @@ def recreate_services(project: str, postgres_env: Path) -> None:
             "--force-recreate",
             "postgres",
             "alarm_rag",
+            file_secret=file_secret,
         )
     )
 
@@ -238,16 +285,28 @@ def run_rotation(
     current = inspect_container_env(container)
     database = current.get("POSTGRES_DB", "alarm_rag")
     user = current.get("POSTGRES_USER", "alarm_rag")
-    old_password = current.get("POSTGRES_PASSWORD", "")
-    if not old_password:
-        raise RuntimeError("Current PostgreSQL container password is missing")
+    old_password, file_secret = container_password(container, current)
     if not postgres_connects("127.0.0.1", 5432, database, user, old_password):
         raise RuntimeError("Current PostgreSQL password could not be verified before rotation")
 
     original_exists = postgres_env_path.is_file()
     original_text = postgres_env_path.read_text(encoding="utf-8-sig") if original_exists else None
+    secret_path = configured_secret_path(postgres_env_path) if file_secret else None
+    original_secret_text = None
+    if secret_path is not None:
+        try:
+            original_secret_text = secret_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise RuntimeError("Configured PostgreSQL host secret file could not be read") from exc
+        staged_password = original_secret_text
+        if staged_password.endswith("\r\n"):
+            staged_password = staged_password[:-2]
+        elif staged_password.endswith("\n"):
+            staged_password = staged_password[:-1]
+        if staged_password != old_password:
+            raise RuntimeError("Configured host secret file does not match the running PostgreSQL container")
     new_password = secrets.token_urlsafe(48)
-    new_text = postgres_env_text(new_password, original_text)
+    new_text = None if file_secret else postgres_env_text(new_password, original_text)
     changed = False
     env_written = False
     revoked_count = 0
@@ -255,9 +314,12 @@ def run_rotation(
         alter_role_password(container, user, database, user, new_password)
         changed = True
         revoked_count = revoke_sessions(container, user, database)
-        atomic_write_secret(postgres_env_path, new_text)
+        if secret_path is not None:
+            atomic_write_secret(secret_path, new_password)
+        else:
+            atomic_write_secret(postgres_env_path, str(new_text))
         env_written = True
-        recreate_services(project, postgres_env_path)
+        recreate_services(project, postgres_env_path, file_secret=file_secret)
         wait_healthy(container, timeout)
         wait_healthy(app_container, timeout)
 
@@ -272,6 +334,7 @@ def run_rotation(
             "services_recreated": True,
             "connectivity_verified": new_connects and bool(token),
             "env_file_written": postgres_env_path.is_file(),
+            "credential_source_written": secret_path.is_file() if secret_path else postgres_env_path.is_file(),
         }
         return {
             "status": "ok" if all(checks.values()) else "fail",
@@ -285,6 +348,7 @@ def run_rotation(
             "password_length": len(new_password),
             "postgres_user": user,
             "postgres_database": database,
+            "secret_mode": "file" if file_secret else "environment",
         }
     except Exception:
         if changed:
@@ -293,18 +357,25 @@ def run_rotation(
                     run_command(["docker", "start", container])
                     wait_healthy(container, timeout)
                 alter_role_password(container, user, database, user, old_password)
-                rollback_text = postgres_env_text(old_password, original_text)
-                atomic_write_secret(postgres_env_path, rollback_text)
-                recreate_services(project, postgres_env_path)
+                if secret_path is not None and original_secret_text is not None:
+                    atomic_write_secret(secret_path, original_secret_text)
+                else:
+                    rollback_text = postgres_env_text(old_password, original_text)
+                    atomic_write_secret(postgres_env_path, rollback_text)
+                recreate_services(project, postgres_env_path, file_secret=file_secret)
                 wait_healthy(container, timeout)
                 wait_healthy(app_container, timeout)
             finally:
-                if not original_exists:
+                if file_secret:
+                    pass
+                elif not original_exists:
                     postgres_env_path.unlink(missing_ok=True)
                 elif original_text is not None:
                     atomic_write_secret(postgres_env_path, original_text)
         elif env_written:
-            if original_exists and original_text is not None:
+            if secret_path is not None and original_secret_text is not None:
+                atomic_write_secret(secret_path, original_secret_text)
+            elif original_exists and original_text is not None:
                 atomic_write_secret(postgres_env_path, original_text)
             else:
                 postgres_env_path.unlink(missing_ok=True)

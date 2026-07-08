@@ -16,11 +16,17 @@ RUN python -m pip --isolated install --default-timeout=1000 --no-cache-dir \
       --index-url ${PYTORCH_CPU_INDEX_URL} torch==${TORCH_VERSION}
 RUN python -m pip --isolated install --default-timeout=1000 --no-cache-dir -r requirements-postgresql.txt
 
-COPY . .
+RUN groupadd --system --gid 10001 alarm-rag \
+    && useradd --system --uid 10001 --gid alarm-rag --home-dir /app alarm-rag
+
+COPY --chown=alarm-rag:alarm-rag . .
 
 RUN if [ "$RAG_PRELOAD_MODELS" = "1" ]; then \
       python scripts/model_cache.py --hf-home /app/hf_cache --online preload ; \
     fi
+
+RUN chown -R alarm-rag:alarm-rag /app
+USER alarm-rag
 
 EXPOSE 8000
 

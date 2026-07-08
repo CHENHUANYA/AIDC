@@ -17,7 +17,17 @@ def env_file_value(path: Path, name: str) -> str:
             continue
         key, value = line.split("=", 1)
         if key.strip() == name:
-            return value.strip().strip('"').strip("'")
+            if value != value.strip():
+                raise RuntimeError(f"{name} has surrounding whitespace; quote the intended value")
+            if not value:
+                return ""
+            if value[0] in {"'", '"'}:
+                if len(value) < 2 or value[-1] != value[0]:
+                    raise RuntimeError(f"{name} has malformed quoting")
+                return value[1:-1]
+            if value[-1] in {"'", '"'}:
+                raise RuntimeError(f"{name} has malformed quoting")
+            return value
     return ""
 
 

@@ -19,6 +19,7 @@ SECRET_PLACEHOLDERS = {
     "ADMIN_INITIAL_PASSWORD": "change-me-now",
     "ALARM_RAG_TRIGGER_TOKEN": "replace-with-a-random-trigger-token",
     "N8N_ENCRYPTION_KEY": "replace-with-a-long-random-string",
+    "QDRANT_API_KEY": "replace-with-a-long-random-qdrant-api-key",
 }
 
 
@@ -65,6 +66,26 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertIn("## Secret Rotation", text)
         self.assertIn("python scripts/bootstrap_env.py --rotate-secrets", text)
         self.assertIn("SCHOOL_API_KEY", text)
+
+    def test_base_dockerfile_installs_postgresql_runtime_dependencies(self):
+        text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+        self.assertIn("TORCH_VERSION=2.5.1+cpu", text)
+        self.assertIn("PYTORCH_CPU_INDEX_URL", text)
+        self.assertIn("requirements-postgresql.txt", text)
+        self.assertIn("-r requirements-postgresql.txt", text)
+
+    def test_ci_runs_quality_and_compose_gates(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+        self.assertGreaterEqual(text.count("Prepare CI env files"), 2)
+        self.assertGreaterEqual(text.count("ADMIN_INITIAL_PASSWORD=ci-admin-password"), 2)
+        self.assertGreaterEqual(text.count("QDRANT_API_KEY=ci-qdrant-api-key"), 2)
+        self.assertIn("ruff check .", text)
+        self.assertIn("mypy", text)
+        self.assertIn("python -m pytest -q", text)
+        self.assertIn("docker compose --env-file .env config --quiet", text)
+        self.assertIn("docker-compose.postgresql-secrets.yml", text)
 
 
 if __name__ == "__main__":

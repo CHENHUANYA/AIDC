@@ -14,7 +14,7 @@
   const ROLE_HOME = {
     operator: '/operator',
     maintenance: '/maintenance',
-    supervisor: '/dashboard',
+    supervisor: '/supervisor',
     admin: '/admin',
   };
 

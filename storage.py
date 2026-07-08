@@ -2,7 +2,7 @@ import os
 import json
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -37,7 +37,7 @@ def ensure_db_dir():
 
 
 def now_iso() -> str:
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def compute_sha256_bytes(data: bytes) -> str:
