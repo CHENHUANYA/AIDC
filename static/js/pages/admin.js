@@ -763,6 +763,7 @@ async function loadAdminSettings() {
     app.$('adminDefaultManual').value = settings.default_manual || '808d';
     app.$('adminSessionHours').value = String(settings.session_hours || 12);
     app.$('adminAllowOperatorReopen').checked = Boolean(settings.allow_operator_reopen);
+    app.setState('adminSettingsRevision', settings.revision || '');
     setAdminResult('adminSettingsResult', settings.updated_by ? `設定已載入，最後更新者 ${settings.updated_by}` : '設定已載入');
     return settings;
   } catch (error) {
@@ -784,8 +785,10 @@ async function saveAdminSettings() {
         default_manual: app.$('adminDefaultManual').value,
         session_hours: Number(app.$('adminSessionHours').value || 12),
         allow_operator_reopen: app.$('adminAllowOperatorReopen').checked,
+        expected_revision: app.getState('adminSettingsRevision') || '',
       }),
     }, '設定儲存失敗');
+    app.setState('adminSettingsRevision', data.settings.revision || '');
     setAdminResult('adminSettingsResult', `設定已儲存，updated_by=${data.settings.updated_by || app.currentUserId()}`);
     loadAdminConsole();
   } catch (error) {
@@ -874,8 +877,13 @@ async function deleteAdminKbDocument(docId) {
     return;
   }
   try {
+    const document = (app.getState('adminKbDocuments') || []).find((item) => String(item.doc_id || '') === String(docId));
+    const revision = document?.revision || '';
+    if (!revision) {
+      throw new Error('文件版本不存在，請重新載入後再試');
+    }
     await adminJson(
-      `/v1/${encodeURIComponent(activeAdminCollection())}/documents/${encodeURIComponent(docId)}`,
+      `/v1/${encodeURIComponent(activeAdminCollection())}/documents/${encodeURIComponent(docId)}?expected_revision=${encodeURIComponent(revision)}`,
       { method: 'DELETE' },
       '刪除失敗',
     );

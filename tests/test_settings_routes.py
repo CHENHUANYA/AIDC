@@ -52,7 +52,28 @@ class SettingsRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("ok", result["status"])
         self.assertEqual("840d", result["settings"]["default_manual"])
         self.assertEqual(72, result["settings"]["session_hours"])
+        self.assertTrue(result["settings"]["revision"])
         self.assertTrue((self.tmp_root / "system_settings.json").exists())
+
+    async def test_update_settings_rejects_stale_revision(self):
+        first = await settings_routes.update_system_settings(
+            settings_routes.UpdateSystemSettings(default_manual="840d"),
+            actor=ADMIN,
+        )
+
+        stale = await settings_routes.update_system_settings(
+            settings_routes.UpdateSystemSettings(
+                session_hours=24,
+                expected_revision="stale-revision",
+            ),
+            actor=ADMIN,
+        )
+
+        self.assertEqual("error", stale["status"])
+        self.assertIn("Reload and retry", stale["message"])
+        current = await settings_routes.get_system_settings(actor=ADMIN)
+        self.assertEqual(first["settings"]["revision"], current["settings"]["revision"])
+        self.assertEqual(12, current["settings"]["session_hours"])
 
 
 if __name__ == "__main__":

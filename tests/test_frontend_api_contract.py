@@ -103,6 +103,14 @@ class FrontendApiContractTests(unittest.TestCase):
         self.assertIn("user.updated_at", source)
         self.assertIn("JSON.stringify(body)", source)
 
+    def test_admin_settings_and_documents_send_optimistic_lock_versions(self):
+        source = (ROOT / "static" / "js" / "pages" / "admin.js").read_text(encoding="utf-8")
+
+        self.assertIn("adminSettingsRevision", source)
+        self.assertIn("expected_revision", source)
+        self.assertIn("document?.revision", source)
+        self.assertIn("expected_revision=${encodeURIComponent(revision)}", source)
+
 
     def test_issue_and_work_order_updates_send_optimistic_lock_versions(self):
         operator_source = (ROOT / "static" / "js" / "pages" / "operator.js").read_text(encoding="utf-8")

@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from app_context import (
@@ -20,12 +20,14 @@ from app_context import (
     ingest_log,
 )
 from auth import actor_id, actor_role, get_actor, is_admin
+from repositories.postgres_content import ConcurrentContentUpdateError
 from storage import (
     DB_PATH,
     INGEST_LOG_PATH,
     append_jsonl,
     apply_doc_meta,
     compute_sha256_bytes,
+    document_revision,
     find_document_by_hash,
     generate_doc_id,
     is_safe_path_segment,
@@ -429,7 +431,12 @@ async def list_documents(collection_name: str, actor: dict = Depends(get_actor))
 
 
 @router.delete("/v1/{collection_name}/documents/{doc_id}")
-async def delete_document(collection_name: str, doc_id: str, actor: dict = Depends(get_actor)):
+async def delete_document(
+    collection_name: str,
+    doc_id: str,
+    expected_revision: str = Query(default=""),
+    actor: dict = Depends(get_actor),
+):
     denied = require_authenticated(actor)
     if denied:
         return denied
@@ -448,6 +455,11 @@ async def delete_document(collection_name: str, doc_id: str, actor: dict = Depen
             "status": "error",
             "message": "Legacy index documents cannot be deleted individually. Re-ingest this collection to replace it.",
         }
+    current_revision = document_revision(target)
+    if not expected_revision:
+        return {"status": "error", "message": "Document revision is required. Reload and retry."}
+    if expected_revision != current_revision:
+        return {"status": "error", "message": "Document changed since you loaded it. Reload and retry."}
 
     engine = get_engine(collection_name)
     if not engine.sections:
@@ -459,7 +471,10 @@ async def delete_document(collection_name: str, doc_id: str, actor: dict = Depen
         return {"status": "not_found", "message": "No sections removed"}
 
     engine.rebuild(remaining)
-    remove_document_entry(collection_name, doc_id)
+    try:
+        remove_document_entry(collection_name, doc_id, expected_revision=expected_revision)
+    except ConcurrentContentUpdateError as exc:
+        return {"status": "error", "message": str(exc)}
     ingest_log.append({
         "time": now_iso(),
         "collection": collection_name,

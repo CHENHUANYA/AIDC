@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from repositories.postgres_content import PostgresDocumentRepository
+from repositories.postgres_content import ConcurrentContentUpdateError, PostgresDocumentRepository
 from repositories.runtime import postgres_store_enabled
 
 def load_local_env(path: str = ".env") -> None:
@@ -59,6 +59,20 @@ def generate_doc_id(filename: str, source_hash: str) -> str:
     return f"{slugify(filename)}-{source_hash[:8]}"
 
 
+def document_revision(document: Dict[str, Any]) -> str:
+    existing = str(document.get("revision") or "")
+    if existing:
+        return existing
+    fields = [
+        str(document.get("doc_id") or ""),
+        str(document.get("source_hash") or ""),
+        str(document.get("version") or ""),
+        str(document.get("imported_at") or ""),
+        str(document.get("sections") or ""),
+    ]
+    return hashlib.sha256("\0".join(fields).encode("utf-8")).hexdigest()
+
+
 def load_manifest() -> Dict[str, Any]:
     if postgres_store_enabled():
         collections = {}
@@ -94,6 +108,7 @@ def upsert_document_entry(collection: str, doc_entry: Dict[str, Any]):
     if postgres_store_enabled():
         postgres_documents.upsert(collection, doc_entry)
         return
+    doc_entry = {**doc_entry, "revision": document_revision(doc_entry)}
     manifest = load_manifest()
     collections = manifest.setdefault("collections", {})
     col = collections.setdefault(collection, {"documents": []})
@@ -111,18 +126,23 @@ def upsert_document_entry(collection: str, doc_entry: Dict[str, Any]):
     save_manifest(manifest)
 
 
-def remove_document_entry(collection: str, doc_id: str):
+def remove_document_entry(collection: str, doc_id: str, expected_revision: str | None = None) -> bool:
     if postgres_store_enabled():
-        postgres_documents.remove(collection, doc_id)
-        return
+        return postgres_documents.remove(collection, doc_id, expected_revision=expected_revision)
     manifest = load_manifest()
     col = manifest.get("collections", {}).get(collection)
     if not col:
-        return
+        return False
     docs = col.get("documents", [])
+    target = next((document for document in docs if document.get("doc_id") == doc_id), None)
+    if target is None:
+        return False
+    if expected_revision is not None and expected_revision != document_revision(target):
+        raise ConcurrentContentUpdateError("Document changed since you loaded it. Reload and retry.")
     col["documents"] = [d for d in docs if d.get("doc_id") != doc_id]
     col["updated_at"] = now_iso()
     save_manifest(manifest)
+    return True
 
 
 def find_document_by_hash(collection: str, source_hash: str) -> Optional[Dict[str, Any]]:
@@ -141,7 +161,10 @@ def get_documents(collection: str) -> List[Dict[str, Any]]:
         return postgres_documents.load_collection(collection)
     manifest = load_manifest()
     col = manifest.get("collections", {}).get(collection, {})
-    return col.get("documents", [])
+    return [
+        {**document, "revision": document_revision(document)}
+        for document in col.get("documents", [])
+    ]
 
 
 def build_legacy_document_entry(collection: str, sections: List[dict]) -> Optional[Dict[str, Any]]:

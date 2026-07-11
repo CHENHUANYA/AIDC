@@ -12,6 +12,10 @@ from db.session import session_scope
 from repositories.postgres_workflow import parse_datetime
 
 
+class ConcurrentContentUpdateError(RuntimeError):
+    pass
+
+
 def iso(value: datetime | None) -> str:
     return value.isoformat() if value else ""
 
@@ -158,18 +162,23 @@ class PostgresFeedbackRepository:
 class PostgresSettingsRepository:
     def load_all(self) -> dict[str, Any]:
         with session_scope() as session:
-            return {key: value for key, value in session.execute(select(SystemSetting.key, SystemSetting.value)).all()}
+            records = session.scalars(select(SystemSetting)).all()
+            settings = {record.key: record.value for record in records if record.key != "revision"}
+            settings["revision"] = max((iso(record.updated_at) for record in records), default="")
+            return settings
 
-    def save_all(self, settings: dict[str, Any], updated_by: str) -> None:
+    def save_all(self, settings: dict[str, Any], updated_by: str, expected_revision: str | None = None) -> str:
         with session_scope() as session:
             user_pk = session.scalar(select(User.id).where(User.user_id == updated_by)) if updated_by else None
-            existing = {
-                record.key: record
-                for record in session.scalars(
-                    select(SystemSetting).where(SystemSetting.key.in_(list(settings) or [""]))
-                ).all()
-            }
+            records = session.scalars(select(SystemSetting).with_for_update()).all()
+            current_revision = max((iso(record.updated_at) for record in records), default="")
+            if expected_revision is not None and expected_revision != current_revision:
+                raise ConcurrentContentUpdateError("System settings changed since you loaded them. Reload and retry.")
+            existing = {record.key: record for record in records}
+            updated_at = datetime.now(timezone.utc)
             for key, value in settings.items():
+                if key == "revision":
+                    continue
                 record = existing.get(key)
                 if record is None:
                     record = SystemSetting(key=key)
@@ -177,6 +186,9 @@ class PostgresSettingsRepository:
                 record.value = value
                 record.updated_by_ref = updated_by
                 record.updated_by_user_id = user_pk
+                record.updated_at = updated_at
+            session.flush()
+            return updated_at.isoformat()
 
 
 def document_dict(document: Document, version: DocumentVersion | None) -> dict:
@@ -188,6 +200,7 @@ def document_dict(document: Document, version: DocumentVersion | None) -> dict:
         "imported_at": iso(version.imported_at) if version else iso(document.created_at),
         "sections": version.section_count if version else 0,
         "version": payload.get("version", 1),
+        "revision": str(version.id) if version else "",
     })
     return payload
 
@@ -282,16 +295,19 @@ class PostgresDocumentRepository:
             version.metadata_json = dict(payload)
             document.current_version_id = version.id
 
-    def remove(self, collection: str, document_key: str) -> bool:
+    def remove(self, collection: str, document_key: str, expected_revision: str | None = None) -> bool:
         with session_scope() as session:
             document = session.scalar(
                 select(Document).where(
                     Document.collection == collection,
                     Document.document_key == document_key,
-                )
+                ).with_for_update()
             )
             if document is None:
                 return False
+            current_revision = str(document.current_version_id or "")
+            if expected_revision is not None and expected_revision != current_revision:
+                raise ConcurrentContentUpdateError("Document changed since you loaded it. Reload and retry.")
             document.current_version_id = None
             session.flush()
             session.delete(document)
