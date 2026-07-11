@@ -53,6 +53,14 @@ def git_revision() -> str:
     return completed.stdout.strip()
 
 
+def report_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
 def load_trusted_index(path: Path) -> dict[str, Any]:
     """Load a locally generated trusted pickle. Never pass an untrusted file."""
     try:
@@ -150,7 +158,7 @@ def upgrade_indexes(
         current_version = str(payload.get("tokenizer_version") or "legacy-whitespace-v0")
         base = {
             "collection": path.stem.removeprefix("bm25_"),
-            "path": str(path.resolve()),
+            "path": report_path(path),
             "sections": len(payload["sections"]),
             "from_version": current_version,
             "to_version": BM25_TOKENIZER_VERSION,
@@ -193,7 +201,7 @@ def upgrade_indexes(
         "status": "pass",
         "mode": "apply" if apply else "dry-run",
         "target_tokenizer_version": BM25_TOKENIZER_VERSION,
-        "backup_dir": str(backup_dir.resolve()) if backup_dir else "",
+        "backup_dir": report_path(backup_dir) if backup_dir else "",
         "indexes": results,
     }
 

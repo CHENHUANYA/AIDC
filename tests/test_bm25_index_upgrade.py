@@ -127,3 +127,7 @@ def test_markdown_report_discloses_trusted_pickle_boundary():
 
     assert "trusted, locally generated pickle" in text
     assert "Never use it with an untrusted pickle" in text
+
+
+def test_report_path_is_relative_for_repository_files():
+    assert upgrade.report_path(upgrade.ROOT / "alarm_db" / "bm25_demo.pkl") == "alarm_db/bm25_demo.pkl"
