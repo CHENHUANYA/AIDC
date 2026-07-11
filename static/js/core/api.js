@@ -120,6 +120,26 @@
     return data;
   }
 
+  async function apiPaged(path, collectionKey, options = {}) {
+    const separator = path.includes('?') ? '&' : '?';
+    const pageLimit = Math.min(Math.max(Number(options.limit || 100), 1), 200);
+    const maxPages = Math.max(Number(options.maxPages || 100), 1);
+    const items = [];
+    let cursor = '';
+    let response = {};
+    for (let page = 0; page < maxPages; page += 1) {
+      const query = new URLSearchParams({ limit: String(pageLimit) });
+      if (cursor) query.set('cursor', cursor);
+      response = await apiJson(`${path}${separator}${query.toString()}`);
+      items.push(...(Array.isArray(response?.[collectionKey]) ? response[collectionKey] : []));
+      cursor = response?.next_cursor || '';
+      if (!response?.has_more || !cursor) {
+        return { ...response, [collectionKey]: items };
+      }
+    }
+    throw new Error(`Pagination exceeded ${maxPages} pages for ${path}`);
+  }
+
   window.AlarmCoreApi = {
     baseUrl: DEFAULT_BASE_URL,
     TOKEN_KEY,
@@ -135,6 +155,7 @@
     authHeaders,
     parseJsonResponse,
     apiJson,
+    apiPaged,
   };
 
   requireAuth();

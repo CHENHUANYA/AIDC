@@ -166,6 +166,13 @@ async function apiJson(path, options = {}) {
   return parseJsonResponse(res);
 }
 
+async function apiPaged(path, collectionKey, options = {}) {
+  if (coreApi.apiPaged) {
+    return coreApi.apiPaged(path, collectionKey, options);
+  }
+  return apiJson(path);
+}
+
 function currentUser() {
   return appState.currentUser || (coreApi.readAuthUser ? coreApi.readAuthUser() : null);
 }
@@ -691,6 +698,7 @@ window.AlarmApp = {
   formatError,
   parseJsonResponse,
   apiJson,
+  apiPaged,
   currentUser,
   currentUserId,
   currentUserRole,

@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-function loadCoreApi() {
+function loadCoreApi(fetchImpl = async () => ({ ok: true, json: async () => ({}) })) {
   const storage = new Map();
   const context = {
     window: {
@@ -23,6 +23,8 @@ function loadCoreApi() {
       setItem: (key, value) => storage.set(key, String(value)),
       removeItem: (key) => storage.delete(key),
     },
+    fetch: fetchImpl,
+    URLSearchParams,
   };
   context.window.window = context.window;
   context.window.document = context.document;
@@ -65,4 +67,18 @@ async function assertRejectsWithMessage(promise, expected) {
   );
   assert.strictEqual(storage.get(api.TOKEN_KEY), undefined);
   assert.strictEqual(window.location.href, '/login?next=%2Foperator');
+
+  const calls = [];
+  const responses = [
+    { status: 'ok', issues: [{ issue_id: 'ISS-2' }], has_more: true, next_cursor: 'next' },
+    { status: 'ok', issues: [{ issue_id: 'ISS-1' }], has_more: false, next_cursor: '' },
+  ];
+  const { api: pagedApi } = loadCoreApi(async (url) => {
+    calls.push(url);
+    return { ok: true, json: async () => responses.shift() };
+  });
+  const page = await pagedApi.apiPaged('/issues/page?line_id=LINE-A', 'issues', { limit: 1 });
+  assert.strictEqual(page.issues.map((issue) => issue.issue_id).join(','), 'ISS-2,ISS-1');
+  assert.ok(calls[0].includes('line_id=LINE-A&limit=1'));
+  assert.ok(calls[1].includes('cursor=next'));
 })();

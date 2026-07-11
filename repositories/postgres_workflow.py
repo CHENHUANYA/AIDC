@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, List
 
-from sqlalchemy import select
+from sqlalchemy import and_, false, func, or_, select
 
 from db.models import AuditEvent, Issue, IssueNote, User, WorkOrder
 from db.session import session_scope
@@ -190,6 +191,77 @@ class PostgresIssueRepository:
             records = session.scalars(select(Issue).order_by(Issue.created_at.desc(), Issue.id)).all()
             return [issue_dict(session, issue, users_by_pk, order_numbers.get(issue.id, "")) for issue in records]
 
+    def load_page(
+        self,
+        *,
+        limit: int,
+        cursor_created_at: str = "",
+        cursor_id: str = "",
+        role: str,
+        user_id: str,
+        line_scope: list[str],
+        status: str = "",
+        line_id: str = "",
+        machine_id: str = "",
+        assigned_to: str = "",
+        unresolved: bool = False,
+    ) -> tuple[list[dict], int, tuple[str, str] | None]:
+        conditions = []
+        if role not in {"supervisor", "admin"}:
+            if role == "operator":
+                if "*" not in line_scope:
+                    conditions.append(Issue.line_id.in_(line_scope) if line_scope else false())
+            elif role == "maintenance":
+                conditions.extend([
+                    Issue.status.not_in(("completed", "verified", "cancelled")),
+                    or_(Issue.assigned_to_ref == "", Issue.assigned_to_ref == user_id),
+                ])
+            else:
+                conditions.append(false())
+        if unresolved:
+            conditions.append(Issue.status.not_in(("completed", "verified", "cancelled")))
+        if status:
+            conditions.append(Issue.status == status)
+        if line_id:
+            conditions.append(Issue.line_id == line_id)
+        if machine_id:
+            conditions.append(Issue.machine_id == machine_id)
+        if assigned_to:
+            conditions.append(Issue.assigned_to_ref == assigned_to)
+
+        with session_scope() as session:
+            total = int(session.scalar(select(func.count()).select_from(Issue).where(*conditions)) or 0)
+            statement = select(Issue).where(*conditions)
+            if cursor_created_at and cursor_id:
+                cursor_time = parse_datetime(cursor_created_at)
+                try:
+                    cursor_pk = uuid.UUID(cursor_id)
+                except ValueError:
+                    cursor_pk = None
+                if cursor_time is None or cursor_pk is None:
+                    raise ValueError("Invalid pagination cursor")
+                statement = statement.where(
+                    or_(Issue.created_at < cursor_time, and_(Issue.created_at == cursor_time, Issue.id < cursor_pk))
+                )
+            records = session.scalars(
+                statement.order_by(Issue.created_at.desc(), Issue.id.desc()).limit(limit + 1)
+            ).all()
+            has_more = len(records) > limit
+            records = records[:limit]
+            _, users_by_pk = user_maps(session)
+            record_ids = [record.id for record in records]
+            order_numbers = {
+                issue_id: order_no
+                for issue_id, order_no in session.execute(
+                    select(WorkOrder.issue_id, WorkOrder.work_order_no).where(WorkOrder.issue_id.in_(record_ids or [None]))
+                ).all()
+            }
+            items = [issue_dict(session, issue, users_by_pk, order_numbers.get(issue.id, "")) for issue in records]
+            next_key = None
+            if has_more and records:
+                next_key = (records[-1].created_at.isoformat(), str(records[-1].id))
+            return items, total, next_key
+
     def save_all(self, issues: List[dict]) -> None:
         with session_scope() as session:
             users, _ = user_maps(session)
@@ -267,6 +339,72 @@ class PostgresWorkOrderRepository:
             }
             records = session.scalars(select(WorkOrder).order_by(WorkOrder.created_at.desc(), WorkOrder.id)).all()
             return [order_dict(session, order, users_by_pk, issue_numbers.get(order.issue_id, "")) for order in records]
+
+    def load_page(
+        self,
+        *,
+        limit: int,
+        cursor_created_at: str = "",
+        cursor_id: str = "",
+        role: str,
+        user_id: str,
+        line_scope: list[str],
+        status: str = "",
+    ) -> tuple[list[dict], int, tuple[str, str] | None]:
+        conditions = [WorkOrder.deleted_at.is_(None)]
+        if role not in {"supervisor", "admin"}:
+            if role == "operator":
+                if "*" not in line_scope:
+                    conditions.append(Issue.line_id.in_(line_scope) if line_scope else false())
+            elif role == "maintenance":
+                conditions.extend([
+                    WorkOrder.status.not_in(("completed", "verified")),
+                    or_(WorkOrder.assigned_to_ref == "", WorkOrder.assigned_to_ref == user_id),
+                ])
+            else:
+                conditions.append(false())
+        if status:
+            conditions.append(WorkOrder.status == status)
+
+        with session_scope() as session:
+            total_statement = (
+                select(func.count())
+                .select_from(WorkOrder)
+                .outerjoin(Issue, Issue.id == WorkOrder.issue_id)
+                .where(*conditions)
+            )
+            total = int(session.scalar(total_statement) or 0)
+            statement = (
+                select(WorkOrder, Issue.issue_no)
+                .outerjoin(Issue, Issue.id == WorkOrder.issue_id)
+                .where(*conditions)
+            )
+            if cursor_created_at and cursor_id:
+                cursor_time = parse_datetime(cursor_created_at)
+                try:
+                    cursor_pk = uuid.UUID(cursor_id)
+                except ValueError:
+                    cursor_pk = None
+                if cursor_time is None or cursor_pk is None:
+                    raise ValueError("Invalid pagination cursor")
+                statement = statement.where(
+                    or_(
+                        WorkOrder.created_at < cursor_time,
+                        and_(WorkOrder.created_at == cursor_time, WorkOrder.id < cursor_pk),
+                    )
+                )
+            rows = session.execute(
+                statement.order_by(WorkOrder.created_at.desc(), WorkOrder.id.desc()).limit(limit + 1)
+            ).all()
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+            _, users_by_pk = user_maps(session)
+            items = [order_dict(session, order, users_by_pk, issue_no or "") for order, issue_no in rows]
+            next_key = None
+            if has_more and rows:
+                last_order = rows[-1][0]
+                next_key = (last_order.created_at.isoformat(), str(last_order.id))
+            return items, total, next_key
 
     def save_all(self, orders: List[dict]) -> None:
         with session_scope() as session:

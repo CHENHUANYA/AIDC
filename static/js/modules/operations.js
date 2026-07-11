@@ -497,7 +497,7 @@ async function loadWorkOrders() {
 
   try {
     const [list, stats] = await Promise.all([
-      app.apiJson('/work-orders'),
+      app.apiPaged('/work-orders/page', 'orders'),
       app.apiJson('/work-orders/stats'),
     ]);
     app.patchState({

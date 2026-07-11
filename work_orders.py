@@ -17,11 +17,12 @@ import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from audit_history import append_history, field_changes, history_list
 from auth import actor_id, actor_role, can_update_work_order, can_view_work_order, can_verify, get_actor, is_admin, resolve_user
+from pagination import InvalidCursor, decode_cursor, encode_cursor, paginate_records
 from repositories.postgres_workflow import PostgresWorkOrderRepository
 from repositories.runtime import postgres_store_enabled
 from services.transactions import postgres_transactional
@@ -602,6 +603,57 @@ async def api_list_orders(status: Optional[str] = None, actor: dict = Depends(ge
     if status:
         orders = [o for o in orders if o["status"] == status]
     return {"total": len(orders), "orders": orders}
+
+
+@router.get("/work-orders/page")
+async def api_page_orders(
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: str = "",
+    status: Optional[str] = None,
+    actor: dict = Depends(get_actor),
+):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
+    try:
+        decoded = decode_cursor(cursor)
+    except InvalidCursor as exc:
+        return {"status": "error", "message": str(exc)}
+
+    if postgres_store_enabled():
+        try:
+            items, total, next_key = postgres_work_orders.load_page(
+                limit=limit,
+                cursor_created_at=decoded.created_at if decoded else "",
+                cursor_id=decoded.record_id if decoded else "",
+                role=actor_role(actor),
+                user_id=actor_id(actor),
+                line_scope=[str(value) for value in actor.get("line_scope", []) if isinstance(value, str)],
+                status=status or "",
+            )
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        next_cursor = encode_cursor(*next_key) if next_key else ""
+        return {
+            "status": "ok",
+            "orders": items,
+            "total": total,
+            "limit": limit,
+            "next_cursor": next_cursor,
+            "has_more": bool(next_cursor),
+        }
+
+    orders = _visible_orders(actor)
+    if status:
+        orders = [order for order in orders if order.get("status") == status]
+    items, next_cursor, has_more = paginate_records(orders, limit=limit, cursor=decoded, id_field="id")
+    return {
+        "status": "ok",
+        "orders": items,
+        "total": len(orders),
+        "limit": limit,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+    }
 
 
 @router.get("/work-orders/stats")

@@ -711,9 +711,9 @@ async function loadOperatorIssues() {
 
   try {
     const [list, stats, ordersData] = await Promise.all([
-      app.apiJson(`/issues?${query.toString()}`),
+      app.apiPaged(`/issues/page?${query.toString()}`, 'issues'),
       app.apiJson('/issues/stats'),
-      app.apiJson('/work-orders'),
+      app.apiPaged('/work-orders/page', 'orders'),
     ]);
     const ordersById = (ordersData.orders || []).reduce((acc, order) => {
       acc[order.id] = order;

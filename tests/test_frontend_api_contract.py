@@ -63,6 +63,9 @@ def frontend_api_paths() -> set[str]:
         r"apiJson\(`([^`]+)`",
         r"apiJson\('([^']+)'",
         r'apiJson\("([^"]+)"',
+        r"apiPaged\(`([^`]+)`",
+        r"apiPaged\('([^']+)'",
+        r'apiPaged\("([^"]+)"',
         r"fetch\(`(?:\$\{[^}]+\})?(/[^`]+)`",
     ]
     for pattern in patterns:
@@ -113,6 +116,25 @@ class FrontendApiContractTests(unittest.TestCase):
         self.assertIn("supervisorOrderVersion", supervisor_source)
         self.assertIn("supervisorIssueVersion", supervisor_source)
         self.assertIn("{ version }", supervisor_source)
+
+    def test_role_pages_use_cursor_pagination_for_lists(self):
+        core = (ROOT / "static" / "js" / "core" / "api.js").read_text(encoding="utf-8")
+        alarm_app = (ROOT / "static" / "alarm_app.js").read_text(encoding="utf-8")
+        role_sources = "\n".join(
+            (ROOT / path).read_text(encoding="utf-8")
+            for path in [
+                "static/js/pages/operator.js",
+                "static/js/pages/maintenance.js",
+                "static/js/pages/supervisor.js",
+                "static/js/pages/admin.js",
+                "static/js/modules/operations.js",
+            ]
+        )
+
+        self.assertIn("async function apiPaged", core)
+        self.assertIn("apiPaged,", alarm_app)
+        self.assertIn("/issues/page", role_sources)
+        self.assertIn("/work-orders/page", role_sources)
 
 if __name__ == "__main__":
     unittest.main()

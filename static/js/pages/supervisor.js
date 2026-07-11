@@ -555,8 +555,8 @@ async function loadSupervisorConsole() {
   }
   try {
     const [issuesData, ordersData, issueStats, orderStats, feedbackStats, usersData] = await Promise.all([
-      app.apiJson('/issues'),
-      app.apiJson('/work-orders'),
+      app.apiPaged('/issues/page', 'issues'),
+      app.apiPaged('/work-orders/page', 'orders'),
       app.apiJson('/issues/stats'),
       app.apiJson('/work-orders/stats'),
       app.apiJson('/feedback/stats'),

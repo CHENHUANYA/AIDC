@@ -1109,7 +1109,7 @@ async function loadAdminConsole() {
       loadAdminSettings(),
       app.apiJson('/feedback/stats').catch(() => ({ total: 0, rate: '0%' })),
       app.apiJson('/work-orders/stats').catch(() => ({ open_orders: 0, overdue_open: 0 })),
-      app.apiJson('/work-orders').catch(() => ({ orders: [] })),
+      app.apiPaged('/work-orders/page', 'orders').catch(() => ({ orders: [] })),
     ]);
     const users = usersData.users || [];
     const entries = ingestLog.entries || [];

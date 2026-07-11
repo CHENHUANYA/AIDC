@@ -12,11 +12,12 @@ import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from audit_history import append_history, field_changes, history_list
 from auth import actor_id, actor_role, can_update_issue, can_view_issue, get_actor
+from pagination import InvalidCursor, decode_cursor, encode_cursor, paginate_records
 from repositories.postgres_workflow import PostgresIssueRepository
 from repositories.runtime import postgres_store_enabled
 from services.postgres_workflow import create_issue as postgres_create_issue
@@ -395,6 +396,73 @@ async def api_list_issues(
     if assigned_to:
         issues = [issue for issue in issues if issue.get("assigned_to") == assigned_to]
     return {"total": len(issues), "issues": issues}
+
+
+@router.get("/issues/page")
+async def api_page_issues(
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: str = "",
+    status: Optional[str] = None,
+    line_id: Optional[str] = None,
+    machine_id: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    unresolved: Optional[bool] = None,
+    actor: dict = Depends(get_actor),
+):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
+    try:
+        decoded = decode_cursor(cursor)
+    except InvalidCursor as exc:
+        return {"status": "error", "message": str(exc)}
+
+    if postgres_store_enabled():
+        try:
+            items, total, next_key = postgres_issues.load_page(
+                limit=limit,
+                cursor_created_at=decoded.created_at if decoded else "",
+                cursor_id=decoded.record_id if decoded else "",
+                role=actor_role(actor),
+                user_id=actor_id(actor),
+                line_scope=[str(value) for value in actor.get("line_scope", []) if isinstance(value, str)],
+                status=status or "",
+                line_id=line_id or "",
+                machine_id=machine_id or "",
+                assigned_to=assigned_to or "",
+                unresolved=bool(unresolved),
+            )
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
+        next_cursor = encode_cursor(*next_key) if next_key else ""
+        return {
+            "status": "ok",
+            "issues": items,
+            "total": total,
+            "limit": limit,
+            "next_cursor": next_cursor,
+            "has_more": bool(next_cursor),
+        }
+
+    issues = [issue for issue in _load_issues() if can_view_issue(actor, issue)]
+    if unresolved:
+        issues = [issue for issue in issues if issue.get("status") not in ("completed", "verified", "cancelled")]
+    if status:
+        issues = [issue for issue in issues if issue.get("status") == status]
+    if line_id:
+        issues = [issue for issue in issues if issue.get("line_id") == line_id]
+    if machine_id:
+        issues = [issue for issue in issues if issue.get("machine_id") == machine_id]
+    if assigned_to:
+        issues = [issue for issue in issues if issue.get("assigned_to") == assigned_to]
+    items, next_cursor, has_more = paginate_records(issues, limit=limit, cursor=decoded, id_field="issue_id")
+    return {
+        "status": "ok",
+        "issues": items,
+        "total": len(issues),
+        "limit": limit,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+    }
 
 
 @router.get("/issues/stats")

@@ -290,8 +290,8 @@ async function loadMaintenanceData() {
 
   try {
     const [issuesData, ordersData, archiveData, feedbackStats] = await Promise.all([
-      app.apiJson('/issues'),
-      app.apiJson('/work-orders'),
+      app.apiPaged('/issues/page', 'issues'),
+      app.apiPaged('/work-orders/page', 'orders'),
       app.apiJson('/work-orders/archive').catch(() => ({ orders: [], archives: [] })),
       app.apiJson('/feedback/stats').catch(() => ({ technician_feedback: 0 })),
     ]);
