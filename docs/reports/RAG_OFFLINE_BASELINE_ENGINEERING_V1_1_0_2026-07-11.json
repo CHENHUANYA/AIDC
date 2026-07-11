@@ -1,0 +1,510 @@
+{
+  "dataset_version": "engineering-v1.1.0",
+  "review_status": "engineering_baseline_pending_technician_review",
+  "top_k": 5,
+  "metrics": {
+    "case_count": 13,
+    "recall_at_k": 1.0,
+    "mrr": 1.0,
+    "evidence_coverage_rate": 1.0,
+    "source_hit_rate": 1.0
+  },
+  "gates": {
+    "recall_at_k": {
+      "actual": 1.0,
+      "threshold": 0.8,
+      "pass": true
+    },
+    "mrr": {
+      "actual": 1.0,
+      "threshold": 0.7,
+      "pass": true
+    },
+    "evidence_coverage_rate": {
+      "actual": 1.0,
+      "threshold": 0.75,
+      "pass": true
+    },
+    "source_hit_rate": {
+      "actual": 1.0,
+      "threshold": 0.75,
+      "pass": true
+    }
+  },
+  "status": "pass",
+  "cases": [
+    {
+      "id": "manual-2000-exact",
+      "collection": "808d",
+      "query": "Alarm 2000 PLC sign-of-life monitoring remedy",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": null,
+      "returned": [
+        {
+          "code": "2000",
+          "title": "PLC sign-of-life monitoring",
+          "source": "",
+          "page": 56
+        }
+      ]
+    },
+    {
+      "id": "manual-3000-exact",
+      "collection": "808d",
+      "query": "Alarm 3000 emergency stop",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": null,
+      "returned": [
+        {
+          "code": "3000",
+          "title": "Emergency stop",
+          "source": "",
+          "page": 58
+        }
+      ]
+    },
+    {
+      "id": "manual-5000-exact",
+      "collection": "808d",
+      "query": "Alarm 5000 communication job not executable",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": null,
+      "returned": [
+        {
+          "code": "5000",
+          "title": "Communication job not executable %1",
+          "source": "",
+          "page": 86
+        }
+      ]
+    },
+    {
+      "id": "manual-25010-exact",
+      "collection": "808d",
+      "query": "Alarm 25010 measuring system pollution axis",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": null,
+      "returned": [
+        {
+          "code": "25010",
+          "title": "Axis %1 pollution of measuring system",
+          "source": "",
+          "page": 356
+        }
+      ]
+    },
+    {
+      "id": "mock-coolant-pressure",
+      "collection": "808d",
+      "query": "coolant pressure below minimum during roughing pump ready nozzle blockage",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": true,
+      "returned": [
+        {
+          "code": "340100",
+          "title": "[MOCK] SOP: Coolant pressure below minimum",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "340110",
+          "title": "[MOCK] Maintenance note: Coolant filter differential pressure",
+          "source": "mock-week2-maintenance-note",
+          "page": 0
+        },
+        {
+          "code": "air pressure low",
+          "title": "[MOCK] Technical bulletin: Utility air pressure dips",
+          "source": "mock-week2-bulletin",
+          "page": 0
+        },
+        {
+          "code": "5100",
+          "title": "[MOCK] SOP: Hydraulic clamp pressure not ready",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "25010",
+          "title": "[MOCK] SOP: Spindle ready signal dropped",
+          "source": "mock-week2-sop",
+          "page": 0
+        }
+      ]
+    },
+    {
+      "id": "mock-hydraulic-clamp",
+      "collection": "808d",
+      "query": "hydraulic clamp pressure not ready pallet seating pressure switch",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": true,
+      "returned": [
+        {
+          "code": "5100",
+          "title": "[MOCK] SOP: Hydraulic clamp pressure not ready",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "340100",
+          "title": "[MOCK] SOP: Coolant pressure below minimum",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "air pressure low",
+          "title": "[MOCK] Technical bulletin: Utility air pressure dips",
+          "source": "mock-week2-bulletin",
+          "page": 0
+        },
+        {
+          "code": "400300",
+          "title": "[MOCK] Technical bulletin: PLC handshake diagnostics",
+          "source": "mock-week2-bulletin",
+          "page": 0
+        },
+        {
+          "code": "340110",
+          "title": "[MOCK] Maintenance note: Coolant filter differential pressure",
+          "source": "mock-week2-maintenance-note",
+          "page": 0
+        }
+      ]
+    },
+    {
+      "id": "mock-tool-magazine",
+      "collection": "808d",
+      "query": "tool magazine pocket sensor home state requested tool mismatch",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": true,
+      "returned": [
+        {
+          "code": "6100",
+          "title": "[MOCK] SOP: Tool magazine index not confirmed",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "61375",
+          "title": "[Channel %1: ] Block %2: Trigger values of measuring sensor are incompatible",
+          "source": "",
+          "page": 461
+        },
+        {
+          "code": "17190",
+          "title": "[Channel %1: ] Block %2 illegal T number %3",
+          "source": "",
+          "page": 294
+        },
+        {
+          "code": "400300",
+          "title": "[MOCK] Technical bulletin: PLC handshake diagnostics",
+          "source": "mock-week2-bulletin",
+          "page": 0
+        },
+        {
+          "code": "6452",
+          "title": "[Channel %1: ] Block %2 tool change not possible. Tool holder/spindle number = %3 not defined.",
+          "source": "",
+          "page": 93
+        }
+      ]
+    },
+    {
+      "id": "mock-tool-clamp",
+      "collection": "808d",
+      "query": "tool clamp confirmation switch lost signal automatic tool change",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": true,
+      "returned": [
+        {
+          "code": "6105",
+          "title": "[MOCK] Prior repair: Tool clamp confirmation loss",
+          "source": "mock-week2-prior-repair",
+          "page": 0
+        },
+        {
+          "code": "5100",
+          "title": "[MOCK] SOP: Hydraulic clamp pressure not ready",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "6693",
+          "title": "File %1 lost",
+          "source": "",
+          "page": 96
+        },
+        {
+          "code": "61870",
+          "title": "[Channel %1: ] Block %2: Danger of collision during automatic retraction. Retract tool manually!",
+          "source": "",
+          "page": 514
+        },
+        {
+          "code": "air pressure low",
+          "title": "[MOCK] Technical bulletin: Utility air pressure dips",
+          "source": "mock-week2-bulletin",
+          "page": 0
+        }
+      ]
+    },
+    {
+      "id": "mock-probe-calibration",
+      "collection": "808d",
+      "query": "probe calibration offset stylus seating battery fixture update",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": true,
+      "returned": [
+        {
+          "code": "7100",
+          "title": "[MOCK] SOP: Probe calibration check failed",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "61341",
+          "title": "[Channel %1: ] Block %2: Probe not calibrated in active plane or wrong calibration data record",
+          "source": "",
+          "page": 456
+        },
+        {
+          "code": "61419",
+          "title": "[Channel %1: ] Block %2: Check probe calibration with reference to center of ball/circumference",
+          "source": "",
+          "page": 466
+        },
+        {
+          "code": "62319",
+          "title": "[Channel %1: ] Block %2: No internal correction of the calibration data",
+          "source": "",
+          "page": 535
+        },
+        {
+          "code": "471",
+          "title": "The relevant calibration speed is also stored in each calibration data record.",
+          "source": "",
+          "page": 471
+        }
+      ]
+    },
+    {
+      "id": "mock-plc-handshake",
+      "collection": "808d",
+      "query": "PLC handshake acknowledgement timing mismatch pallet clamp gateway timestamp",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": true,
+      "returned": [
+        {
+          "code": "400300",
+          "title": "[MOCK] Technical bulletin: PLC handshake diagnostics",
+          "source": "mock-week2-bulletin",
+          "page": 0
+        },
+        {
+          "code": "5100",
+          "title": "[MOCK] SOP: Hydraulic clamp pressure not ready",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "6105",
+          "title": "[MOCK] Prior repair: Tool clamp confirmation loss",
+          "source": "mock-week2-prior-repair",
+          "page": 0
+        },
+        {
+          "code": "7000",
+          "title": "[MOCK] Maintenance note: Fixture setup start interlock",
+          "source": "mock-week2-maintenance-note",
+          "page": 0
+        },
+        {
+          "code": "air pressure low",
+          "title": "[MOCK] Technical bulletin: Utility air pressure dips",
+          "source": "mock-week2-bulletin",
+          "page": 0
+        }
+      ]
+    },
+    {
+      "id": "mock-drive-acceleration",
+      "collection": "808d",
+      "query": "drive acceleration profile exceeded limit dry acceleration test",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": true,
+      "returned": [
+        {
+          "code": "300020",
+          "title": "[MOCK] Prior repair: Drive acceleration profile fault",
+          "source": "mock-week2-prior-repair",
+          "page": 0
+        },
+        {
+          "code": "300000",
+          "title": "Technical bulletin: Drive alarm escalation",
+          "source": "week2-bulletin",
+          "page": 0
+        },
+        {
+          "code": "300000",
+          "title": "Technical bulletin: Drive alarm escalation",
+          "source": "week2-bulletin",
+          "page": 0
+        },
+        {
+          "code": "300000",
+          "title": "[MOCK] Technical bulletin: Drive alarm escalation",
+          "source": "mock-week2-bulletin",
+          "page": 0
+        },
+        {
+          "code": "22280",
+          "title": "[Channel %1: ] In block %2: Prog. acceleration path too short %3, %4 required",
+          "source": "",
+          "page": 351
+        }
+      ]
+    },
+    {
+      "id": "mock-air-pressure",
+      "collection": "808d",
+      "query": "air pressure low regulator plant air header fixture unclamp timing",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": true,
+      "returned": [
+        {
+          "code": "air pressure low",
+          "title": "[MOCK] Technical bulletin: Utility air pressure dips",
+          "source": "mock-week2-bulletin",
+          "page": 0
+        },
+        {
+          "code": "5100",
+          "title": "[MOCK] SOP: Hydraulic clamp pressure not ready",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "340100",
+          "title": "[MOCK] SOP: Coolant pressure below minimum",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "7000",
+          "title": "[MOCK] Maintenance note: Fixture setup start interlock",
+          "source": "mock-week2-maintenance-note",
+          "page": 0
+        },
+        {
+          "code": "571",
+          "title": "Fault",
+          "source": "",
+          "page": 571
+        }
+      ]
+    },
+    {
+      "id": "multilingual-zh-coolant",
+      "collection": "808d",
+      "query": "粗加工時冷卻液壓力過低，幫浦 ready 訊號消失",
+      "hit": true,
+      "first_relevant_rank": 1,
+      "reciprocal_rank": 1.0,
+      "evidence_coverage": 1.0,
+      "missing_term_groups": [],
+      "source_hit": true,
+      "returned": [
+        {
+          "code": "340100",
+          "title": "[MOCK] SOP: Coolant pressure below minimum",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "340110",
+          "title": "[MOCK] Maintenance note: Coolant filter differential pressure",
+          "source": "mock-week2-maintenance-note",
+          "page": 0
+        },
+        {
+          "code": "5100",
+          "title": "[MOCK] SOP: Hydraulic clamp pressure not ready",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "25010",
+          "title": "[MOCK] SOP: Spindle ready signal dropped",
+          "source": "mock-week2-sop",
+          "page": 0
+        },
+        {
+          "code": "20010",
+          "title": "SOP: Axis enable alarm after restart",
+          "source": "week2-sop",
+          "page": 0
+        }
+      ]
+    }
+  ],
+  "generated_at": "2026-07-11T07:43:32.595958+00:00",
+  "dataset_sha256": "4eeafcccb07c29ba3d5668995d57f5b726c0425b9c9436988668ee3f65a22ec2",
+  "index_sha256": {
+    "808d": "6db4015acb04123cd28884db295cbcf074a743a0e06c803eb0467021c10beea8"
+  },
+  "query_tokenizer_version": "unicode-domain-v1",
+  "index_tokenizer_versions": {
+    "808d": "legacy-whitespace-v0"
+  },
+  "git_revision": "3f2a81a13ae1f89818f133338d4d3a4bf9361b79"
+}
