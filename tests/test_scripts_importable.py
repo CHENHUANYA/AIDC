@@ -24,6 +24,7 @@ SCRIPT_MODULES = [
     "scripts.postgresql_pitr",
     "scripts.production_boundary_check",
     "scripts.rag_offline_evaluation",
+    "scripts.rag_runtime_check",
     "scripts.regression_checks",
     "scripts.replay_demo_alarms",
     "scripts.role_console_smoke",

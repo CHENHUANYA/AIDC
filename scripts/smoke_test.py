@@ -225,6 +225,18 @@ def check_lookup(runner: SmokeRunner, manual: str, alarm_code: str) -> None:
         runner.record("lookup", "FAIL", f"HTTP {code}, body={data}")
 
 
+def check_retrieve(runner: SmokeRunner, manual: str, alarm_code: str) -> None:
+    query = parse.urlencode({"query": f"Alarm {alarm_code} remedy", "top_k": 5})
+    code, data = runner.get_json(f"/v1/{manual}/retrieve?{query}")
+    results = data.get("results", []) if isinstance(data, dict) else []
+    expected = any(str(item.get("code") or "") == alarm_code for item in results if isinstance(item, dict))
+    version = data.get("tokenizer_version", "-") if isinstance(data, dict) else "-"
+    if code == 200 and isinstance(data, dict) and data.get("ready") is True and expected:
+        runner.record("retrieve", "PASS", f"HTTP 200, results={len(results)}, tokenizer={version}")
+    else:
+        runner.record("retrieve", "FAIL", f"HTTP {code}, expected_code={expected}, body={data}")
+
+
 def check_chat(runner: SmokeRunner, manual: str) -> None:
     payload = {
         "messages": [{"role": "user", "content": "請用一句話說明這是 smoke test"}],
@@ -238,8 +250,9 @@ def check_chat(runner: SmokeRunner, manual: str) -> None:
         if isinstance(data, dict)
         else None
     )
-    if code == 200 and isinstance(content, str):
-        runner.record("chat", "PASS", f"HTTP 200, len={len(content)}")
+    citations = data.get("rag", {}).get("citations", []) if isinstance(data, dict) else []
+    if code == 200 and isinstance(content, str) and citations:
+        runner.record("chat", "PASS", f"HTTP 200, len={len(content)}, citations={len(citations)}")
     else:
         runner.record("chat", "FAIL", f"HTTP {code}, body={data}")
 
@@ -539,6 +552,7 @@ def main() -> int:
         runner.record("pages", "SKIP", "service unavailable")
         runner.record("collections", "SKIP", "service unavailable")
         runner.record("lookup", "SKIP", "service unavailable")
+        runner.record("retrieve", "SKIP", "service unavailable")
         runner.record("chat", "SKIP", "service unavailable")
         runner.record("upload:pdf", "SKIP", "service unavailable")
         runner.record("ingest:text", "SKIP", "service unavailable")
@@ -563,6 +577,7 @@ def main() -> int:
     check_pages(runner)
     check_collections(runner)
     check_lookup(runner, args.manual, args.alarm_code)
+    check_retrieve(runner, args.manual, args.alarm_code)
     check_chat(runner, args.manual)
     check_pdf_upload(runner, args.manual, args.pdf, args.pdf_max_mb)
     check_text_ingest(runner, args.manual, args.alarm_code)

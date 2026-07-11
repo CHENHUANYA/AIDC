@@ -19,34 +19,39 @@ This smoke suite covers the minimum critical paths after frontend/backend refact
 
 4. Chat:
 - `POST /v1/{manual}/chat/completions`
+- Response includes structured `rag.citations` with stable source IDs.
 
-5. Upload:
+5. Retrieval:
+- `GET /v1/{manual}/retrieve?query=...&top_k=5`
+- Response reports tokenizer version and ranked structured sources.
+
+6. Upload:
 - `POST /v1/{manual}/ingest` (PDF multipart upload)
 
-6. Text ingest:
+7. Text ingest:
 - `POST /v1/{manual}/ingest-text`
 
-7. Work order CRUD:
+8. Work order CRUD:
 - `POST /work-orders`
 - `PATCH /work-orders/{id}`
 - `DELETE /work-orders/{id}`
 
-8. Banner polling:
+9. Banner polling:
 - `POST /trigger-alarm`
 - `GET /pending-alarms` (first call returns alarms, second call clears queue)
 
-9. n8n mock workflow:
+10. n8n mock workflow:
 - `mock_data/n8n_mock_workflow.json` import shape
 - `POST /trigger-alarm` with `source=n8n-mock`
 - Alarm and work-order BI source attribution
 
-10. BI/stat endpoints:
+11. BI/stat endpoints:
 - `GET /stats/alarms`
 - `GET /stats/queries`
 - `GET /feedback/stats`
 - `GET /work-orders/stats`
 
-11. Role console login and permissions:
+12. Role console login and permissions:
 - `GET /auth/login-config`
 - `POST /auth/login` for `admin01`
 - `POST /auth/login` for `supervisor01`

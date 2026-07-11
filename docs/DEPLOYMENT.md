@@ -116,12 +116,17 @@ python scripts/standalone_acceptance.py --base-url http://localhost:8100 --manua
 Use `--create-backup` when the acceptance run should also create and verify a
 real runtime backup.
 
-For live LLM/RAG validation, including vector coverage and the last provider
-used by chat:
+For live LLM/RAG validation, including the tracked gold retrieval dataset,
+structured chat citations, vector coverage, and the last provider used by chat:
 
 ```bash
 python scripts/rag_runtime_check.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --require-vector-coverage
 ```
+
+The command writes machine-readable and reviewer-friendly reports to
+`tests_tmp/rag-runtime/report.json` and `tests_tmp/rag-runtime/report.md`.
+Use `--skip-gold-retrieval` only for diagnostics against an older runtime; it
+must not be used for release acceptance.
 
 For a short soak after deployment:
 

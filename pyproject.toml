@@ -42,6 +42,7 @@ files = [
     "scripts/postgresql_secret_rotation.py",
     "scripts/bm25_index_upgrade.py",
     "scripts/rag_offline_evaluation.py",
+    "scripts/rag_runtime_check.py",
     "vector_store.py",
 ]
 exclude = "(alarm_db|backups|data|exports|hf_cache|n8n_data|qdrant_data|tests_tmp)/"

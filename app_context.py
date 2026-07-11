@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -215,6 +216,7 @@ def get_collection_summary(collection_name: str) -> dict:
         "has_legacy_index": any(doc.get("legacy") for doc in documents),
     }
     if engine:
+        summary["bm25_tokenizer_version"] = getattr(engine, "tokenizer_version", "legacy-whitespace-v0")
         try:
             summary.update(engine.vector_coverage())
         except Exception as exc:
@@ -226,6 +228,7 @@ def get_collection_summary(collection_name: str) -> dict:
                 "vector_error": str(exc),
             })
     else:
+        summary["bm25_tokenizer_version"] = "none"
         summary.update({
             "vector_points": 0,
             "bm25_sections": summary["sections"],
@@ -269,8 +272,46 @@ def build_augmented_messages(messages: List[Message], engine: AlarmRAGEngine) ->
     return result, docs
 
 
-def make_openai_response(content: str) -> dict:
+def retrieval_citations(collection: str, docs: list[dict]) -> list[dict]:
+    citations = []
+    for rank, doc in enumerate(docs, start=1):
+        meta = doc.get("meta", {})
+        text = str(doc.get("text") or "")
+        identity = "\x1f".join([
+            collection,
+            str(meta.get("doc_id") or ""),
+            str(meta.get("source") or meta.get("source_file") or ""),
+            str(meta.get("code") or ""),
+            str(meta.get("page") or ""),
+            text,
+        ])
+        citations.append({
+            "id": f"ragcite_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:20]}",
+            "rank": rank,
+            "code": str(meta.get("code") or ""),
+            "title": str(meta.get("title") or ""),
+            "page": meta.get("page", ""),
+            "source": str(meta.get("source") or ""),
+            "source_file": str(meta.get("source_file") or ""),
+            "doc_id": str(meta.get("doc_id") or ""),
+            "kind": str(meta.get("kind") or meta.get("type") or ""),
+            "excerpt": re.sub(r"\s+", " ", text).strip()[:300],
+        })
+    return citations
+
+
+def build_rag_metadata(collection: str, query: str, docs: list[dict]) -> dict:
+    citations = retrieval_citations(collection, docs)
     return {
+        "collection": collection,
+        "query": query,
+        "citation_count": len(citations),
+        "citations": citations,
+    }
+
+
+def make_openai_response(content: str, *, rag: dict | None = None) -> dict:
+    response = {
         "id": "chatcmpl-alarm-rag",
         "object": "chat.completion",
         "created": 0,
@@ -282,6 +323,9 @@ def make_openai_response(content: str) -> dict:
         }],
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
+    if rag is not None:
+        response["rag"] = rag
+    return response
 
 
 def make_sse_chunk(content: str, finish: bool = False) -> str:

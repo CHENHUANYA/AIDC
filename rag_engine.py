@@ -189,6 +189,7 @@ class AlarmRAGEngine:
         self.store = get_store()
         self.bm25: BM25Okapi | None = None
         self.sections: List[dict] = []
+        self.tokenizer_version: str = "none"
         self.ready: bool = False
         self.next_id: int = 0
 
@@ -210,6 +211,7 @@ class AlarmRAGEngine:
                 data = pickle.load(f)
             self.bm25 = data["bm25"]
             self.sections = data["sections"]
+            self.tokenizer_version = str(data.get("tokenizer_version") or "legacy-whitespace-v0")
             self.next_id = len(self.sections)
             try:
                 self.store.ensure_collection(self.collection_name)
@@ -306,6 +308,7 @@ class AlarmRAGEngine:
             print(f"[WARN][{self.collection_name}] {VECTOR_STORE_ERROR} Detail: {exc}")
         self.sections = []
         self.bm25 = None
+        self.tokenizer_version = "none"
         self.next_id = 0
         self.ready = False
         print(f"[OK][{self.collection_name}] Empty collection created")
@@ -357,6 +360,7 @@ class AlarmRAGEngine:
 
     def _persist_bm25_index(self, texts: List[str]):
         self.bm25 = BM25Okapi([tokenize_bm25(text) for text in texts])
+        self.tokenizer_version = BM25_TOKENIZER_VERSION
         pkl_path = f"{DB_PATH}/bm25_{self.collection_name}.pkl"
         with open(pkl_path, "wb") as f:
             pickle.dump(

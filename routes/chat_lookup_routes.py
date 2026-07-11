@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from app_context import (
@@ -20,6 +20,7 @@ from app_context import (
     SCHOOL_API_MODEL,
     ChatRequest,
     build_augmented_messages,
+    build_rag_metadata,
     build_rag_preview,
     classify_alarm,
     error_log,
@@ -29,6 +30,7 @@ from app_context import (
     make_openai_response,
     make_sse_chunk,
     parse_alarm_code_int,
+    retrieval_citations,
 )
 from auth import actor_id, get_actor
 from storage import ERROR_LOG_PATH, append_jsonl
@@ -194,7 +196,7 @@ async def handle_chat(req: ChatRequest, collection_name: str):
             yield "data: [DONE]\n\n"
         return StreamingResponse(full_as_stream(), media_type="text/event-stream")
 
-    return make_openai_response(content)
+    return make_openai_response(content, rag=build_rag_metadata(collection_name, user_query, docs))
 
 
 @router.post("/v1/chat/completions")
@@ -229,6 +231,51 @@ async def chat_collection(req: ChatRequest, collection_name: str, actor: dict = 
     if invalid:
         return invalid
     return await handle_chat(req, collection_name)
+
+
+@router.get("/v1/{collection_name}/retrieve")
+async def retrieve_collection(
+    collection_name: str,
+    query: str = Query(min_length=1, max_length=1000),
+    top_k: int = Query(default=5, ge=1, le=20),
+    actor: dict = Depends(get_actor),
+):
+    denied = require_authenticated(actor)
+    if denied:
+        return denied
+    invalid = validate_collection_name(collection_name)
+    if invalid:
+        return invalid
+    clean_query = query.strip()
+    if not clean_query:
+        return {"status": "error", "message": "Query is required"}
+    engine = get_engine(collection_name)
+    if not engine.ready:
+        return {
+            "collection": collection_name,
+            "query": clean_query,
+            "ready": False,
+            "tokenizer_version": getattr(engine, "tokenizer_version", "none"),
+            "results": [],
+            "error": NOT_READY_TEMPLATE.format(name=collection_name),
+        }
+
+    start_ts = time.time()
+    docs = engine.retrieve(clean_query, top_k=top_k)
+    citations = retrieval_citations(collection_name, docs)
+    results = [
+        {**citation, "text": str(doc.get("text") or "")}
+        for citation, doc in zip(citations, docs, strict=True)
+    ]
+    log_query(collection_name, clean_query, source="retrieve", elapsed_ms=int((time.time() - start_ts) * 1000))
+    return {
+        "collection": collection_name,
+        "query": clean_query,
+        "ready": True,
+        "tokenizer_version": getattr(engine, "tokenizer_version", "legacy-whitespace-v0"),
+        "result_count": len(results),
+        "results": results,
+    }
 
 
 @router.post("/v1/{collection_name}/chat")
@@ -283,7 +330,7 @@ async def chat_multiturn(req: ChatRequest, collection_name: str, actor: dict = D
         })
         append_jsonl(ERROR_LOG_PATH, error_log[-1])
 
-    return make_openai_response(content)
+    return make_openai_response(content, rag=build_rag_metadata(collection_name, user_query, docs))
 
 
 @router.get("/v1/{collection_name}/lookup")
