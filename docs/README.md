@@ -8,6 +8,9 @@
 
 | 文件 | 用途 |
 |---|---|
+| `plans/PHASE0_VERSION_CLOSEOUT_PLAN_2026-07-11.md` | 目前版本收口來源：品質閘門、CI runtime、文件基準與提交分組。 |
+| `PR_DELIVERY_SUMMARY_2026-07-10.md` | 目前 PostgreSQL 強化與工作流程一致性變更的交付摘要。 |
+| `PHASE0_EXECUTION_REPORT_2026-07-11.md` | Phase 0 本機品質閘門結果與尚未完成的版本控制工作。 |
 | `MVP_BASELINE_STATUS.md` | 目前 MVP 功能基準與已完成項目。 |
 | `DATA_MAINTENANCE.md` | 本機 demo 資料清理、備份、匯出與歸檔指令。 |
 | `SMOKE_TEST.md` | 基本 smoke test 流程與預期結果。 |

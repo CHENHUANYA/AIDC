@@ -54,6 +54,28 @@ volume. The rotation script detects `POSTGRES_PASSWORD_FILE`, updates the
 staged file atomically, and force-recreates the App and PostgreSQL containers
 with the secrets overlay. A plain `restart` does not apply Compose changes.
 
+## Retained Volume Reconciliation
+
+When switching an existing PostgreSQL volume from raw `POSTGRES_PASSWORD` env
+mode to file-secret mode, the mounted secret file and the database role password
+must match. If `/ready` returns HTTP 503 with `database=unavailable` after the
+file-secret overlay is applied, verify that the retained `alarm_rag` role was
+rotated to the staged secret value. Do not print the secret while reconciling.
+
+For local rehearsals, run the role update inside a controlled maintenance window
+and clear `pg_stat_statements` afterward so password-bearing SQL is not retained
+in monitoring output.
+
+If the App image now runs as a non-root user against retained bind mounts, also
+verify writable paths before smoke/regression:
+
+```powershell
+docker exec alarm_rag sh -c "touch /app/alarm_db/.write-test && rm /app/alarm_db/.write-test"
+```
+
+If existing JSONL files were created by an older root-running container, repair
+file permissions on the retained bind mount before accepting the deployment.
+
 ## Verification
 
 1. Check both containers are healthy.
