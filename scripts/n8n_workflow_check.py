@@ -13,6 +13,7 @@ REQUIRED_PAYLOAD_FIELDS = {
     "manual",
     "machine_id",
     "source",
+    "external_event_id",
     "severity",
     "description",
 }

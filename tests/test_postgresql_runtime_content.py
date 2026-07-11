@@ -14,7 +14,7 @@ def test_postgresql_alarm_trigger_writes_alarm_and_links_issue():
     order = {"id": "WO-PG"}
     with (
         patch.object(alarm_routes, "postgres_store_enabled", return_value=True),
-        patch.object(alarm_routes.postgres_alarms, "add", return_value="alarm-pk") as add_alarm,
+        patch.object(alarm_routes.postgres_alarms, "add_once", return_value=("alarm-pk", True)) as add_alarm,
         patch.object(alarm_routes, "append_jsonl") as append_jsonl,
         patch.object(alarm_routes, "get_engine", side_effect=RuntimeError("skip rag")),
         patch.object(alarm_routes, "postgres_create_issue", return_value=(issue, order)) as create_issue,
@@ -30,6 +30,38 @@ def test_postgresql_alarm_trigger_writes_alarm_and_links_issue():
     add_alarm.assert_called_once()
     append_jsonl.assert_not_called()
     assert create_issue.call_args.kwargs["alarm_event_id"] == "alarm-pk"
+
+
+def test_postgresql_duplicate_alarm_returns_existing_workflow():
+    alarm = {"alarm_code": "3000", "source": "n8n", "external_event_id": "evt-1"}
+    issue = {"issue_id": "ISS-PG"}
+    order = {"id": "WO-PG"}
+    with (
+        patch.object(alarm_routes, "postgres_store_enabled", return_value=True),
+        patch.object(alarm_routes.postgres_alarms, "add_once", return_value=("alarm-pk", False)),
+        patch.object(alarm_routes.postgres_alarms, "get", return_value=alarm),
+        patch.object(alarm_routes, "postgres_get_issue_for_alarm_event", return_value=(issue, order)),
+        patch.object(alarm_routes, "postgres_create_issue") as create_issue,
+        patch.object(alarm_routes, "get_engine") as get_engine,
+    ):
+        result = asyncio.run(
+            alarm_routes.trigger_alarm.__wrapped__(
+                AlarmTrigger(
+                    alarm_code="3000",
+                    manual="808d",
+                    source="n8n",
+                    external_event_id="evt-1",
+                ),
+                actor=ADMIN,
+            )
+        )
+
+    assert result["status"] == "ok"
+    assert result["duplicate"] is True
+    assert result["issue"] == issue
+    assert result["work_order"] == order
+    create_issue.assert_not_called()
+    get_engine.assert_not_called()
 
 
 def test_postgresql_feedback_uses_repository_not_jsonl():

@@ -100,6 +100,19 @@ def create_issue(
         )
 
 
+def get_issue_for_alarm_event(alarm_event_id) -> tuple[dict | None, dict | None]:
+    with session_scope() as session:
+        _, users_by_pk = user_maps(session)
+        issue = session.scalar(select(Issue).where(Issue.alarm_event_id == alarm_event_id))
+        if issue is None:
+            return None, None
+        order = session.scalar(select(WorkOrder).where(WorkOrder.issue_id == issue.id))
+        return (
+            issue_dict(session, issue, users_by_pk, order.work_order_no if order else ""),
+            order_dict(session, order, users_by_pk, issue.issue_no) if order else None,
+        )
+
+
 def _new_order(session, issue: Issue, *, alarm_code: str, manual: str, machine_id: str, priority: str, description: str, rag_suggestion: str, source: str, assigned_to: str, created_by: str) -> WorkOrder:
     users, _ = user_maps(session)
     now = datetime.now(timezone.utc)

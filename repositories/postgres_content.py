@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from db.models import AlarmEvent, Document, DocumentVersion, Feedback, Issue, SystemSetting, User, WorkOrder
 from db.session import session_scope
@@ -32,24 +33,52 @@ def alarm_dict(record: AlarmEvent) -> dict:
 
 
 class PostgresAlarmRepository:
-    def add(self, payload: dict, event_key: str | None = None):
+    @staticmethod
+    def _record(payload: dict, event_key: str | None = None) -> AlarmEvent:
         occurred_at = parse_datetime(payload.get("time") or payload.get("date")) or datetime.now(timezone.utc)
+        return AlarmEvent(
+            event_key=event_key or f"runtime:alarm:{uuid.uuid4().hex}",
+            manual=str(payload.get("manual") or "808d"),
+            alarm_code=str(payload.get("alarm_code") or ""),
+            machine_id=str(payload.get("machine_id") or ""),
+            line_id=str(payload.get("line_id") or ""),
+            severity=str(payload.get("severity") or "info"),
+            source=str(payload.get("source") or ""),
+            description=str(payload.get("description") or ""),
+            occurred_at=occurred_at,
+            raw_payload=payload,
+        )
+
+    def add(self, payload: dict, event_key: str | None = None):
         with session_scope() as session:
-            record = AlarmEvent(
-                event_key=event_key or f"runtime:alarm:{uuid.uuid4().hex}",
-                manual=str(payload.get("manual") or "808d"),
-                alarm_code=str(payload.get("alarm_code") or ""),
-                machine_id=str(payload.get("machine_id") or ""),
-                line_id=str(payload.get("line_id") or ""),
-                severity=str(payload.get("severity") or "info"),
-                source=str(payload.get("source") or ""),
-                description=str(payload.get("description") or ""),
-                occurred_at=occurred_at,
-                raw_payload=payload,
-            )
+            record = self._record(payload, event_key)
             session.add(record)
             session.flush()
             return record.id
+
+    def add_once(self, payload: dict, event_key: str | None = None) -> tuple[object, bool]:
+        if not event_key:
+            return self.add(payload), True
+        with session_scope() as session:
+            existing_id = session.scalar(select(AlarmEvent.id).where(AlarmEvent.event_key == event_key))
+            if existing_id is not None:
+                return existing_id, False
+            record = self._record(payload, event_key)
+            try:
+                with session.begin_nested():
+                    session.add(record)
+                    session.flush()
+                return record.id, True
+            except IntegrityError:
+                existing_id = session.scalar(select(AlarmEvent.id).where(AlarmEvent.event_key == event_key))
+                if existing_id is None:
+                    raise
+                return existing_id, False
+
+    def get(self, alarm_event_id) -> dict | None:
+        with session_scope() as session:
+            record = session.get(AlarmEvent, alarm_event_id)
+            return alarm_dict(record) if record is not None else None
 
     def load_all(self, limit: int | None = None) -> list[dict]:
         with session_scope() as session:

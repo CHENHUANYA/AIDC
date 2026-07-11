@@ -5,7 +5,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from db.base import Base
-from db.models import Issue, WorkOrder
+from db.models import AlarmEvent, Issue, WorkOrder
+from repositories.postgres_content import PostgresAlarmRepository
 from repositories.postgres_workflow import (
     ConcurrentUpdateError,
     PostgresIssueRepository,
@@ -62,3 +63,28 @@ def test_postgres_work_order_repository_rejects_stale_changed_save(monkeypatch):
                     "version": 1,
                 }
             ])
+
+
+def test_postgres_alarm_repository_reuses_external_event_key(monkeypatch):
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        monkeypatch.setattr(
+            "repositories.postgres_content.session_scope",
+            lambda: scoped_session(session),
+        )
+        repository = PostgresAlarmRepository()
+        payload = {
+            "alarm_code": "3000",
+            "manual": "808d",
+            "source": "n8n",
+            "external_event_id": "evt-1",
+        }
+
+        first_id, first_created = repository.add_once(payload, "external:test-key")
+        second_id, second_created = repository.add_once(payload, "external:test-key")
+
+        assert first_created is True
+        assert second_created is False
+        assert second_id == first_id
+        assert session.query(AlarmEvent).count() == 1

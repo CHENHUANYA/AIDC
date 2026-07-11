@@ -110,6 +110,10 @@ def main() -> int:
             "manual": str(event.get("manual") or "808d"),
             "machine_id": str(event.get("machine_id") or "DEMO-STATION"),
             "source": str(args.source or event.get("source") or "demo-replay"),
+            "external_event_id": str(
+                event.get("external_event_id")
+                or f"demo-replay:{index}:{event.get('machine_id', 'DEMO-STATION')}:{event.get('alarm_code', '')}"
+            ),
             "severity": severity,
             "description": str(event.get("description") or ""),
         }

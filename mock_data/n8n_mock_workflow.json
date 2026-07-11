@@ -62,6 +62,12 @@
               "value": "n8n-mock"
             },
             {
+              "id": "external-event-id",
+              "name": "external_event_id",
+              "type": "string",
+              "value": "={{ $execution.id }}"
+            },
+            {
               "id": "severity",
               "name": "severity",
               "type": "string",
@@ -141,7 +147,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"alarm_code\": \"{{ $json.alarm_code }}\",\n  \"manual\": \"{{ $json.manual }}\",\n  \"machine_id\": \"{{ $json.machine_id }}\",\n  \"source\": \"{{ $json.source }}\",\n  \"severity\": \"{{ $json.severity }}\",\n  \"description\": \"{{ $json.description }}\"\n}",
+        "jsonBody": "={\n  \"alarm_code\": \"{{ $json.alarm_code }}\",\n  \"manual\": \"{{ $json.manual }}\",\n  \"machine_id\": \"{{ $json.machine_id }}\",\n  \"source\": \"{{ $json.source }}\",\n  \"external_event_id\": \"{{ $json.external_event_id }}\",\n  \"severity\": \"{{ $json.severity }}\",\n  \"description\": \"{{ $json.description }}\"\n}",
         "options": {
           "timeout": 20000
         }

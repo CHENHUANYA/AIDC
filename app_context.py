@@ -22,7 +22,7 @@ def load_local_env(path: str = ".env") -> None:
 
 load_local_env()
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from rag_engine import AlarmRAGEngine
 from secret_values import secret_value
@@ -127,6 +127,7 @@ class AlarmTrigger(BaseModel):
     manual: Optional[str] = "808d"
     machine_id: Optional[str] = None
     source: Optional[str] = "API"
+    external_event_id: Optional[str] = Field(default=None, max_length=255)
     severity: Optional[str] = None
     description: Optional[str] = None
 
