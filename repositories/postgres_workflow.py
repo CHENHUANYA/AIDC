@@ -179,6 +179,15 @@ def add_missing_audits(session, entity_type: str, entity_id, business_key: str, 
 
 
 class PostgresIssueRepository:
+    def get_one(self, issue_id: str) -> dict | None:
+        with session_scope() as session:
+            issue = session.scalar(select(Issue).where(Issue.issue_no == issue_id))
+            if issue is None:
+                return None
+            _, users_by_pk = user_maps(session)
+            order_no = session.scalar(select(WorkOrder.work_order_no).where(WorkOrder.issue_id == issue.id)) or ""
+            return issue_dict(session, issue, users_by_pk, order_no)
+
     def load_all(self) -> List[dict]:
         with session_scope() as session:
             _, users_by_pk = user_maps(session)
@@ -328,8 +337,27 @@ class PostgresIssueRepository:
                         created_at=parse_datetime(key[2]) or datetime.now(timezone.utc),
                     ))
 
+    def save_one(self, payload: dict) -> dict:
+        issue_id = str(payload.get("issue_id") or "")
+        if not issue_id:
+            raise ValueError("issue_id is required")
+        self.save_all([payload])
+        saved = self.get_one(issue_id)
+        if saved is None:
+            raise LookupError(f"Issue {issue_id} not found after save")
+        return saved
+
 
 class PostgresWorkOrderRepository:
+    def get_one(self, order_id: str) -> dict | None:
+        with session_scope() as session:
+            order = session.scalar(select(WorkOrder).where(WorkOrder.work_order_no == order_id))
+            if order is None:
+                return None
+            _, users_by_pk = user_maps(session)
+            issue_no = session.scalar(select(Issue.issue_no).where(Issue.id == order.issue_id)) if order.issue_id else ""
+            return order_dict(session, order, users_by_pk, issue_no or "")
+
     def load_all(self) -> List[dict]:
         with session_scope() as session:
             _, users_by_pk = user_maps(session)
@@ -409,7 +437,17 @@ class PostgresWorkOrderRepository:
     def save_all(self, orders: List[dict]) -> None:
         with session_scope() as session:
             users, _ = user_maps(session)
-            issue_ids = {issue_no: issue_pk for issue_pk, issue_no in session.execute(select(Issue.id, Issue.issue_no)).all()}
+            requested_issue_numbers = {
+                str(payload.get("issue_id") or "")
+                for payload in orders
+                if payload.get("issue_id")
+            }
+            issue_ids = {
+                issue_no: issue_pk
+                for issue_pk, issue_no in session.execute(
+                    select(Issue.id, Issue.issue_no).where(Issue.issue_no.in_(requested_issue_numbers or [""]))
+                ).all()
+            }
             existing = {
                 order.work_order_no: order
                 for order in session.scalars(select(WorkOrder).where(WorkOrder.work_order_no.in_([str(item.get("id")) for item in orders] or [""]))).all()
@@ -473,3 +511,13 @@ class PostgresWorkOrderRepository:
                 if changed:
                     order.version += 1
                 add_missing_audits(session, "work_order", order.id, order_no, payload.get("work_order_history") or [], users)
+
+    def save_one(self, payload: dict) -> dict:
+        order_id = str(payload.get("id") or "")
+        if not order_id:
+            raise ValueError("work order id is required")
+        self.save_all([payload])
+        saved = self.get_one(order_id)
+        if saved is None:
+            raise LookupError(f"Work order {order_id} not found after save")
+        return saved

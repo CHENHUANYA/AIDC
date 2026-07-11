@@ -105,6 +105,8 @@ def _operator_reopen_enabled() -> bool:
 
 
 def _find_issue(issue_id: str) -> Tuple[int, Optional[dict]]:
+    if postgres_store_enabled():
+        return -1, postgres_issues.get_one(issue_id)
     issues = _load_issues()
     for index, issue in enumerate(issues):
         if issue.get("issue_id") == issue_id:
@@ -252,6 +254,25 @@ def create_issue_dict(
 
 
 def set_issue_work_order(issue_id: str, work_order_id: str, status: str = "assigned", updated_by: str = "") -> Optional[dict]:
+    if postgres_store_enabled():
+        issue = postgres_issues.get_one(issue_id)
+        if issue is None:
+            return None
+        before_issue = dict(issue)
+        issue["work_order_id"] = work_order_id
+        issue["status"] = "open" if status == "pending" else _normalize_status(status, "assigned")
+        issue["updated_at"] = datetime.now().isoformat()
+        issue["updated_by"] = updated_by
+        _append_issue_history(
+            issue,
+            "work_order_linked",
+            updated_by,
+            ["work_order_id", "status"],
+            "",
+            "",
+            field_changes(before_issue, issue, ["work_order_id", "status"]),
+        )
+        return postgres_issues.save_one(issue)
     issues = _load_issues()
     for index, issue in enumerate(issues):
         if issue.get("issue_id") != issue_id:
@@ -281,7 +302,11 @@ def sync_issue_from_work_order(order: dict) -> Optional[dict]:
     if not issue_id:
         return None
 
-    issues = _load_issues()
+    if postgres_store_enabled():
+        issue = postgres_issues.get_one(issue_id)
+        issues = [issue] if issue is not None else []
+    else:
+        issues = _load_issues()
     for index, issue in enumerate(issues):
         if issue.get("issue_id") != issue_id:
             continue
@@ -312,6 +337,8 @@ def sync_issue_from_work_order(order: dict) -> Optional[dict]:
             issue["status"] if previous_status != issue["status"] else "",
             changes,
         )
+        if postgres_store_enabled():
+            return postgres_issues.save_one(issue)
         issues[index] = issue
         _save_issues(issues)
         return issue
@@ -553,14 +580,16 @@ async def api_get_issue_history(issue_id: str, actor: dict = Depends(get_actor))
 async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
-    issues = _load_issues()
+    use_postgres = postgres_store_enabled()
+    issues = [] if use_postgres else _load_issues()
     index = -1
-    issue = None
-    for current_index, current_issue in enumerate(issues):
-        if current_issue.get("issue_id") == issue_id:
-            index = current_index
-            issue = current_issue
-            break
+    issue = postgres_issues.get_one(issue_id) if use_postgres else None
+    if not use_postgres:
+        for current_index, current_issue in enumerate(issues):
+            if current_issue.get("issue_id") == issue_id:
+                index = current_index
+                issue = current_issue
+                break
     if issue is None:
         return {"status": "error", "message": f"Issue {issue_id} not found"}
     if not can_update_issue(actor, issue, req.status):
@@ -634,10 +663,13 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
     note_added = bool((req.operator_note or "").strip()) if req.operator_note is not None else False
     if req.version is None and (changed_fields or note_added):
         return {"status": "error", "message": ISSUE_STALE_UPDATE_MESSAGE}
-    if (changed_fields or note_added) and not postgres_store_enabled():
+    if (changed_fields or note_added) and not use_postgres:
         issue["version"] = current_version + 1
-    issues[index] = issue
-    _save_issues(issues)
+    if use_postgres:
+        issue = postgres_issues.save_one(issue)
+    else:
+        issues[index] = issue
+        _save_issues(issues)
     synced_work_order = None
     if "status" in changed_fields and issue.get("work_order_id"):
         synced_work_order = sync_work_order_from_issue(issue, updated_by, req.operator_note or "")

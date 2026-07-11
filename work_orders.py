@@ -296,6 +296,8 @@ def _save_orders(orders: List[dict]):
 
 
 def _find_order(order_id: str) -> Tuple[int, Optional[dict]]:
+    if postgres_store_enabled():
+        return -1, postgres_work_orders.get_one(order_id)
     orders = _load_orders()
     for i, o in enumerate(orders):
         if o["id"] == order_id:
@@ -481,9 +483,12 @@ def create_order_dict(
             "created_at": now,
         }],
     }
-    orders = _load_orders()
-    orders.insert(0, order)
-    _save_orders(orders)
+    if postgres_store_enabled():
+        order = postgres_work_orders.save_one(order)
+    else:
+        orders = _load_orders()
+        orders.insert(0, order)
+        _save_orders(orders)
     print(f"[WO] created {order['id']} (alarm {alarm_code})")
     return order
 
@@ -505,7 +510,11 @@ def sync_work_order_from_issue(issue: dict, user_id: str = "", note: str = "") -
     if not work_order_id:
         return None
 
-    orders = _load_orders()
+    if postgres_store_enabled():
+        order = postgres_work_orders.get_one(work_order_id)
+        orders = [order] if order is not None else []
+    else:
+        orders = _load_orders()
     synced_order = None
     now = datetime.now().isoformat()
     for index, order in enumerate(orders):
@@ -568,7 +577,10 @@ def sync_work_order_from_issue(issue: dict, user_id: str = "", note: str = "") -
         break
 
     if synced_order is not None:
-        _save_orders(orders)
+        if postgres_store_enabled():
+            synced_order = postgres_work_orders.save_one(synced_order)
+        else:
+            _save_orders(orders)
     return synced_order
 
 
@@ -783,7 +795,11 @@ async def api_get_order(order_id: str, actor: dict = Depends(get_actor)):
     _, order = _find_order(order_id)
     if order is None:
         return {"status": "error", "message": f"Work order {order_id} not found"}
-    linked_issue = _issue_map_by_id().get(str(order.get("issue_id") or ""))
+    linked_issue = None
+    issue_id = str(order.get("issue_id") or "")
+    if issue_id:
+        from issues import get_issue_dict
+        linked_issue = get_issue_dict(issue_id)
     if not can_view_work_order(actor, order, linked_issue):
         return {"status": "error", "message": "Permission denied"}
     return {"status": "ok", "order": order}
@@ -796,7 +812,11 @@ async def api_get_order_history(order_id: str, actor: dict = Depends(get_actor))
     _, order = _find_order(order_id)
     if order is None:
         return {"status": "error", "message": f"Work order {order_id} not found"}
-    linked_issue = _issue_map_by_id().get(str(order.get("issue_id") or ""))
+    linked_issue = None
+    issue_id = str(order.get("issue_id") or "")
+    if issue_id:
+        from issues import get_issue_dict
+        linked_issue = get_issue_dict(issue_id)
     if not can_view_work_order(actor, order, linked_issue):
         return {"status": "error", "message": "Permission denied"}
 
@@ -823,17 +843,23 @@ async def api_get_order_history(order_id: str, actor: dict = Depends(get_actor))
 async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
-    orders = _load_orders()
-    idx, order = -1, None
-    for i, o in enumerate(orders):
-        if o["id"] == order_id:
-            idx, order = i, o
-            break
+    use_postgres = postgres_store_enabled()
+    orders = [] if use_postgres else _load_orders()
+    idx, order = -1, postgres_work_orders.get_one(order_id) if use_postgres else None
+    if not use_postgres:
+        for i, current_order in enumerate(orders):
+            if current_order["id"] == order_id:
+                idx, order = i, current_order
+                break
     if order is None:
         return {"status": "error", "message": f"Work order {order_id} not found"}
     if order.get("deleted_at"):
         return {"status": "error", "message": f"Work order {order_id} is deleted"}
-    linked_issue = _issue_map_by_id().get(str(order.get("issue_id") or ""))
+    linked_issue = None
+    linked_issue_id = str(order.get("issue_id") or "")
+    if linked_issue_id:
+        from issues import get_issue_dict
+        linked_issue = get_issue_dict(linked_issue_id)
     if not can_view_work_order(actor, order, linked_issue):
         return {"status": "error", "message": "Permission denied"}
     if not can_update_work_order(actor, order, req.status):
@@ -908,7 +934,8 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
 
     previous_review_status = order.get("kb_review_status", "not_ready")
     _refresh_knowledge_review_state(order, changed_fields)
-    duplicate_of = _find_duplicate_knowledge_order(order, orders) if order.get("kb_candidate") else ""
+    duplicate_orders = _load_orders() if order.get("kb_candidate") else [order]
+    duplicate_of = _find_duplicate_knowledge_order(order, duplicate_orders) if order.get("kb_candidate") else ""
     if order.get("kb_duplicate_of", "") != duplicate_of:
         order["kb_duplicate_of"] = duplicate_of
         changed_fields.append("kb_duplicate_of")
@@ -934,10 +961,13 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
         )
     if req.version is None and changed_fields:
         return {"status": "error", "message": WORK_ORDER_STALE_UPDATE_MESSAGE}
-    if changed_fields and not postgres_store_enabled():
+    if changed_fields and not use_postgres:
         order["version"] = current_version + 1
-    orders[idx] = order
-    _save_orders(orders)
+    if use_postgres:
+        order = postgres_work_orders.save_one(order)
+    else:
+        orders[idx] = order
+        _save_orders(orders)
 
     synced_issue = None
     if order.get("issue_id"):
@@ -961,7 +991,12 @@ async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
-    orders = _load_orders()
+    use_postgres = postgres_store_enabled()
+    if use_postgres:
+        order = postgres_work_orders.get_one(order_id)
+        orders = [order] if order is not None else []
+    else:
+        orders = _load_orders()
     for index, order in enumerate(orders):
         if order.get("id") != order_id:
             continue
@@ -979,8 +1014,11 @@ async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
                 "",
                 field_changes(before_order, order, ["deleted_at"]),
             )
-            orders[index] = order
-            _save_orders(orders)
+            if use_postgres:
+                postgres_work_orders.save_one(order)
+            else:
+                orders[index] = order
+                _save_orders(orders)
         return {"status": "ok", "deleted": order_id, "soft_deleted": True}
     if not any(o.get("id") == order_id for o in orders):
         return {"status": "error", "message": f"Work order {order_id} not found"}
