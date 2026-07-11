@@ -100,14 +100,19 @@ def test_chat_gate_requires_structured_expected_citation():
     class ChatClient:
         def request_json(self, _path, _method="GET", _payload=None):
             return 200, {
+                "id": "chatcmpl_1",
                 "choices": [{"message": {"content": "A sufficiently detailed maintenance response."}}],
-                "rag": {"citations": [{"code": "3000", "id": "ragcite_1"}]},
+                "rag": {
+                    "answer_id": "chatcmpl_1",
+                    "citations": [{"code": "3000", "id": "ragcite_1"}],
+                },
             }
 
     check = runtime.check_chat(ChatClient(), "808d", "Alarm 3000", "3000")
 
     assert check.status == "PASS"
     assert "citations=1" in check.detail
+    assert "answer_id=True" in check.detail
 
 
 def test_runtime_markdown_discloses_live_gate_boundary():
@@ -151,3 +156,34 @@ def test_qdrant_count_sends_api_key_without_exposing_it():
     assert count == 42
     assert captured["request"].get_header("Api-key") == "secret-value"
     assert captured["timeout"] == 7
+
+
+def test_stream_contract_requires_shared_answer_id_and_expected_citation():
+    body = "\n\n".join([
+        "data: " + json.dumps({
+            "id": "chatcmpl_1",
+            "choices": [{"delta": {"content": "answer"}, "finish_reason": None}],
+            "rag": {
+                "answer_id": "chatcmpl_1",
+                "citations": [{"id": "ragcite_1", "code": "3000"}],
+            },
+        }),
+        "data: " + json.dumps({
+            "id": "chatcmpl_1",
+            "choices": [{"delta": {}, "finish_reason": "stop"}],
+        }),
+        "data: [DONE]",
+        "",
+    ])
+
+    ok, detail = runtime.validate_stream_contract(body, "3000")
+
+    assert ok is True
+    assert detail == {
+        "events": 2,
+        "ids": 1,
+        "citations": 1,
+        "expected_code": True,
+        "answer_id": True,
+        "done": True,
+    }

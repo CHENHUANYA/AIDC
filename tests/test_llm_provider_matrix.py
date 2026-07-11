@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -95,6 +96,14 @@ class LlmProviderMatrixTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("目前無法連線至 LLM 服務", body)
         self.assertIn("來源：Alarm 3000 / P.12", body)
         self.assertIn("data: [DONE]", body)
+        events = [
+            json.loads(line[5:].strip())
+            for line in body.splitlines()
+            if line.startswith("data:") and line[5:].strip() != "[DONE]"
+        ]
+        self.assertEqual(1, len({event["id"] for event in events}))
+        self.assertEqual(events[0]["id"], events[0]["rag"]["answer_id"])
+        self.assertEqual("3000", events[0]["rag"]["citations"][0]["code"])
 
 
 if __name__ == "__main__":

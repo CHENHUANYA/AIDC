@@ -250,9 +250,20 @@ def check_chat(runner: SmokeRunner, manual: str) -> None:
         if isinstance(data, dict)
         else None
     )
-    citations = data.get("rag", {}).get("citations", []) if isinstance(data, dict) else []
-    if code == 200 and isinstance(content, str) and citations:
-        runner.record("chat", "PASS", f"HTTP 200, len={len(content)}, citations={len(citations)}")
+    rag = data.get("rag", {}) if isinstance(data, dict) else {}
+    citations = rag.get("citations", []) if isinstance(rag, dict) else []
+    answer_id_ok = bool(
+        isinstance(data, dict)
+        and isinstance(rag, dict)
+        and data.get("id")
+        and rag.get("answer_id") == data.get("id")
+    )
+    if code == 200 and isinstance(content, str) and citations and answer_id_ok:
+        runner.record(
+            "chat",
+            "PASS",
+            f"HTTP 200, len={len(content)}, citations={len(citations)}, answer_id={answer_id_ok}",
+        )
     else:
         runner.record("chat", "FAIL", f"HTTP {code}, body={data}")
 

@@ -1,7 +1,7 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from app_context import ChatRequest, Message, build_rag_metadata, make_openai_response
+from app_context import ChatRequest, Message, build_rag_metadata, make_openai_response, make_sse_chunk
 from routes import chat_lookup_routes
 
 
@@ -38,9 +38,25 @@ def test_citation_ids_are_stable_and_openai_response_remains_compatible():
     assert first["citations"][0]["id"] == second["citations"][0]["id"]
     assert first["citations"][0]["source"] == "mock-week2-sop"
     response = make_openai_response("answer", rag=first)
+    second_response = make_openai_response("another")
     assert response["choices"][0]["message"]["content"] == "answer"
     assert response["rag"]["citation_count"] == 2
+    assert response["id"].startswith("chatcmpl_")
+    assert response["rag"]["answer_id"] == response["id"]
+    assert second_response["id"] != response["id"]
     assert "rag" not in make_openai_response("legacy-compatible")
+
+
+def test_sse_chunks_share_answer_id_and_only_first_chunk_needs_rag_metadata():
+    rag = build_rag_metadata("808d", "coolant", FakeEngine().retrieve("coolant", top_k=1))
+    first = make_sse_chunk("answer", rag=rag, response_id="chatcmpl_test")
+    finish = make_sse_chunk("", finish=True, response_id="chatcmpl_test")
+
+    assert '"id": "chatcmpl_test"' in first
+    assert '"answer_id": "chatcmpl_test"' in first
+    assert '"code": "340100"' in first
+    assert '"id": "chatcmpl_test"' in finish
+    assert '"rag"' not in finish
 
 
 def test_retrieve_endpoint_returns_ranked_structured_sources():

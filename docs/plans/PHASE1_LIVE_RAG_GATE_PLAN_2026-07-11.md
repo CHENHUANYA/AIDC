@@ -23,7 +23,7 @@ Authorization: Bearer {token}
 - `result_count` 與依排名排列的 `results`。
 - 每筆結果的穩定 `ragcite_*` ID、rank、code、title、page、source、source_file、doc_id、kind、excerpt 與完整 section text。
 
-Citation ID 由 collection、文件識別欄位與內容 SHA-256 衍生；相同來源在不同查詢中維持相同 ID，內容改變時 ID 也會改變。
+Citation ID 由 collection、文件識別欄位與內容 SHA-256 衍生；相同來源在不同查詢中維持相同 ID，內容改變時 ID 也會改變。每次回答另產生唯一 `chatcmpl_*` answer ID，並同時放在頂層 `id` 與 `rag.answer_id`，可直接寫入既有 feedback `answer_id` 欄位。
 
 ### Chat metadata
 
@@ -32,6 +32,7 @@ Citation ID 由 collection、文件識別欄位與內容 SHA-256 衍生；相同
 ```json
 {
   "rag": {
+    "answer_id": "chatcmpl_...",
     "collection": "808d",
     "query": "Alarm 3000 remedy",
     "citation_count": 1,
@@ -40,7 +41,7 @@ Citation ID 由 collection、文件識別欄位與內容 SHA-256 衍生；相同
 }
 ```
 
-free chat 不使用 RAG，因此不加入此區塊。串流回應目前維持既有 SSE 契約；structured streaming citation 是後續獨立切片。
+free chat 不使用 RAG，因此不加入此區塊。SSE 的第一個 JSON chunk 會包含相同 `rag` metadata，後續與 finish chunks 共用同一頂層 `id`；最後仍以 `data: [DONE]` 結束，因此既有 OpenAI-compatible client 可繼續消費。
 
 ## Live gate
 

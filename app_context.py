@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -310,9 +311,23 @@ def build_rag_metadata(collection: str, query: str, docs: list[dict]) -> dict:
     }
 
 
-def make_openai_response(content: str, *, rag: dict | None = None) -> dict:
+def new_answer_id() -> str:
+    return f"chatcmpl_{uuid.uuid4().hex}"
+
+
+def _rag_with_answer_id(rag: dict, answer_id: str) -> dict:
+    return {**rag, "answer_id": answer_id}
+
+
+def make_openai_response(
+    content: str,
+    *,
+    rag: dict | None = None,
+    response_id: str | None = None,
+) -> dict:
+    answer_id = response_id or new_answer_id()
     response = {
-        "id": "chatcmpl-alarm-rag",
+        "id": answer_id,
         "object": "chat.completion",
         "created": 0,
         "model": OLLAMA_MODEL,
@@ -324,13 +339,20 @@ def make_openai_response(content: str, *, rag: dict | None = None) -> dict:
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
     if rag is not None:
-        response["rag"] = rag
+        response["rag"] = _rag_with_answer_id(rag, answer_id)
     return response
 
 
-def make_sse_chunk(content: str, finish: bool = False) -> str:
+def make_sse_chunk(
+    content: str,
+    finish: bool = False,
+    *,
+    rag: dict | None = None,
+    response_id: str | None = None,
+) -> str:
+    answer_id = response_id or new_answer_id()
     chunk = {
-        "id": "chatcmpl-alarm-rag",
+        "id": answer_id,
         "object": "chat.completion.chunk",
         "created": 0,
         "model": OLLAMA_MODEL,
@@ -340,6 +362,8 @@ def make_sse_chunk(content: str, finish: bool = False) -> str:
             "finish_reason": "stop" if finish else None,
         }],
     }
+    if rag is not None:
+        chunk["rag"] = _rag_with_answer_id(rag, answer_id)
     return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
 

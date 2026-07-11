@@ -19,7 +19,7 @@ This smoke suite covers the minimum critical paths after frontend/backend refact
 
 4. Chat:
 - `POST /v1/{manual}/chat/completions`
-- Response includes structured `rag.citations` with stable source IDs.
+- Response includes a unique `id`, matching `rag.answer_id`, and structured `rag.citations` with stable source IDs.
 
 5. Retrieval:
 - `GET /v1/{manual}/retrieve?query=...&top_k=5`

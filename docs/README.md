@@ -19,6 +19,7 @@
 | `plans/PHASE1_MULTILINGUAL_BM25_PLAN_2026-07-11.md` | Phase 1 Unicode tokenizer、中英領域詞彙擴展與舊索引相容策略。 |
 | `plans/PHASE1_BM25_INDEX_UPGRADE_PLAN_2026-07-11.md` | Phase 1 BM25 index dry-run、備份、原子升級與回復程序。 |
 | `plans/PHASE1_LIVE_RAG_GATE_PLAN_2026-07-11.md` | Phase 1 structured retrieval、chat citation 與完整黃金題集 live gate。 |
+| `plans/PHASE1_ANSWER_ID_STREAMING_CITATION_PLAN_2026-07-11.md` | Phase 1 唯一 answer ID、feedback 關聯與 SSE citation 契約。 |
 | `reports/RAG_OFFLINE_BASELINE_2026-07-11.md` | Phase 1 離線 RAG 工程基準結果與逐題狀態。 |
 | `reports/RAG_OFFLINE_BASELINE_ENGINEERING_V1_1_0_2026-07-11.md` | 多語 BM25 修正後的 v1.1 基準與 tokenizer 相容性證據。 |
 | `reports/BM25_INDEX_UPGRADE_2026-07-11.md` | 三個本機 BM25 index 的備份、原子升級與 SHA-256 證據。 |

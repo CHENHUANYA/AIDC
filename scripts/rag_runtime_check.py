@@ -145,12 +145,15 @@ def check_chat(client: RuntimeClient, manual: str, prompt: str, expected_code: s
     rag = data.get("rag", {}) if isinstance(data, dict) else {}
     citations = rag.get("citations", []) if isinstance(rag, dict) else []
     citation_ok = bool(citations) and any(str(item.get("code") or "") == expected_code for item in citations)
-    ok = code == 200 and isinstance(content, str) and len(content.strip()) > 20 and citation_ok
+    response_id = str(data.get("id") or "") if isinstance(data, dict) else ""
+    answer_id_ok = bool(response_id and isinstance(rag, dict) and rag.get("answer_id") == response_id)
+    ok = code == 200 and isinstance(content, str) and len(content.strip()) > 20 and citation_ok and answer_id_ok
     source_hint = "fallback" if "LLM" in content and ("unavailable" in content.lower() or "Detail" in content) else "llm"
     return Check(
         "rag:chat",
         "PASS" if ok else "FAIL",
         f"HTTP {code}, len={len(content)}, citations={len(citations)}, expected_code={citation_ok}, "
+        f"answer_id={answer_id_ok}, "
         f"elapsed_ms={elapsed_ms}, mode={source_hint}",
     )
 
@@ -211,7 +214,47 @@ def check_gold_retrieval(client: RuntimeClient, dataset_path: Path, top_k: int) 
     return Check("rag:gold-dataset", "PASS" if ok else "FAIL", detail), report
 
 
-def check_stream_chat(client: RuntimeClient, manual: str, prompt: str) -> Check:
+def parse_sse_events(body: str) -> list[dict[str, Any]]:
+    events = []
+    for line in body.splitlines():
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def validate_stream_contract(body: str, expected_code: str) -> tuple[bool, dict[str, Any]]:
+    events = parse_sse_events(body)
+    ids = {str(event.get("id") or "") for event in events}
+    rag_events: list[dict[str, Any]] = []
+    for event in events:
+        rag = event.get("rag")
+        if isinstance(rag, dict):
+            rag_events.append(rag)
+    citations = rag_events[0].get("citations", []) if rag_events else []
+    citation_ok = any(str(item.get("code") or "") == expected_code for item in citations)
+    answer_id_ok = bool(rag_events and len(ids) == 1 and rag_events[0].get("answer_id") in ids)
+    done = "data: [DONE]" in body
+    ok = bool(events and done and citation_ok and answer_id_ok)
+    return ok, {
+        "events": len(events),
+        "ids": len(ids),
+        "citations": len(citations),
+        "expected_code": citation_ok,
+        "answer_id": answer_id_ok,
+        "done": done,
+    }
+
+
+def check_stream_chat(client: RuntimeClient, manual: str, prompt: str, expected_code: str) -> Check:
     req = request.Request(
         client.url(f"/v1/{manual}/chat/completions"),
         data=json.dumps(chat_payload(prompt, stream=True)).encode("utf-8"),
@@ -224,8 +267,15 @@ def check_stream_chat(client: RuntimeClient, manual: str, prompt: str) -> Check:
             code = resp.getcode()
     except Exception as exc:
         return Check("rag:stream-chat", "FAIL", str(exc))
-    ok = code == 200 and "data:" in body and "[DONE]" in body
-    return Check("rag:stream-chat", "PASS" if ok else "FAIL", f"HTTP {code}, bytes={len(body)}")
+    contract_ok, detail = validate_stream_contract(body, expected_code)
+    ok = code == 200 and contract_ok
+    return Check(
+        "rag:stream-chat",
+        "PASS" if ok else "FAIL",
+        f"HTTP {code}, bytes={len(body)}, events={detail['events']}, ids={detail['ids']}, "
+        f"citations={detail['citations']}, expected_code={detail['expected_code']}, "
+        f"answer_id={detail['answer_id']}, done={detail['done']}",
+    )
 
 
 def check_school_api_direct(timeout: int) -> Check:
@@ -424,7 +474,14 @@ def main() -> int:
     checks.append(Check("llm:last-source", "PASS" if post_chat_health.get("last_llm_source") in {"ollama", "school"} else "FAIL", str(post_chat_health.get("last_llm_source"))))
     if args.check_school_api:
         checks.append(check_school_api_direct(args.timeout))
-    checks.append(check_stream_chat(client, args.manual, f"Alarm {args.alarm_code} stream response runtime validation"))
+    checks.append(
+        check_stream_chat(
+            client,
+            args.manual,
+            f"Alarm {args.alarm_code} stream response runtime validation",
+            args.alarm_code,
+        )
+    )
     checks.append(check_not_ready_message(client))
 
     report = build_runtime_report(

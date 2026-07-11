@@ -29,6 +29,7 @@ from app_context import (
     log_query,
     make_openai_response,
     make_sse_chunk,
+    new_answer_id,
     parse_alarm_code_int,
     retrieval_citations,
 )
@@ -138,18 +139,21 @@ async def call_llm(messages: list[dict], temperature: float, max_tokens: int) ->
 
 async def handle_chat(req: ChatRequest, collection_name: str):
     engine = get_engine(collection_name)
+    user_query = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
 
     if not engine.ready:
         msg = NOT_READY_TEMPLATE.format(name=collection_name)
+        rag_metadata = build_rag_metadata(collection_name, user_query, [])
         if req.stream:
+            response_id = new_answer_id()
+
             async def s():
-                yield make_sse_chunk(msg)
-                yield make_sse_chunk("", finish=True)
+                yield make_sse_chunk(msg, rag=rag_metadata, response_id=response_id)
+                yield make_sse_chunk("", finish=True, response_id=response_id)
                 yield "data: [DONE]\n\n"
             return StreamingResponse(s(), media_type="text/event-stream")
-        return make_openai_response(msg)
+        return make_openai_response(msg, rag=rag_metadata)
 
-    user_query = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
     start_ts = time.time()
     augmented, docs = build_augmented_messages(req.messages, engine)
     try:
@@ -190,9 +194,12 @@ async def handle_chat(req: ChatRequest, collection_name: str):
     log_query(collection_name, user_query, source="api", elapsed_ms=elapsed_ms)
 
     if req.stream:
+        rag_metadata = build_rag_metadata(collection_name, user_query, docs)
+        response_id = new_answer_id()
+
         async def full_as_stream():
-            yield make_sse_chunk(content)
-            yield make_sse_chunk("", finish=True)
+            yield make_sse_chunk(content, rag=rag_metadata, response_id=response_id)
+            yield make_sse_chunk("", finish=True, response_id=response_id)
             yield "data: [DONE]\n\n"
         return StreamingResponse(full_as_stream(), media_type="text/event-stream")
 

@@ -94,6 +94,7 @@ Phase 1 offline RAG quality evaluation is documented in [docs/plans/PHASE1_RAG_Q
 Phase 1 multilingual BM25 normalization is documented in [docs/plans/PHASE1_MULTILINGUAL_BM25_PLAN_2026-07-11.md](docs/plans/PHASE1_MULTILINGUAL_BM25_PLAN_2026-07-11.md).
 The controlled BM25 index upgrade is documented in [docs/plans/PHASE1_BM25_INDEX_UPGRADE_PLAN_2026-07-11.md](docs/plans/PHASE1_BM25_INDEX_UPGRADE_PLAN_2026-07-11.md).
 The structured retrieval and live RAG gate are documented in [docs/plans/PHASE1_LIVE_RAG_GATE_PLAN_2026-07-11.md](docs/plans/PHASE1_LIVE_RAG_GATE_PLAN_2026-07-11.md).
+Answer IDs and streaming citations are documented in [docs/plans/PHASE1_ANSWER_ID_STREAMING_CITATION_PLAN_2026-07-11.md](docs/plans/PHASE1_ANSWER_ID_STREAMING_CITATION_PLAN_2026-07-11.md).
 The current delivery summary lives in [docs/PR_DELIVERY_SUMMARY_2026-07-10.md](docs/PR_DELIVERY_SUMMARY_2026-07-10.md).
 Delivery closeout status lives in [docs/DELIVERY_RISK_STATUS.md](docs/DELIVERY_RISK_STATUS.md).
 PostgreSQL PITR rehearsal instructions live in [docs/POSTGRESQL_PITR_RUNBOOK.md](docs/POSTGRESQL_PITR_RUNBOOK.md).
