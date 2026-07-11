@@ -71,3 +71,99 @@ def test_percentile_is_stable_for_short_soak_samples():
     assert percentile(values, 0.50) == 300
     assert percentile(values, 0.95) == 500
     assert percentile([], 0.95) == 0
+
+
+def test_restore_targets_cover_phase_b_rpo_rto_and_tables():
+    assert backup.RPO_HOURS == 24
+    assert backup.RTO_HOURS == 2
+    assert backup.CRITICAL_RESTORE_TABLES == (
+        "users",
+        "sessions",
+        "alarm_events",
+        "issues",
+        "work_orders",
+        "documents",
+        "document_versions",
+    )
+    assert set(backup.CRITICAL_RESTORE_TABLES).issubset(set(backup.TABLES))
+
+
+def test_critical_table_count_checks_detect_missing_and_mismatch():
+    manifest_counts = {table: 3 for table in backup.CRITICAL_RESTORE_TABLES}
+    restored_counts = dict(manifest_counts)
+    restored_counts["issues"] = 2
+    del restored_counts["documents"]
+
+    checks = backup.critical_table_count_checks(manifest_counts, restored_counts)
+
+    assert checks["users"] == {"expected": 3, "actual": 3, "match": True}
+    assert checks["issues"] == {"expected": 3, "actual": 2, "match": False}
+    assert checks["documents"] == {"expected": 3, "actual": None, "match": False}
+
+def test_wal_archive_health_reports_required_archive_failures():
+    report, item = health.wal_archive_health(
+        archive_mode="off",
+        wal_level="replica",
+        stats={"archived_count": 0, "failed_count": 0},
+        required=True,
+        max_failures=0,
+    )
+
+    assert item == {
+        "name": "wal-archive",
+        "status": "FAIL",
+        "detail": "archive_mode=off, wal_level=replica, failed_count=0, limit=0",
+    }
+    assert report["archive_mode"] == "off"
+
+
+def test_wal_archive_health_accepts_always_mode():
+    report, item = health.wal_archive_health(
+        archive_mode="always",
+        wal_level="replica",
+        stats={"archived_count": 1, "failed_count": 0},
+        required=True,
+        max_failures=0,
+    )
+
+    assert item["status"] == "PASS"
+    assert report["archive_mode"] == "always"
+
+
+def test_wal_archive_health_passes_when_enabled_without_failures():
+    report, item = health.wal_archive_health(
+        archive_mode="on",
+        wal_level="replica",
+        stats={"archived_count": 7, "failed_count": 0, "last_archived_wal": "000000010000000000000001"},
+        required=True,
+        max_failures=0,
+    )
+
+    assert item["status"] == "PASS"
+    assert report["archived_count"] == 7
+    assert report["last_archived_wal"] == "000000010000000000000001"
+
+def test_health_redacts_password_bearing_slow_queries():
+    query = "ALTER ROLE alarm_rag WITH PASSWORD 'super-secret-value'; POSTGRES_PASSWORD=also-secret"
+
+    redacted = health.redact_query_text(query)
+
+    assert "super-secret-value" not in redacted
+    assert "also-secret" not in redacted
+    assert "[REDACTED]" in redacted
+
+
+def test_redact_slow_query_preserves_metrics():
+    row = {
+        "query": "ALTER USER alarm_rag PASSWORD 'secret-value'",
+        "calls": 1,
+        "total_exec_time": 2.5,
+        "mean_exec_time": 2.5,
+        "rows": 0,
+    }
+
+    redacted = health.redact_slow_query(row)
+
+    assert redacted["query"] == "ALTER USER alarm_rag PASSWORD '[REDACTED]'"
+    assert redacted["calls"] == 1
+    assert redacted["total_exec_time"] == 2.5

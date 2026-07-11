@@ -15,6 +15,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 BACKUP_ROOT = ROOT / "backups" / "postgresql"
 SCRATCH_PREFIX = "alarm_rag_restore_drill_"
+RPO_HOURS = 24
+RTO_HOURS = 2
 TABLES = (
     "users",
     "sessions",
@@ -27,6 +29,15 @@ TABLES = (
     "documents",
     "document_versions",
     "system_settings",
+)
+CRITICAL_RESTORE_TABLES = (
+    "users",
+    "sessions",
+    "alarm_events",
+    "issues",
+    "work_orders",
+    "documents",
+    "document_versions",
 )
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -93,6 +104,19 @@ def table_counts(container: str, user: str, database: str) -> dict[str, int]:
     if len(values) != len(TABLES):
         raise RuntimeError(f"Unexpected table count output: {result.stdout!r}")
     return {table: int(value) for table, value in zip(TABLES, values)}
+
+
+def critical_table_count_checks(
+    manifest_counts: dict[str, int], restored_counts: dict[str, int]
+) -> dict[str, dict[str, Any]]:
+    return {
+        table: {
+            "expected": manifest_counts.get(table),
+            "actual": restored_counts.get(table),
+            "match": manifest_counts.get(table) == restored_counts.get(table),
+        }
+        for table in CRITICAL_RESTORE_TABLES
+    }
 
 
 def current_revision(container: str, user: str, database: str) -> str:
@@ -186,6 +210,11 @@ def backup_database(container: str, user: str, database: str, output: str = "") 
             "restore_list_entries": sum(1 for line in listing.splitlines() if line and not line.startswith(";")),
             "alembic_revision": current_revision(container, user, database),
             "table_counts": table_counts(container, user, database),
+            "restore_targets": {
+                "rpo_hours": RPO_HOURS,
+                "rto_hours": RTO_HOURS,
+                "critical_tables": list(CRITICAL_RESTORE_TABLES),
+            },
         }
         write_manifest(backup_dir / "manifest.json", manifest)
         return {"status": "ok", "backup": str(backup_dir), "manifest": manifest}
@@ -268,15 +297,21 @@ def restore_drill(container: str, user: str, backup: str) -> dict:
         )
         restored_counts = table_counts(container, user, scratch)
         restored_revision = current_revision(container, user, scratch)
+        critical_checks = critical_table_count_checks(manifest.get("table_counts", {}), restored_counts)
         checks = {
             "table_counts": restored_counts == manifest.get("table_counts"),
+            "critical_table_counts": all(item["match"] for item in critical_checks.values()),
             "alembic_revision": restored_revision == manifest.get("alembic_revision"),
         }
         return {
             "status": "ok" if all(checks.values()) else "fail",
             "backup": str(backup_dir),
+            "rpo_hours": RPO_HOURS,
+            "rto_hours": RTO_HOURS,
+            "critical_restore_tables": list(CRITICAL_RESTORE_TABLES),
             "scratch_database": scratch,
             "checks": checks,
+            "critical_table_count_checks": critical_checks,
             "restored_counts": restored_counts,
             "restored_revision": restored_revision,
         }

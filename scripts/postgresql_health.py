@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +12,24 @@ from db.session import DatabaseSettings, get_engine
 from scripts.database_check import check_database
 from scripts.postgresql_backup import BACKUP_ROOT, load_manifest, manifest_integrity
 
+SECRET_QUERY_PATTERNS = (
+    re.compile(r"(?i)(PASSWORD\s+(?:=\s*)?)'[^']*'"),
+    re.compile(r"(?i)(POSTGRES_PASSWORD\s*=\s*)\S+"),
+    re.compile(r"(?i)(password=)[^\s;]+"),
+)
+
+
+def redact_query_text(query: str) -> str:
+    redacted = query
+    for pattern in SECRET_QUERY_PATTERNS:
+        redacted = pattern.sub(r"\1'[REDACTED]'", redacted)
+    return redacted
+
+
+def redact_slow_query(row: dict) -> dict:
+    redacted = dict(row)
+    redacted["query"] = redact_query_text(str(redacted.get("query") or ""))
+    return redacted
 
 def check(name: str, status: str, detail: str) -> dict:
     return {"name": name, "status": status, "detail": detail}
@@ -39,6 +58,35 @@ def backup_health(max_age_hours: float, required: bool) -> tuple[dict, list[dict
     return {"path": str(backup_dir), "manifest": manifest, "integrity": integrity, "age_hours": age_hours}, checks
 
 
+def wal_archive_health(
+    *,
+    archive_mode: str,
+    wal_level: str,
+    stats: dict,
+    required: bool,
+    max_failures: int,
+) -> tuple[dict, dict]:
+    failed_count = int(stats.get("failed_count") or 0)
+    enabled = archive_mode in {"on", "always"}
+    if enabled and failed_count <= max_failures:
+        status = "PASS"
+    elif required or enabled:
+        status = "FAIL"
+    else:
+        status = "WARN"
+    detail = f"archive_mode={archive_mode}, wal_level={wal_level}, failed_count={failed_count}, limit={max_failures}"
+    return {
+        "archive_mode": archive_mode,
+        "wal_level": wal_level,
+        "archived_count": int(stats.get("archived_count") or 0),
+        "failed_count": failed_count,
+        "last_archived_wal": str(stats.get("last_archived_wal") or ""),
+        "last_archived_time": stats.get("last_archived_time"),
+        "last_failed_wal": str(stats.get("last_failed_wal") or ""),
+        "last_failed_time": stats.get("last_failed_time"),
+    }, check("wal-archive", status, detail)
+
+
 def database_health(
     *,
     max_connection_percent: float,
@@ -49,6 +97,8 @@ def database_health(
     backup_max_age_hours: float,
     require_backup: bool,
     slow_query_mean_ms: float,
+    require_wal_archive: bool,
+    max_wal_archive_failures: int,
 ) -> dict:
     schema = check_database("alembic.ini")
     settings = DatabaseSettings.from_env()
@@ -73,10 +123,17 @@ def database_health(
             FROM pg_stat_database
             WHERE datname = current_database()
         """)).mappings().one()
+        archive_mode = str(connection.scalar(text("SELECT current_setting('archive_mode')")) or "off")
+        wal_level = str(connection.scalar(text("SELECT current_setting('wal_level')")) or "")
+        archiver = dict(connection.execute(text("""
+            SELECT archived_count, last_archived_wal, last_archived_time,
+                   failed_count, last_failed_wal, last_failed_time
+            FROM pg_stat_archiver
+        """)).mappings().one())
         extension = bool(connection.scalar(text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')")))
         slow_queries = []
         if extension:
-            slow_queries = [dict(row) for row in connection.execute(text("""
+            slow_queries = [redact_slow_query(dict(row)) for row in connection.execute(text("""
                 SELECT left(query, 300) AS query, calls, total_exec_time, mean_exec_time, rows
                 FROM pg_stat_statements
                 WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
@@ -122,6 +179,14 @@ def database_health(
             f"worst_mean_ms={worst_mean_ms:.2f}, warn_threshold={slow_query_mean_ms:g}",
         ),
     ]
+    wal_archive, wal_check = wal_archive_health(
+        archive_mode=archive_mode,
+        wal_level=wal_level,
+        stats=archiver,
+        required=require_wal_archive,
+        max_failures=max_wal_archive_failures,
+    )
+    checks.append(wal_check)
     backup, backup_checks = backup_health(backup_max_age_hours, require_backup)
     checks.extend(backup_checks)
     failed = any(item["status"] == "FAIL" for item in checks)
@@ -154,6 +219,7 @@ def database_health(
         "tables": tables,
         "slow_queries": slow_queries,
         "backup": backup,
+        "wal_archive": wal_archive,
     }
 
 
@@ -167,6 +233,8 @@ def main() -> int:
     parser.add_argument("--backup-max-age-hours", type=float, default=24)
     parser.add_argument("--require-backup", action="store_true")
     parser.add_argument("--slow-query-mean-ms", type=float, default=1000)
+    parser.add_argument("--require-wal-archive", action="store_true")
+    parser.add_argument("--max-wal-archive-failures", type=int, default=0)
     parser.add_argument("--report", default="")
     args = parser.parse_args()
     report = database_health(
@@ -178,6 +246,8 @@ def main() -> int:
         backup_max_age_hours=args.backup_max_age_hours,
         require_backup=args.require_backup,
         slow_query_mean_ms=args.slow_query_mean_ms,
+        require_wal_archive=args.require_wal_archive,
+        max_wal_archive_failures=args.max_wal_archive_failures,
     )
     if args.report:
         output = Path(args.report)
