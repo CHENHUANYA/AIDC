@@ -42,3 +42,13 @@ python -m pytest -q tests/test_rag_retrieval_contract.py tests/test_rag_runtime_
 python scripts/rag_runtime_check.py --base-url http://localhost:8100 --require-vector-coverage
 python scripts/phase0_closeout_check.py --require-clean
 ```
+
+## 2026-07-11 本機執行結果
+
+- 非串流 chat：預期警報碼 citation 通過，頂層 ID 與 `rag.answer_id` 一致。
+- SSE：2 個 JSON events、1 個共用 answer ID、1 筆預期 citation，並正確收到 `[DONE]`。
+- 三個 collection 的 Qdrant points 與 BM25 sections 完全一致。
+- 13 筆黃金題集四項指標均為 1.0000。
+- live gate 總計 11 PASS、0 WARN、0 FAIL。
+
+版本化證據位於 `docs/reports/RAG_LIVE_ANSWER_ID_STREAMING_EVALUATION_2026-07-11.*`，報告不包含密碼、Bearer token、Qdrant API key 或本機絕對路徑。
