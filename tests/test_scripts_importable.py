@@ -3,6 +3,7 @@ import unittest
 
 
 SCRIPT_MODULES = [
+    "scripts.bm25_index_upgrade",
     "scripts.bootstrap_env",
     "scripts.data_maintenance",
     "scripts.local_validation_bundle",

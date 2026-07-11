@@ -17,6 +17,7 @@
 | `plans/PHASE1_CONTENT_OPTIMISTIC_LOCK_PLAN_2026-07-11.md` | Phase 1 Settings／Documents 管理員並行更新保護。 |
 | `plans/PHASE1_RAG_QUALITY_EVALUATION_PLAN_2026-07-11.md` | Phase 1 版本化黃金題集、離線檢索指標與品質門檻。 |
 | `plans/PHASE1_MULTILINGUAL_BM25_PLAN_2026-07-11.md` | Phase 1 Unicode tokenizer、中英領域詞彙擴展與舊索引相容策略。 |
+| `plans/PHASE1_BM25_INDEX_UPGRADE_PLAN_2026-07-11.md` | Phase 1 BM25 index dry-run、備份、原子升級與回復程序。 |
 | `reports/RAG_OFFLINE_BASELINE_2026-07-11.md` | Phase 1 離線 RAG 工程基準結果與逐題狀態。 |
 | `reports/RAG_OFFLINE_BASELINE_ENGINEERING_V1_1_0_2026-07-11.md` | 多語 BM25 修正後的 v1.1 基準與 tokenizer 相容性證據。 |
 | `MVP_BASELINE_STATUS.md` | 目前 MVP 功能基準與已完成項目。 |
