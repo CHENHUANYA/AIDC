@@ -47,3 +47,15 @@ python scripts/phase0_closeout_check.py --require-clean
 ```
 
 正式套用後，RAG 報告的 `index_tokenizer_versions` 應由 `legacy-whitespace-v0` 變為 `unicode-domain-v1`，且 `engineering-v1.1.0` 四項品質指標不得下降。
+
+## 2026-07-11 執行結果
+
+- `808d`：2,075 sections，升級完成。
+- `840d`：3,143 sections，升級完成。
+- `840dsl`：4,449 sections，升級完成。
+- 備份批次：`backups/bm25-index-upgrade/20260711T080409Z`。
+- 三個備份 SHA-256 均符合升級報告的 `before_sha256`，三個 runtime index 均符合 `after_sha256`。
+- 升級後再次 dry-run，三個 collection 均回報 `current`，沒有建立多餘備份。
+- `engineering-v1.1.0` 的 Recall@5、MRR、Evidence coverage、Source hit 均維持 1.0000。
+
+執行證據見 `docs/reports/BM25_INDEX_UPGRADE_2026-07-11.*` 與 `docs/reports/RAG_OFFLINE_BASELINE_ENGINEERING_V1_1_0_REINDEXED_2026-07-11.*`。

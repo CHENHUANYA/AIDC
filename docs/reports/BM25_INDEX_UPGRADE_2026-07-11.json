@@ -1,0 +1,40 @@
+{
+  "status": "pass",
+  "mode": "apply",
+  "target_tokenizer_version": "unicode-domain-v1",
+  "backup_dir": "backups/bm25-index-upgrade/20260711T080409Z",
+  "indexes": [
+    {
+      "collection": "808d",
+      "path": "alarm_db/bm25_808d.pkl",
+      "sections": 2075,
+      "from_version": "legacy-whitespace-v0",
+      "to_version": "unicode-domain-v1",
+      "before_sha256": "6db4015acb04123cd28884db295cbcf074a743a0e06c803eb0467021c10beea8",
+      "status": "upgraded",
+      "after_sha256": "2c3cf43f305727262926c9df762d98e345bc6c7f33c123d2494d6cc0bae6437f"
+    },
+    {
+      "collection": "840d",
+      "path": "alarm_db/bm25_840d.pkl",
+      "sections": 3143,
+      "from_version": "legacy-whitespace-v0",
+      "to_version": "unicode-domain-v1",
+      "before_sha256": "77b1ba83bf0e51b0c3077bb0dee45148d973994679ccc02182dcd10d6d2a1474",
+      "status": "upgraded",
+      "after_sha256": "dffed472a4f9f9e7fbc01dbfb2429469782e82df0eeee09ca400803ce710bfd5"
+    },
+    {
+      "collection": "840dsl",
+      "path": "alarm_db/bm25_840dsl.pkl",
+      "sections": 4449,
+      "from_version": "legacy-whitespace-v0",
+      "to_version": "unicode-domain-v1",
+      "before_sha256": "59af62d974abd7563bfd9038b5579b80952abe1ef4b8ac754caa25d12b20dc3d",
+      "status": "upgraded",
+      "after_sha256": "5ce543b7b8664be2ea5e77ae7f24a91e8a05ed574b0e1d29630f6c156d1e27c4"
+    }
+  ],
+  "generated_at": "2026-07-11T08:04:10.650995+00:00",
+  "git_revision": "cee0816f8f5b81769ce734bb3989a4ed32344348"
+}

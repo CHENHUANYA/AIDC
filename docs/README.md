@@ -20,6 +20,8 @@
 | `plans/PHASE1_BM25_INDEX_UPGRADE_PLAN_2026-07-11.md` | Phase 1 BM25 index dry-run、備份、原子升級與回復程序。 |
 | `reports/RAG_OFFLINE_BASELINE_2026-07-11.md` | Phase 1 離線 RAG 工程基準結果與逐題狀態。 |
 | `reports/RAG_OFFLINE_BASELINE_ENGINEERING_V1_1_0_2026-07-11.md` | 多語 BM25 修正後的 v1.1 基準與 tokenizer 相容性證據。 |
+| `reports/BM25_INDEX_UPGRADE_2026-07-11.md` | 三個本機 BM25 index 的備份、原子升級與 SHA-256 證據。 |
+| `reports/RAG_OFFLINE_BASELINE_ENGINEERING_V1_1_0_REINDEXED_2026-07-11.md` | 實體 index 升級後的 v1.1 品質回歸報告。 |
 | `MVP_BASELINE_STATUS.md` | 目前 MVP 功能基準與已完成項目。 |
 | `DATA_MAINTENANCE.md` | 本機 demo 資料清理、備份、匯出與歸檔指令。 |
 | `SMOKE_TEST.md` | 基本 smoke test 流程與預期結果。 |
