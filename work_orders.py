@@ -34,6 +34,7 @@ WO_FILE = os.path.join(DB_DIR, "work_orders.json")
 ARCHIVE_DIR = os.path.join(DB_DIR, "archive")
 STATUSES = ["pending", "assigned", "in_progress", "completed", "verified"]
 PRIORITIES = ["low", "medium", "high", "critical"]
+WORK_ORDER_STALE_UPDATE_MESSAGE = "Work order changed since you loaded it. Reload and retry."
 KB_REVIEW_STATUSES = [
     "not_ready",
     "pending_review",
@@ -42,7 +43,7 @@ KB_REVIEW_STATUSES = [
     "ingested",
     "validation_failed",
 ]
-OPERATOR_WORK_ORDER_PATCH_FIELDS = {"status", "verified_by", "notes", "updated_by"}
+OPERATOR_WORK_ORDER_PATCH_FIELDS = {"status", "verified_by", "notes", "updated_by", "version"}
 MAINTENANCE_WORK_ORDER_PATCH_FIELDS = {
     "status",
     "priority",
@@ -62,6 +63,7 @@ MAINTENANCE_WORK_ORDER_PATCH_FIELDS = {
     "llm_expected_fix",
     "llm_answer_used",
     "updated_by",
+    "version",
 }
 
 
@@ -237,6 +239,8 @@ def _parse_iso(value: str) -> Optional[datetime]:
     except (ValueError, TypeError):
         return None
 
+def _now_like(value: datetime) -> datetime:
+    return datetime.now(value.tzinfo) if value.tzinfo else datetime.now()
 
 def _recent_day_keys(days: int) -> List[str]:
     now = datetime.now()
@@ -404,6 +408,7 @@ class UpdateWorkOrder(BaseModel):
     llm_answer_used: Optional[bool] = None
     kb_candidate: Optional[bool] = None
     updated_by: Optional[str] = None
+    version: Optional[int] = None
 
 
 class KnowledgeReviewRequest(BaseModel):
@@ -465,6 +470,7 @@ def create_order_dict(
         "created_at": now,
         "updated_at": now,
         "completed_at": "",
+        "version": 1,
         "work_order_history": [{
             "action": "created",
             "user_id": created_by,
@@ -645,7 +651,7 @@ async def api_order_stats(actor: dict = Depends(get_actor)):
             open_orders += 1
             if not (o.get("assigned_to") or "").strip():
                 unassigned_open += 1
-            if created_at and (datetime.now() - created_at) > timedelta(hours=24):
+            if created_at and (_now_like(created_at) - created_at) > timedelta(hours=24):
                 overdue_open += 1
         if o["status"] in ("assigned", "in_progress"):
             assigned_orders += 1
@@ -783,6 +789,12 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
     field_permission_error = _work_order_patch_permission_error(actor, req)
     if field_permission_error:
         return {"status": "error", "message": field_permission_error}
+    try:
+        current_version = int(order.get("version") or 1)
+    except (TypeError, ValueError):
+        current_version = 1
+    if req.version is not None and req.version != current_version:
+        return {"status": "error", "message": WORK_ORDER_STALE_UPDATE_MESSAGE}
 
     now = datetime.now().isoformat()
     before_order = dict(order)
@@ -868,6 +880,10 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
             to_status,
             field_changes(before_order, order, changed_fields),
         )
+    if req.version is None and changed_fields:
+        return {"status": "error", "message": WORK_ORDER_STALE_UPDATE_MESSAGE}
+    if changed_fields and not postgres_store_enabled():
+        order["version"] = current_version + 1
     orders[idx] = order
     _save_orders(orders)
 

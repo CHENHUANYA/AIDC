@@ -538,12 +538,18 @@ function closeOperatorIssueModal() {
 async function patchOperatorIssue(issueId, payload, successMessage) {
   const app = operatorApp();
   if (!app) return null;
+  const issue = getOperatorIssue(issueId);
+  const body = {
+    ...payload,
+    updated_by: getOperatorUserId(),
+    ...(payload.version !== undefined || issue?.version === undefined ? {} : { version: issue.version }),
+  };
 
   try {
     const data = await app.apiJson(`/issues/${encodeURIComponent(issueId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...payload, updated_by: getOperatorUserId() }),
+      body: JSON.stringify(body),
     });
     if (data.status !== 'ok') throw new Error(data.message || '更新問題失敗');
     setOperatorIssue(data.issue);

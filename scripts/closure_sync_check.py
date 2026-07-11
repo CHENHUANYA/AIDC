@@ -56,11 +56,17 @@ def actor_for(user_id: str) -> dict:
 
 def patch_order(order_id: str, **kwargs):
     actor = actor_for(str(kwargs.get("updated_by") or "supervisor01"))
+    if "version" not in kwargs:
+        current = work_orders.get_order_dict(order_id) or {}
+        kwargs["version"] = current.get("version")
     return run(work_orders.api_update_order(order_id, work_orders.UpdateWorkOrder(**kwargs), actor=actor))
 
 
 def patch_issue(issue_id: str, **kwargs):
     actor = actor_for(str(kwargs.get("updated_by") or "supervisor01"))
+    if "version" not in kwargs:
+        current = issues.get_issue_dict(issue_id) or {}
+        kwargs["version"] = current.get("version")
     return run(issues.api_update_issue(issue_id, issues.UpdateIssue(**kwargs), actor=actor))
 
 

@@ -309,12 +309,15 @@ def check_work_order_crud(runner: SmokeRunner, manual: str, alarm_code: str) -> 
         return
     runner.record("work-order:create", "PASS", f"id={order_id}")
 
+    _, fetched = runner.get_json(f"/work-orders/{order_id}")
+    fresh_order = fetched.get("order") if isinstance(fetched, dict) else {}
     update_payload = {
         "status": "completed",
         "resolution": "smoke test resolution",
         "root_cause": "smoke test root cause",
         "repair_action": "smoke test repair action",
         "notes": "smoke test notes",
+        "version": fresh_order.get("version", order.get("version")) if isinstance(fresh_order, dict) else order.get("version"),
     }
     code, updated = runner.patch_json(f"/work-orders/{order_id}", update_payload)
     if code == 200 and isinstance(updated, dict) and updated.get("status") == "ok":

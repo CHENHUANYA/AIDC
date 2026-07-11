@@ -413,10 +413,20 @@ function exportSupervisorCsv() {
   ]);
 }
 
-function supervisorWorkOrderPatch(app, values) {
+function supervisorOrderVersion(app, orderId) {
+  return (app?.getState('supervisorOrders') || []).find((item) => item.id === orderId)?.version;
+}
+
+function supervisorIssueVersion(app, issueId) {
+  return (app?.getState('supervisorIssues') || []).find((item) => item.issue_id === issueId)?.version;
+}
+
+function supervisorWorkOrderPatch(app, orderId, values) {
+  const version = supervisorOrderVersion(app, orderId);
   return {
     updated_by: app.currentUserId(),
     ...values,
+    ...(values.version !== undefined || version === undefined ? {} : { version }),
   };
 }
 
@@ -424,7 +434,7 @@ async function patchSupervisorOrder(app, orderId, values) {
   const data = await app.apiJson(`/work-orders/${encodeURIComponent(orderId)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(supervisorWorkOrderPatch(app, values)),
+    body: JSON.stringify(supervisorWorkOrderPatch(app, orderId, values)),
   });
   if (data.status !== 'ok') {
     throw new Error(data.message || '更新失敗');
@@ -581,13 +591,23 @@ async function verifySupervisorOrder(orderId) {
     await app.apiJson(`/work-orders/${encodeURIComponent(orderId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'verified', verified_by: userId, updated_by: userId }),
+      body: JSON.stringify({
+        status: 'verified',
+        verified_by: userId,
+        updated_by: userId,
+        ...(order.version === undefined ? {} : { version: order.version }),
+      }),
     });
     if (order.issue_id) {
+      const issueVersion = supervisorIssueVersion(app, order.issue_id);
       await app.apiJson(`/issues/${encodeURIComponent(order.issue_id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'verified', updated_by: userId }),
+        body: JSON.stringify({
+          status: 'verified',
+          updated_by: userId,
+          ...(issueVersion === undefined ? {} : { version: issueVersion }),
+        }),
       });
     }
     setSupervisorResult(`工單 #${orderId} 已驗證`);
@@ -607,10 +627,15 @@ async function requestSupervisorRework(issueId) {
     return;
   }
   try {
+    const version = supervisorIssueVersion(app, issueId);
     await app.apiJson(`/issues/${encodeURIComponent(issueId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'open', operator_note: `[Supervisor rework] ${note}` }),
+      body: JSON.stringify({
+        status: 'open',
+        operator_note: `[Supervisor rework] ${note}`,
+        ...(version === undefined ? {} : { version }),
+      }),
     });
     setSupervisorResult(`Issue ${issueId} 已退回重工`);
     await loadSupervisorConsole();

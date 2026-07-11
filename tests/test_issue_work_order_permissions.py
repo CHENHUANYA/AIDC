@@ -1,4 +1,5 @@
 import shutil
+from datetime import datetime, timedelta, timezone
 import unittest
 import uuid
 from pathlib import Path
@@ -113,7 +114,7 @@ class IssueWorkOrderPermissionTests(unittest.IsolatedAsyncioTestCase):
 
         result = await work_orders.api_update_order(
             order["id"],
-            work_orders.UpdateWorkOrder(priority="high"),
+            work_orders.UpdateWorkOrder(priority="high", version=order["version"]),
             actor=SUPERVISOR,
         )
 
@@ -123,5 +124,99 @@ class IssueWorkOrderPermissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("open", synced_issue["status"])
 
 
+
+    async def test_issue_update_without_version_is_rejected(self):
+        issue = issues.create_issue_dict(
+            machine_id="CNC-01",
+            description="Original description",
+            line_id="LINE-A",
+            created_by="operator01",
+        )
+
+        result = await issues.api_update_issue(
+            issue["issue_id"],
+            issues.UpdateIssue(description="No version overwrite"),
+            actor=SUPERVISOR,
+        )
+
+        self.assertEqual("error", result["status"])
+        self.assertIn("Reload and retry", result["message"])
+        self.assertEqual("Original description", issues.get_issue_dict(issue["issue_id"])["description"])
+
+    async def test_work_order_update_without_version_is_rejected(self):
+        _, order = self.create_linked_issue_and_order()
+
+        result = await work_orders.api_update_order(
+            order["id"],
+            work_orders.UpdateWorkOrder(priority="high"),
+            actor=SUPERVISOR,
+        )
+
+        self.assertEqual("error", result["status"])
+        self.assertIn("Reload and retry", result["message"])
+        self.assertEqual("medium", work_orders.get_order_dict(order["id"])["priority"])
+
+    async def test_stale_issue_update_is_rejected_with_reload_message(self):
+        issue = issues.create_issue_dict(
+            machine_id="CNC-01",
+            description="Original description",
+            line_id="LINE-A",
+            created_by="operator01",
+        )
+        fresh = await issues.api_update_issue(
+            issue["issue_id"],
+            issues.UpdateIssue(status="assigned", version=issue["version"]),
+            actor=SUPERVISOR,
+        )
+        self.assertEqual("ok", fresh["status"])
+        self.assertEqual(2, fresh["issue"]["version"])
+
+        stale = await issues.api_update_issue(
+            issue["issue_id"],
+            issues.UpdateIssue(description="Stale overwrite", version=issue["version"]),
+            actor=SUPERVISOR,
+        )
+
+        self.assertEqual("error", stale["status"])
+        self.assertIn("Reload and retry", stale["message"])
+        self.assertNotEqual("Stale overwrite", issues.get_issue_dict(issue["issue_id"])["description"])
+
+    async def test_stale_work_order_update_is_rejected_with_reload_message(self):
+        _, order = self.create_linked_issue_and_order()
+        fresh = await work_orders.api_update_order(
+            order["id"],
+            work_orders.UpdateWorkOrder(priority="high", version=order["version"]),
+            actor=SUPERVISOR,
+        )
+        self.assertEqual("ok", fresh["status"])
+        self.assertEqual(2, fresh["order"]["version"])
+
+        stale = await work_orders.api_update_order(
+            order["id"],
+            work_orders.UpdateWorkOrder(priority="critical", version=order["version"]),
+            actor=SUPERVISOR,
+        )
+
+        self.assertEqual("error", stale["status"])
+        self.assertIn("Reload and retry", stale["message"])
+        self.assertEqual("high", work_orders.get_order_dict(order["id"])["priority"])
+
+
+    async def test_work_order_stats_accepts_timezone_aware_created_at(self):
+        order = work_orders.create_order_dict(
+            alarm_code="3000",
+            machine_id="CNC-01",
+            description="Aware timestamp order",
+            created_by="operator01",
+        )
+        orders = work_orders._load_orders()
+        orders[0]["created_at"] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        work_orders._save_orders(orders)
+
+        result = await work_orders.api_order_stats(actor=SUPERVISOR)
+
+        self.assertEqual(1, result["total"])
+        self.assertEqual(1, result["overdue_open"])
+        self.assertEqual(1, result["by_source"][order["source"]])
 if __name__ == "__main__":
     unittest.main()

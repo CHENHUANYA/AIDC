@@ -101,5 +101,18 @@ class FrontendApiContractTests(unittest.TestCase):
         self.assertIn("JSON.stringify(body)", source)
 
 
+    def test_issue_and_work_order_updates_send_optimistic_lock_versions(self):
+        operator_source = (ROOT / "static" / "js" / "pages" / "operator.js").read_text(encoding="utf-8")
+        maintenance_source = (ROOT / "static" / "js" / "pages" / "maintenance.js").read_text(encoding="utf-8")
+        supervisor_source = (ROOT / "static" / "js" / "pages" / "supervisor.js").read_text(encoding="utf-8")
+
+        self.assertIn("issue?.version", operator_source)
+        self.assertIn("version: issue.version", operator_source)
+        self.assertIn("order?.version", maintenance_source)
+        self.assertIn("version: order.version", maintenance_source)
+        self.assertIn("supervisorOrderVersion", supervisor_source)
+        self.assertIn("supervisorIssueVersion", supervisor_source)
+        self.assertIn("{ version }", supervisor_source)
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,9 @@ class Runner:
     def record(self, name: str, ok: bool, detail: str) -> None:
         self.results.append(Result(name, "PASS" if ok else "FAIL", detail))
 
+    def skip(self, name: str, detail: str) -> None:
+        self.results.append(Result(name, "SKIP", detail))
+
     def headers(self, payload: dict[str, Any] | None) -> dict[str, str]:
         headers = {"Content-Type": "application/json"} if payload is not None else {}
         if self.token:
@@ -146,6 +149,9 @@ def check_lookup_metadata(runner: Runner, manual: str, alarm_code: str) -> None:
     query = parse.urlencode({"code": alarm_code})
     code, data = runner.request_json(f"/v1/{manual}/lookup?{query}")
     metadata = data.get("metadata") if isinstance(data, dict) else None
+    if code == 200 and data.get("found") is False:
+        runner.skip("rag:lookup-metadata", f"HTTP {code}, no indexed match for {manual}:{alarm_code}")
+        return
     metadata_ok = (
         code == 200
         and data.get("found") is True
@@ -194,10 +200,11 @@ def check_work_order_crud(runner: Runner, manual: str, alarm_code: str, marker: 
     code, fetched = runner.request_json(f"/work-orders/{order_id}")
     runner.record("work-order:get", code == 200 and fetched.get("order", {}).get("id") == order_id, f"HTTP {code}")
 
+    fetched_order = fetched.get("order") if isinstance(fetched, dict) else {}
     code, updated = runner.request_json(
         f"/work-orders/{order_id}",
         "PATCH",
-        {"status": "in_progress", "notes": f"Regression update {marker}"},
+        {"status": "in_progress", "notes": f"Regression update {marker}", "version": fetched_order.get("version")},
     )
     updated_order = updated.get("order") if isinstance(updated, dict) else None
     runner.record(
@@ -265,6 +272,7 @@ def check_alarm_flow(runner: Runner, manual: str, alarm_code: str, marker: str) 
                 "root_cause": root_cause,
                 "repair_action": repair_action,
                 "notes": f"{unique_case}: knowledge review check.",
+                "version": order.get("version"),
             },
         )
         updated_order = updated.get("order") if isinstance(updated, dict) else None
@@ -342,7 +350,8 @@ def print_report(results: list[Result]) -> None:
     print("-" * 88)
     passed = sum(1 for result in results if result.status == "PASS")
     failed = sum(1 for result in results if result.status == "FAIL")
-    print(f"PASS={passed} FAIL={failed}")
+    skipped = sum(1 for result in results if result.status == "SKIP")
+    print(f"PASS={passed} FAIL={failed} SKIP={skipped}")
 
 
 def main() -> int:

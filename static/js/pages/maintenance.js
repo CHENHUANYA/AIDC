@@ -140,6 +140,10 @@ function findCurrentOrder(orderId) {
   return (maintenanceApp()?.getState('maintenanceOrders') || []).find((order) => order.id === orderId);
 }
 
+function getMaintenanceOrder(orderId) {
+  return findCurrentOrder(orderId);
+}
+
 function workOrderCard(order) {
   const app = maintenanceApp();
   const description = order.description ? order.description.slice(0, 90) : '無描述';
@@ -329,12 +333,18 @@ async function createWorkOrderFromIssue(issueId) {
 async function patchMaintenanceWorkOrder(orderId, payload, fallbackMessage) {
   const app = maintenanceApp();
   if (!app) return null;
+  const order = getMaintenanceOrder(orderId);
+  const body = {
+    ...payload,
+    updated_by: payload.updated_by || currentMaintenanceUser(),
+    ...(payload.version !== undefined || order?.version === undefined ? {} : { version: order.version }),
+  };
 
   try {
     const data = await app.apiJson(`/work-orders/${encodeURIComponent(orderId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...payload, updated_by: payload.updated_by || currentMaintenanceUser() }),
+      body: JSON.stringify(body),
     });
     if (data.status !== 'ok') throw new Error(data.message || fallbackMessage);
     await loadMaintenanceData();
@@ -565,6 +575,7 @@ async function saveMaintenanceWorkOrder() {
   const app = maintenanceApp();
   const orderId = app?.getState('maintenanceCurrentOrderId');
   if (!app || !orderId) return;
+  const order = getMaintenanceOrder(orderId);
 
   const payload = {
     status: app.$('mtEditStatus').value,
@@ -585,6 +596,7 @@ async function saveMaintenanceWorkOrder() {
     llm_expected_fix: app.$('mtEditResolution').value.trim(),
     llm_answer_used: Boolean(app.$('mtEditLlmCorrectness').value || app.$('mtEditLlmCoverage').value),
     updated_by: currentMaintenanceUser(),
+    ...(order?.version === undefined ? {} : { version: order.version }),
   };
 
   if (payload.status === 'in_progress' && !payload.accepted_by) payload.accepted_by = currentMaintenanceUser();

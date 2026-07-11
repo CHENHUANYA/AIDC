@@ -33,8 +33,9 @@ ISSUE_FILE = os.path.join(DB_DIR, "issues.json")
 
 ISSUE_STATUSES = ["open", "assigned", "in_progress", "completed", "verified", "cancelled"]
 ISSUE_SEVERITIES = ["info", "low", "medium", "high", "critical"]
-OPERATOR_ISSUE_PATCH_FIELDS = {"status", "operator_note", "updated_by"}
-MAINTENANCE_ISSUE_PATCH_FIELDS = {"status", "resolution_summary", "operator_note", "updated_by"}
+OPERATOR_ISSUE_PATCH_FIELDS = {"status", "operator_note", "updated_by", "version"}
+MAINTENANCE_ISSUE_PATCH_FIELDS = {"status", "resolution_summary", "operator_note", "updated_by", "version"}
+ISSUE_STALE_UPDATE_MESSAGE = "Issue changed since you loaded it. Reload and retry."
 
 
 class CreateIssue(BaseModel):
@@ -63,6 +64,7 @@ class UpdateIssue(BaseModel):
     resolution_summary: Optional[str] = None
     operator_note: Optional[str] = None
     updated_by: Optional[str] = None
+    version: Optional[int] = None
 
 
 def _load_issues() -> List[dict]:
@@ -240,6 +242,7 @@ def create_issue_dict(
         "created_at": now,
         "updated_at": now,
         "completed_at": "",
+        "version": 1,
     }
     issues = _load_issues()
     issues.insert(0, issue)
@@ -497,6 +500,12 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
     field_permission_error = _issue_patch_permission_error(actor, req)
     if field_permission_error:
         return {"status": "error", "message": field_permission_error}
+    try:
+        current_version = int(issue.get("version") or 1)
+    except (TypeError, ValueError):
+        current_version = 1
+    if req.version is not None and req.version != current_version:
+        return {"status": "error", "message": ISSUE_STALE_UPDATE_MESSAGE}
 
     changed_fields = []
     updated_by = actor_id(actor)
@@ -554,6 +563,11 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
             to_status,
             field_changes(before_issue, issue, changed_fields),
         )
+    note_added = bool((req.operator_note or "").strip()) if req.operator_note is not None else False
+    if req.version is None and (changed_fields or note_added):
+        return {"status": "error", "message": ISSUE_STALE_UPDATE_MESSAGE}
+    if (changed_fields or note_added) and not postgres_store_enabled():
+        issue["version"] = current_version + 1
     issues[index] = issue
     _save_issues(issues)
     synced_work_order = None

@@ -29,7 +29,7 @@ TEST_PASSWORD = "BrowserPass123"
 ROLES = {
     "operator01": "/operator",
     "maintenance01": "/maintenance",
-    "supervisor01": "/dashboard",
+    "supervisor01": "/supervisor",
     "admin01": "/admin",
 }
 VIEWPORTS = {
@@ -359,13 +359,13 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
         page.fill("#adminIngestTitle", "Browser E2E note")
         page.fill("#adminIngestText", "Browser E2E knowledge note for alarm acceptance.")
         page.click("#adminIngestBtn")
-        page.wait_for_timeout(1200)
-        page.click('[data-admin-section-target="sessions"]')
-        page.click('button[onclick="loadAdminSessions()"]')
-        page.wait_for_timeout(500)
-        report["flows"].append({"name": "admin:kb_ingest_sessions", "status": "ok"})
-        scan_page(page, "flow-admin-kb-ingest", report)
-
+        page.wait_for_function(
+            """() => {
+              const docs = window.AlarmApp?.getState('adminKbDocuments') || [];
+              return docs.some((item) => item.kind === 'text' && !item.legacy);
+            }""",
+            timeout=15000,
+        )
         doc_id = page.evaluate(
             """() => {
               const docs = window.AlarmApp?.getState('adminKbDocuments') || [];
@@ -375,6 +375,12 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
         )
         if not doc_id:
             raise AssertionError("admin KB text document id was not found after ingest")
+        page.click('[data-admin-section-target="sessions"]')
+        page.click('button[onclick="loadAdminSessions()"]')
+        page.wait_for_timeout(500)
+        report["flows"].append({"name": "admin:kb_ingest_sessions", "status": "ok", "doc_id": doc_id})
+        scan_page(page, "flow-admin-kb-ingest", report)
+
         page.evaluate("(docId) => window.deleteAdminKbDocument(docId)", doc_id)
         page.wait_for_timeout(1200)
         report["flows"].append({"name": "admin:kb_delete_document", "status": "ok", "doc_id": doc_id})

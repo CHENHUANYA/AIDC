@@ -35,6 +35,20 @@ def make_xlsx_zip(entries: dict[str, bytes], compression: int = zipfile.ZIP_DEFL
 
 
 class WorkOrderImportTests(unittest.IsolatedAsyncioTestCase):
+    def test_excel_mapping_preserves_chinese_headers_and_labels(self):
+        self.assertEqual("待處理", work_orders.STATUS_LABELS["pending"])
+        self.assertEqual("緊急", work_orders.PRIORITY_LABELS["critical"])
+
+        mapping = work_orders._detect_columns(["警報代碼", "機台", "描述", "技師", "處理結果"])
+
+        self.assertEqual({
+            0: "alarm_code",
+            1: "machine_id",
+            2: "description",
+            3: "assigned_to",
+            4: "resolution",
+        }, mapping)
+
     async def test_excel_import_rejects_files_over_server_limit(self):
         tmp_root = Path("tests_tmp") / f"excel_{uuid.uuid4().hex}"
         tmp_root.mkdir(parents=True, exist_ok=False)

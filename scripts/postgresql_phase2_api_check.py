@@ -59,7 +59,7 @@ async def run_checks() -> dict:
 
         update_result = await api_update_order(
             str(order.get("id")),
-            UpdateWorkOrder(notes="Phase 2 PostgreSQL API update"),
+            UpdateWorkOrder(notes="Phase 2 PostgreSQL API update", version=order.get("version")),
             actor=actor,
         )
         results["order_update"] = (

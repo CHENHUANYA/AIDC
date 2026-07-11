@@ -1,4 +1,6 @@
 import shutil
+import sys
+import types
 import unittest
 import uuid
 from pathlib import Path
@@ -46,6 +48,7 @@ class KnowledgeReviewTests(unittest.IsolatedAsyncioTestCase):
                     repair_action="Cleaned sensor and reset emergency stop",
                     resolution="Alarm cleared and spindle started normally",
                     completed_by="maintenance01",
+                    version=order["version"],
                 ),
                 actor=MAINTENANCE,
             )
@@ -86,6 +89,55 @@ class KnowledgeReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("admin01", saved["kb_reviewed_by"])
         self.assertTrue(saved["kb_ingested_at"])
         self.assertEqual(ingest_result, saved["kb_ingest_result"])
+
+    async def test_auto_feedback_text_uses_readable_chinese_labels(self):
+        captured = {}
+
+        class FakeRequest:
+            def __init__(self, **payload):
+                captured["payload"] = payload
+
+        class FakeEngine:
+            sections = [{"doc_id": "doc-1"}]
+
+            def retrieve(self, query, top_k=5):
+                return [{"meta": {"doc_id": "doc-1"}}]
+
+        async def fake_ingest_text_entry(manual, request):
+            return {"status": "ok", "doc_id": "doc-1"}
+
+        app_context = types.ModuleType("app_context")
+        app_context.IngestTextRequest = FakeRequest
+        app_context.get_engine = lambda manual: FakeEngine()
+        ingest_routes = types.ModuleType("routes.ingest_routes")
+        ingest_routes.ingest_text_entry = fake_ingest_text_entry
+
+        order = {
+            "id": "WO-KB-TEXT",
+            "alarm_code": "3000",
+            "machine_id": "CNC-01",
+            "description": "Spindle cannot start",
+            "root_cause": "Door interlock sensor was dirty",
+            "repair_action": "Cleaned sensor",
+            "resolution": "Alarm cleared",
+            "assigned_to": "maintenance01",
+            "completed_at": "2026-07-09T10:00:00",
+            "notes": "Verified on line",
+            "manual": "808d",
+        }
+
+        with patch.dict(sys.modules, {
+            "app_context": app_context,
+            "routes.ingest_routes": ingest_routes,
+        }):
+            result = await work_orders._auto_feedback_to_kb(order)
+
+        text = captured["payload"]["text"]
+        self.assertTrue(result["auto_ingested"])
+        self.assertIn("[維修工單]", text)
+        self.assertIn("機台: CNC-01", text)
+        self.assertIn("備註: Verified on line", text)
+        self.assertNotIn("???", text)
 
     async def test_non_admin_cannot_review_candidate(self):
         order = await self.complete_candidate()
