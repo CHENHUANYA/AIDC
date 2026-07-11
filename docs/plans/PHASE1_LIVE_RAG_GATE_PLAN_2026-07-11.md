@@ -77,3 +77,15 @@ python -m pytest -q tests/test_rag_retrieval_contract.py tests/test_rag_runtime_
 python scripts/phase0_closeout_check.py
 python scripts/rag_runtime_check.py --base-url http://localhost:8100 --require-vector-coverage
 ```
+
+## 2026-07-11 本機執行結果
+
+- 修正 base compose 與 PostgreSQL overlay 共用 image tag 時可能沿用錯誤 CMD 的問題；JSON fallback 明確啟動 uvicorn，PostgreSQL overlay 才執行 Alembic。
+- 修正 Qdrant client 在有 API key 時自行推斷 HTTPS、卻連向 compose HTTP port 所造成的 `SSL: WRONG_VERSION_NUMBER`。
+- runtime checker 的 Qdrant count 以 header 傳送 API key，報告與 log 不保存 secret。
+- live gate 首次發現 `808d` 為 2,069 vector points／2,075 BM25 sections；透過 authenticated background rebuild 修復至 2,075／2,075。
+- `840d` 為 3,143／3,143，`840dsl` 為 4,449／4,449。
+- 13 筆 `engineering-v1.1.0` 案例的 Recall@5、MRR、Evidence coverage、Source hit 均為 1.0000。
+- lookup、structured chat citation、Ollama provider、SSE completion 與 not-ready fallback 全數通過；總計 11 PASS、0 WARN、0 FAIL。
+
+版本化證據位於 `docs/reports/RAG_LIVE_RUNTIME_EVALUATION_2026-07-11.*`。此報告不含登入密碼、Bearer token、Qdrant API key 或本機使用者絕對路徑。
