@@ -86,6 +86,7 @@ The current version-closeout plan lives in [docs/plans/PHASE0_VERSION_CLOSEOUT_P
 Phase 1 alarm-event idempotency is documented in [docs/plans/PHASE1_EVENT_IDEMPOTENCY_PLAN_2026-07-11.md](docs/plans/PHASE1_EVENT_IDEMPOTENCY_PLAN_2026-07-11.md).
 Phase 1 cursor pagination is documented in [docs/plans/PHASE1_CURSOR_PAGINATION_PLAN_2026-07-11.md](docs/plans/PHASE1_CURSOR_PAGINATION_PLAN_2026-07-11.md).
 Phase 1 single-record repository work is documented in [docs/plans/PHASE1_SINGLE_RECORD_REPOSITORY_PLAN_2026-07-11.md](docs/plans/PHASE1_SINGLE_RECORD_REPOSITORY_PLAN_2026-07-11.md).
+Phase 1 content optimistic locking is documented in [docs/plans/PHASE1_CONTENT_OPTIMISTIC_LOCK_PLAN_2026-07-11.md](docs/plans/PHASE1_CONTENT_OPTIMISTIC_LOCK_PLAN_2026-07-11.md).
 The current delivery summary lives in [docs/PR_DELIVERY_SUMMARY_2026-07-10.md](docs/PR_DELIVERY_SUMMARY_2026-07-10.md).
 Delivery closeout status lives in [docs/DELIVERY_RISK_STATUS.md](docs/DELIVERY_RISK_STATUS.md).
 PostgreSQL PITR rehearsal instructions live in [docs/POSTGRESQL_PITR_RUNBOOK.md](docs/POSTGRESQL_PITR_RUNBOOK.md).
