@@ -15,6 +15,7 @@
 | `plans/PHASE1_CURSOR_PAGINATION_PLAN_2026-07-11.md` | Phase 1 Issue／Work Order cursor pagination 與前端遷移契約。 |
 | `plans/PHASE1_SINGLE_RECORD_REPOSITORY_PLAN_2026-07-11.md` | Phase 1 單筆 Repository、樂觀鎖與跨實體同步邊界。 |
 | `plans/PHASE1_CONTENT_OPTIMISTIC_LOCK_PLAN_2026-07-11.md` | Phase 1 Settings／Documents 管理員並行更新保護。 |
+| `plans/PHASE1_RAG_QUALITY_EVALUATION_PLAN_2026-07-11.md` | Phase 1 版本化黃金題集、離線檢索指標與品質門檻。 |
 | `MVP_BASELINE_STATUS.md` | 目前 MVP 功能基準與已完成項目。 |
 | `DATA_MAINTENANCE.md` | 本機 demo 資料清理、備份、匯出與歸檔指令。 |
 | `SMOKE_TEST.md` | 基本 smoke test 流程與預期結果。 |

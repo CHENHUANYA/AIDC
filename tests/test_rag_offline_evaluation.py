@@ -1,0 +1,109 @@
+from pathlib import Path
+
+import pytest
+
+from scripts import rag_offline_evaluation as evaluation
+
+
+class FakeRetriever:
+    def __init__(self, documents):
+        self.documents = documents
+
+    def retrieve(self, _query: str, top_k: int):
+        return self.documents[:top_k]
+
+
+def document(code: str, text: str, source: str = "") -> dict:
+    return {"text": text, "meta": {"code": code, "source": source, "title": code}}
+
+
+def test_tracked_gold_dataset_has_versioned_engineering_boundary():
+    dataset = evaluation.load_dataset(Path("mock_data/rag_gold_v1.json"))
+
+    assert dataset["dataset_version"] == "engineering-v1.0.0"
+    assert dataset["review_status"] == "engineering_baseline_pending_technician_review"
+    assert len(dataset["cases"]) >= 10
+    assert all(case["provenance"] for case in dataset["cases"])
+    assert any(case["id"].startswith("known-gap-") for case in dataset["cases"])
+
+
+def test_dataset_validation_rejects_duplicate_ids(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text(
+        '{"schema_version":1,"dataset_version":"v1","cases":['
+        '{"id":"same","collection":"c","query":"q","expected_codes":["1"],"required_term_groups":[]},'
+        '{"id":"same","collection":"c","query":"q","expected_codes":["1"],"required_term_groups":[]}'
+        "]}",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(evaluation.DatasetError, match="duplicated"):
+        evaluation.load_dataset(path)
+
+
+def test_evaluation_calculates_recall_mrr_evidence_and_source_gates():
+    dataset = {
+        "dataset_version": "test-v1",
+        "review_status": "test",
+        "thresholds": {
+            "recall_at_k": 0.5,
+            "mrr": 0.25,
+            "evidence_coverage_rate": 0.5,
+            "source_hit_rate": 1.0,
+        },
+        "cases": [
+            {
+                "id": "hit",
+                "collection": "demo",
+                "query": "hydraulic pressure",
+                "expected_codes": ["100"],
+                "expected_sources": ["manual"],
+                "required_term_groups": [["hydraulic"], ["pressure"]],
+            },
+            {
+                "id": "miss",
+                "collection": "demo",
+                "query": "missing",
+                "expected_codes": ["999"],
+                "expected_sources": [],
+                "required_term_groups": [["missing"]],
+            },
+        ],
+    }
+    retriever = FakeRetriever([
+        document("200", "unrelated"),
+        document("100", "hydraulic pressure remedy", "manual"),
+    ])
+
+    report = evaluation.evaluate(dataset, {"demo": retriever}, top_k=2)
+
+    assert report["metrics"]["recall_at_k"] == 0.5
+    assert report["metrics"]["mrr"] == 0.25
+    assert report["metrics"]["evidence_coverage_rate"] == 0.5
+    assert report["metrics"]["source_hit_rate"] == 1.0
+    assert report["status"] == "pass"
+    assert all(gate["pass"] for gate in report["gates"].values())
+
+
+def test_markdown_report_discloses_evidence_proxy():
+    report = {
+        "status": "pass",
+        "dataset_version": "v1",
+        "review_status": "engineering",
+        "git_revision": "abc",
+        "top_k": 5,
+        "metrics": {"case_count": 1},
+        "gates": {"recall_at_k": {"actual": 1.0, "threshold": 0.8, "pass": True}},
+        "cases": [{
+            "id": "case-1",
+            "hit": True,
+            "first_relevant_rank": 1,
+            "evidence_coverage": 1.0,
+            "source_hit": None,
+        }],
+    }
+
+    text = evaluation.markdown_report(report)
+
+    assert "deterministic retrieved-context proxy" in text
+    assert "technician correctness score" in text
