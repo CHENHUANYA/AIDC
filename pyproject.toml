@@ -25,10 +25,16 @@ explicit_package_bases = true
 follow_imports = "skip"
 files = [
     "auth.py",
+    "db/",
     "secret_values.py",
     "repositories/contracts.py",
     "repositories/postgres_auth.py",
+    "repositories/postgres_content.py",
+    "repositories/postgres_workflow.py",
     "routes/stats_routes.py",
+    "scripts/postgresql_backup.py",
+    "scripts/postgresql_health.py",
+    "scripts/postgresql_secret_overlay_check.py",
     "scripts/preflight_check.py",
     "scripts/stage_postgresql_secret.py",
     "scripts/postgresql_pilot_load.py",

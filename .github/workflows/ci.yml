@@ -9,9 +9,13 @@ on:
 
 jobs:
   python:
-    name: Python quality and tests
+    name: Python ${{ matrix.python-version }} quality and tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
 
     steps:
       - name: Check out repository
@@ -20,7 +24,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: |
             requirements.txt
@@ -49,9 +53,32 @@ jobs:
       - name: mypy
         run: mypy
 
+      - name: Alembic migration SQL dry-run
+        shell: bash
+        run: |
+          mkdir -p tests_tmp
+          set -a
+          . ./.env.postgresql
+          set +a
+          python -m alembic upgrade head --sql > tests_tmp/alembic_upgrade_head.sql
+
       - name: Pytest
         run: python -m pytest -q --basetemp tests_tmp/pytest-ci
 
+  container-build:
+    name: Container build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build base app image
+        run: docker build --build-arg RAG_PRELOAD_MODELS=0 -f Dockerfile -t alarm-rag-ci:base .
+
+      - name: Build PostgreSQL app image
+        run: docker build --build-arg RAG_PRELOAD_MODELS=0 -f Dockerfile.postgresql -t alarm-rag-ci:postgresql .
   compose:
     name: Compose configuration
     runs-on: ubuntu-latest
@@ -88,3 +115,16 @@ jobs:
           -f docker-compose.postgresql-runtime.yml
           -f docker-compose.postgresql-secrets.yml
           config --quiet
+      - name: Validate PostgreSQL file-secret overlay contract
+        run: |
+          mkdir -p tests_tmp
+          docker compose -p aidc_phase1 \
+            --env-file .env \
+            --env-file .env.postgresql \
+            -f docker-compose.yml \
+            -f docker-compose.postgresql.yml \
+            -f docker-compose.postgresql-pitr.yml \
+            -f docker-compose.postgresql-runtime.yml \
+            -f docker-compose.postgresql-secrets.yml \
+            config --format json > tests_tmp/postgresql-file-secret-compose.json
+          python scripts/postgresql_secret_overlay_check.py tests_tmp/postgresql-file-secret-compose.json
