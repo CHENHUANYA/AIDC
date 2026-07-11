@@ -1,5 +1,6 @@
 import json
 from urllib import parse
+from unittest.mock import patch
 
 from scripts import rag_runtime_check as runtime
 
@@ -124,3 +125,29 @@ def test_runtime_markdown_discloses_live_gate_boundary():
     assert "structured citations" in text
     assert "does not replace technician review" in text
     assert runtime.report_path(runtime.ROOT / "mock_data" / "rag_gold_v1.json") == "mock_data/rag_gold_v1.json"
+
+
+def test_qdrant_count_sends_api_key_without_exposing_it():
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"result":{"points_count":42}}'
+
+    captured = {}
+
+    def fake_urlopen(req, timeout):
+        captured["request"] = req
+        captured["timeout"] = timeout
+        return Response()
+
+    with patch.object(runtime.request, "urlopen", side_effect=fake_urlopen):
+        count = runtime.qdrant_count("http://qdrant:6333", "808d", 7, "secret-value")
+
+    assert count == 42
+    assert captured["request"].get_header("Api-key") == "secret-value"
+    assert captured["timeout"] == 7

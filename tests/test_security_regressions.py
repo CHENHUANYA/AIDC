@@ -232,7 +232,39 @@ def test_qdrant_client_receives_required_api_key():
     ):
         QdrantStore()
 
-    client_class.assert_called_once_with(host="qdrant", port=6333, api_key="secret-key")
+    client_class.assert_called_once_with(host="qdrant", port=6333, api_key="secret-key", https=False)
+
+
+def test_qdrant_https_is_explicitly_opt_in():
+    client_module = types.ModuleType("qdrant_client")
+    http_module = types.ModuleType("qdrant_client.http")
+    models_module = types.ModuleType("qdrant_client.http.models")
+    client_class = MagicMock()
+    client_module.QdrantClient = client_class
+    http_module.models = models_module
+    with (
+        patch.dict(
+            sys.modules,
+            {
+                "qdrant_client": client_module,
+                "qdrant_client.http": http_module,
+                "qdrant_client.http.models": models_module,
+            },
+        ),
+        patch.dict(
+            os.environ,
+            {
+                "QDRANT_HOST": "qdrant.example.com",
+                "QDRANT_PORT": "443",
+                "QDRANT_API_KEY": "secret-key",
+                "QDRANT_HTTPS": "true",
+            },
+            clear=True,
+        ),
+    ):
+        QdrantStore()
+
+    client_class.assert_called_once_with(host="qdrant.example.com", port=443, api_key="secret-key", https=True)
 
 
 def test_qdrant_and_postgresql_container_boundaries_are_declared():

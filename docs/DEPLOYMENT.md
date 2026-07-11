@@ -210,6 +210,13 @@ access, and do not change any `*_BIND_ADDRESS` to `0.0.0.0` unless that boundary
 is already in place. Qdrant also requires `QDRANT_API_KEY`. The compose-internal
 ports stay at `8000`, `6333`, and `5678`.
 
+The compose-internal Qdrant connection is plain HTTP and explicitly sets
+`QDRANT_HTTPS=false`; the API key still protects the service and the Docker
+network plus loopback bind provide the transport boundary. Set
+`QDRANT_HTTPS=true` only when `QDRANT_HOST` points to an endpoint that actually
+terminates TLS. Leaving the scheme implicit can make the Qdrant client infer
+HTTPS from the presence of an API key and fail against the local HTTP service.
+
 ## Upload Limits
 
 Server-side upload limits protect ingest endpoints from oversized files:
@@ -280,6 +287,11 @@ If `VECTOR_STORE=qdrant` but Qdrant is unavailable during a direct local
 `uvicorn` run, Alarm RAG keeps serving BM25-only lookup/chat/ingest and logs a
 warning. Start the compose stack for full vector search, or set
 `VECTOR_STORE=chroma` for a local single-process fallback.
+
+The base compose file explicitly starts `uvicorn`, while the PostgreSQL overlay
+replaces that command with `alembic upgrade head && exec uvicorn ...`. This
+prevents an image last built with `Dockerfile.postgresql` from accidentally
+running migrations when the JSON fallback stack is started without the overlay.
 
 ## n8n
 

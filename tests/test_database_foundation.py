@@ -98,3 +98,12 @@ def test_alembic_revision_and_compose_overlay_exist():
     assert "127.0.0.1" in compose
     assert "shared_preload_libraries=pg_stat_statements" in compose
     assert "track_io_timing=on" in compose
+
+
+def test_compose_commands_keep_json_and_postgresql_startup_modes_separate():
+    base = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    postgres = (ROOT / "docker-compose.postgresql.yml").read_text(encoding="utf-8")
+
+    assert 'command: ["uvicorn", "main:app"' in base
+    assert "alembic upgrade head" not in base
+    assert "alembic upgrade head && exec uvicorn" in postgres

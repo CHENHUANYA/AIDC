@@ -6,6 +6,7 @@ services:
         RAG_PRELOAD_MODELS: ${RAG_PRELOAD_MODELS:-0}
     container_name: alarm_rag
     restart: unless-stopped
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
     environment:
       ALARM_RAG_ENV: ${ALARM_RAG_ENV:-production}
       ALARM_RAG_CORS_ORIGINS: ${ALARM_RAG_CORS_ORIGINS:-http://localhost:8100,http://127.0.0.1:8100}
@@ -29,6 +30,7 @@ services:
       VECTOR_STORE: ${VECTOR_STORE:-qdrant}
       QDRANT_HOST: qdrant
       QDRANT_PORT: ${QDRANT_PORT:-6333}
+      QDRANT_HTTPS: ${QDRANT_HTTPS:-false}
       QDRANT_API_KEY: ${QDRANT_API_KEY:?Set QDRANT_API_KEY in .env}
       QDRANT_VECTOR_SIZE: ${QDRANT_VECTOR_SIZE:-1024}
       QDRANT_UPSERT_BATCH_SIZE: ${QDRANT_UPSERT_BATCH_SIZE:-64}

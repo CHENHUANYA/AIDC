@@ -74,10 +74,11 @@ class RuntimeClient:
         return Check("auth:login", "PASS" if code == 200 and self.token else "FAIL", f"HTTP {code}")
 
 
-def qdrant_count(qdrant_url: str, collection: str, timeout: int) -> int | None:
+def qdrant_count(qdrant_url: str, collection: str, timeout: int, api_key: str = "") -> int | None:
     url = f"{qdrant_url.rstrip('/')}/collections/{collection}"
+    req = request.Request(url, headers={"api-key": api_key} if api_key else {}, method="GET")
     try:
-        with request.urlopen(url, timeout=timeout) as resp:
+        with request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception:
         return None
@@ -94,7 +95,13 @@ def check_health(client: RuntimeClient) -> tuple[Check, dict[str, Any]]:
     return Check("health", "PASS" if ok else "FAIL", detail), data if isinstance(data, dict) else {}
 
 
-def check_vector_coverage(health: dict[str, Any], qdrant_url: str, timeout: int, require: bool) -> list[Check]:
+def check_vector_coverage(
+    health: dict[str, Any],
+    qdrant_url: str,
+    timeout: int,
+    require: bool,
+    api_key: str = "",
+) -> list[Check]:
     checks = []
     collections = health.get("collections", {}) if isinstance(health, dict) else {}
     for name, summary in sorted(collections.items()):
@@ -102,7 +109,7 @@ def check_vector_coverage(health: dict[str, Any], qdrant_url: str, timeout: int,
         if not summary.get("ready") or sections <= 0:
             checks.append(Check(f"vector:{name}", "SKIP", "collection is not ready"))
             continue
-        points = qdrant_count(qdrant_url, name, timeout)
+        points = qdrant_count(qdrant_url, name, timeout, api_key)
         if points is None:
             checks.append(Check(f"vector:{name}", "FAIL", "qdrant count unavailable"))
             continue
@@ -392,7 +399,15 @@ def main() -> int:
         print_report(checks)
         return 1
 
-    checks.extend(check_vector_coverage(health, args.qdrant_url, args.timeout, args.require_vector_coverage))
+    checks.extend(
+        check_vector_coverage(
+            health,
+            args.qdrant_url,
+            args.timeout,
+            args.require_vector_coverage,
+            os.getenv("QDRANT_API_KEY", "").strip(),
+        )
+    )
     checks.append(check_lookup(client, args.manual, args.alarm_code))
     if not args.skip_gold_retrieval:
         gold_check, gold_report = check_gold_retrieval(client, args.gold_dataset, args.gold_top_k)
