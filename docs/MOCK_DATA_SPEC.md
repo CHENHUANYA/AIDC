@@ -13,6 +13,7 @@ Optional fields:
 - `manual`: manual collection, default `808d`.
 - `machine_id`: machine or demo station identifier.
 - `source`: event source such as `n8n-mock`, `opcua-mock`, or `manual-test`.
+- `external_event_id`: source-scoped idempotency key. Reusing the same value from the same source returns the original workflow without creating another work order.
 - `severity`: one of `info`, `low`, `medium`, `high`, or `critical`.
 - `description`: operator-facing event summary that is copied into the created work order.
 
@@ -24,6 +25,7 @@ Example:
   "manual": "808d",
   "machine_id": "CNC-LINE-01",
   "source": "n8n-mock",
+  "external_event_id": "mock-event-0001",
   "severity": "high",
   "description": "NC start is blocked during the demo production cycle."
 }

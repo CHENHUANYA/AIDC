@@ -30,6 +30,7 @@ Use one item like this:
   "manual": "808d",
   "machine_id": "CNC-LINE-01",
   "source": "n8n-mock",
+  "external_event_id": "={{ $execution.id }}",
   "severity": "high",
   "description": "Scheduled mock alarm from n8n for Alarm RAG MVP validation."
 }
@@ -75,6 +76,7 @@ Body:
   "manual": "={{ $json.manual }}",
   "machine_id": "={{ $json.machine_id }}",
   "source": "={{ $json.source }}",
+  "external_event_id": "={{ $json.external_event_id }}",
   "severity": "={{ $json.severity }}",
   "description": "={{ $json.description }}"
 }
@@ -87,10 +89,15 @@ The API should return:
 ```json
 {
   "status": "ok",
+  "duplicate": false,
+  "external_event_id": "12345",
   "alarm": {},
+  "issue": {},
   "work_order": {}
 }
 ```
+
+同一個 `source + external_event_id` 重送時，`duplicate` 會是 `true`，並回傳第一次建立的 Issue 與 Work Order，不會重複開單。
 
 ## Validation Steps
 
