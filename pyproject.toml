@@ -25,6 +25,7 @@ explicit_package_bases = true
 follow_imports = "skip"
 files = [
     "auth.py",
+    "bm25_text.py",
     "db/",
     "secret_values.py",
     "repositories/contracts.py",

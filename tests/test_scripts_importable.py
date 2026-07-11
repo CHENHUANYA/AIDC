@@ -22,6 +22,7 @@ SCRIPT_MODULES = [
     "scripts.postgresql_phase5_soak",
     "scripts.postgresql_pitr",
     "scripts.production_boundary_check",
+    "scripts.rag_offline_evaluation",
     "scripts.regression_checks",
     "scripts.replay_demo_alarms",
     "scripts.role_console_smoke",

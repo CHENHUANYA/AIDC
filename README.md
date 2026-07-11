@@ -89,6 +89,7 @@ Phase 1 cursor pagination is documented in [docs/plans/PHASE1_CURSOR_PAGINATION_
 Phase 1 single-record repository work is documented in [docs/plans/PHASE1_SINGLE_RECORD_REPOSITORY_PLAN_2026-07-11.md](docs/plans/PHASE1_SINGLE_RECORD_REPOSITORY_PLAN_2026-07-11.md).
 Phase 1 content optimistic locking is documented in [docs/plans/PHASE1_CONTENT_OPTIMISTIC_LOCK_PLAN_2026-07-11.md](docs/plans/PHASE1_CONTENT_OPTIMISTIC_LOCK_PLAN_2026-07-11.md).
 Phase 1 offline RAG quality evaluation is documented in [docs/plans/PHASE1_RAG_QUALITY_EVALUATION_PLAN_2026-07-11.md](docs/plans/PHASE1_RAG_QUALITY_EVALUATION_PLAN_2026-07-11.md).
+Phase 1 multilingual BM25 normalization is documented in [docs/plans/PHASE1_MULTILINGUAL_BM25_PLAN_2026-07-11.md](docs/plans/PHASE1_MULTILINGUAL_BM25_PLAN_2026-07-11.md).
 The current delivery summary lives in [docs/PR_DELIVERY_SUMMARY_2026-07-10.md](docs/PR_DELIVERY_SUMMARY_2026-07-10.md).
 Delivery closeout status lives in [docs/DELIVERY_RISK_STATUS.md](docs/DELIVERY_RISK_STATUS.md).
 PostgreSQL PITR rehearsal instructions live in [docs/POSTGRESQL_PITR_RUNBOOK.md](docs/POSTGRESQL_PITR_RUNBOOK.md).

@@ -17,6 +17,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
+from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
 from vector_store import get_store
 
 ALARM_PATTERN = re.compile(r"\b(\d{2,6})\b")
@@ -355,10 +356,17 @@ class AlarmRAGEngine:
         return metadatas
 
     def _persist_bm25_index(self, texts: List[str]):
-        self.bm25 = BM25Okapi([t.lower().split() for t in texts])
+        self.bm25 = BM25Okapi([tokenize_bm25(text) for text in texts])
         pkl_path = f"{DB_PATH}/bm25_{self.collection_name}.pkl"
         with open(pkl_path, "wb") as f:
-            pickle.dump({"bm25": self.bm25, "sections": self.sections}, f)
+            pickle.dump(
+                {
+                    "bm25": self.bm25,
+                    "sections": self.sections,
+                    "tokenizer_version": BM25_TOKENIZER_VERSION,
+                },
+                f,
+            )
 
     def _valid_section_indexes_from_ids(self, ids: List[str]) -> List[int]:
         indexes = []
@@ -511,7 +519,7 @@ class AlarmRAGEngine:
             print(f"[WARN][{self.collection_name}] Code {code} not in index")
 
         # Stage 2: BM25
-        tokens = query.lower().split()
+        tokens = tokenize_bm25(query)
         bm25_scores = self.bm25.get_scores(tokens)
         bm25_top20 = np.argsort(bm25_scores)[::-1][:20].tolist()
 

@@ -1,8 +1,13 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from scripts import rag_offline_evaluation as evaluation
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeRetriever:
@@ -20,11 +25,11 @@ def document(code: str, text: str, source: str = "") -> dict:
 def test_tracked_gold_dataset_has_versioned_engineering_boundary():
     dataset = evaluation.load_dataset(Path("mock_data/rag_gold_v1.json"))
 
-    assert dataset["dataset_version"] == "engineering-v1.0.0"
+    assert dataset["dataset_version"] == "engineering-v1.1.0"
     assert dataset["review_status"] == "engineering_baseline_pending_technician_review"
     assert len(dataset["cases"]) >= 10
     assert all(case["provenance"] for case in dataset["cases"])
-    assert any(case["id"].startswith("known-gap-") for case in dataset["cases"])
+    assert any(case["id"].startswith("multilingual-") for case in dataset["cases"])
 
 
 def test_dataset_validation_rejects_duplicate_ids(tmp_path):
@@ -91,6 +96,7 @@ def test_markdown_report_discloses_evidence_proxy():
         "dataset_version": "v1",
         "review_status": "engineering",
         "git_revision": "abc",
+        "query_tokenizer_version": "test-v1",
         "top_k": 5,
         "metrics": {"case_count": 1},
         "gates": {"recall_at_k": {"actual": 1.0, "threshold": 0.8, "pass": True}},
@@ -107,3 +113,17 @@ def test_markdown_report_discloses_evidence_proxy():
 
     assert "deterministic retrieved-context proxy" in text
     assert "technician correctness score" in text
+    assert "Query tokenizer: `test-v1`" in text
+
+
+def test_cli_help_runs_from_the_repository_root():
+    completed = subprocess.run(
+        [sys.executable, "scripts/rag_offline_evaluation.py", "--help"],
+        cwd=ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "deterministic offline Alarm RAG" in completed.stdout

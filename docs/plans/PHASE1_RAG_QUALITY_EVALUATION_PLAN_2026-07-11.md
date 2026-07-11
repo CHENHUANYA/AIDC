@@ -22,7 +22,7 @@
 3. 修改案例或門檻時提升 `dataset_version`，不得覆寫既有版本的語意。
 4. 重新產生報告並保存 dataset、index 與 Git SHA-256／revision。
 
-刻意保留 `known-gap-zh-coolant` 案例，用來揭露目前英文 BM25 tokenization 對中文查詢的落差；基準不應以刪除失敗案例來美化分數。
+`engineering-v1.0.0` 曾刻意保留 `known-gap-zh-coolant`，用來揭露英文 BM25 tokenization 對中文查詢的落差。`engineering-v1.1.0` 將其升級為 `multilingual-zh-coolant` 回歸案例；舊報告繼續保存，不能以覆寫歷史證據來美化分數。
 
 ## 指標與門檻
 
@@ -58,6 +58,6 @@ python scripts/rag_offline_evaluation.py `
 後續應依序補上：
 
 1. 現場技師審核與題集擴充，涵蓋機型、語言、同義詞與高風險警報。
-2. 中文／混合語言 tokenizer 或 query normalization，修復已知缺口。
+2. 擴充經技師確認的中文／混合語言同義詞，避免把小型領域詞表誤當通用翻譯器。
 3. 與 `scripts/rag_runtime_check.py` 串接的向量檢索與生成層 live gate。
 4. 回答 citation correctness、unsupported claim 與危險操作提示的人工／模型輔助評測。

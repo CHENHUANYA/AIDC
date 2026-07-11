@@ -16,6 +16,7 @@ import re, pickle, argparse, os, hashlib
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
+from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
 from vector_store import get_store
 from storage import (
     DB_PATH,
@@ -328,10 +329,17 @@ def build_index(sections: list[dict], collection_name: str):
     print(f"✓ Vector index saved → collection '{collection_name}'")
 
     # BM25 — includes both alarm and general sections for full-text search
-    bm25 = BM25Okapi([t.lower().split() for t in texts])
+    bm25 = BM25Okapi([tokenize_bm25(text) for text in texts])
     pkl_path = f"{DB_PATH}/bm25_{collection_name}.pkl"
     with open(pkl_path, "wb") as f:
-        pickle.dump({"bm25": bm25, "sections": sections}, f)
+        pickle.dump(
+            {
+                "bm25": bm25,
+                "sections": sections,
+                "tokenizer_version": BM25_TOKENIZER_VERSION,
+            },
+            f,
+        )
     print(f"✓ BM25 index saved → {pkl_path}")
 
     alarm_count   = sum(1 for s in sections if s.get("code"))

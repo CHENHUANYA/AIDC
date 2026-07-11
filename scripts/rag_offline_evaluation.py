@@ -6,14 +6,20 @@ import json
 import pickle
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
+
+
 DEFAULT_DATASET = ROOT / "mock_data" / "rag_gold_v1.json"
 DEFAULT_INDEX_DIR = ROOT / "alarm_db"
 DEFAULT_JSON_REPORT = ROOT / "tests_tmp" / "rag-evaluation" / "report.json"
@@ -66,6 +72,7 @@ class OfflineBm25Retriever:
             payload = pickle.load(file)
         self.bm25 = payload["bm25"]
         self.sections = payload["sections"]
+        self.index_tokenizer_version = str(payload.get("tokenizer_version") or "legacy-whitespace-v0")
 
     @staticmethod
     def _manual_code_match(section: dict, code: str) -> bool:
@@ -84,7 +91,7 @@ class OfflineBm25Retriever:
             )
             if exact is not None:
                 return [{"text": str(exact.get("text") or ""), "meta": dict(exact)}]
-        scores = self.bm25.get_scores(query.lower().split())
+        scores = self.bm25.get_scores(tokenize_bm25(query))
         indexes = np.argsort(scores)[::-1][:top_k].tolist()
         return [
             {"text": str(self.sections[index].get("text") or ""), "meta": dict(self.sections[index])}
@@ -215,6 +222,7 @@ def markdown_report(report: dict) -> str:
         f"- Dataset: `{report['dataset_version']}`",
         f"- Review status: `{report['review_status']}`",
         f"- Git revision: `{report.get('git_revision', '')}`",
+        f"- Query tokenizer: `{report.get('query_tokenizer_version', '')}`",
         f"- Top K: `{report['top_k']}`",
         "",
         "## Metrics",
@@ -263,17 +271,21 @@ def main() -> int:
     collections = sorted({str(case["collection"]) for case in dataset["cases"]})
     retrievers = {}
     index_hashes = {}
+    index_tokenizer_versions = {}
     for collection in collections:
         index_path = args.index_dir / f"bm25_{collection}.pkl"
         if index_path.exists():
             retrievers[collection] = OfflineBm25Retriever(index_path)
             index_hashes[collection] = sha256_file(index_path)
+            index_tokenizer_versions[collection] = retrievers[collection].index_tokenizer_version
 
     report = evaluate(dataset, retrievers, args.top_k)
     report.update({
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "dataset_sha256": sha256_file(args.dataset),
         "index_sha256": index_hashes,
+        "query_tokenizer_version": BM25_TOKENIZER_VERSION,
+        "index_tokenizer_versions": index_tokenizer_versions,
         "git_revision": git_revision(),
     })
     args.report_json.parent.mkdir(parents=True, exist_ok=True)

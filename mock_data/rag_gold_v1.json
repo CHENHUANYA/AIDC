@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "dataset_version": "engineering-v1.0.0",
+  "dataset_version": "engineering-v1.1.0",
   "review_status": "engineering_baseline_pending_technician_review",
   "description": "Offline Alarm RAG retrieval baseline built from the tracked manual and explicit mock maintenance knowledge. It is not a claim of plant accuracy.",
   "thresholds": {
@@ -131,13 +131,13 @@
       "reviewed": false
     },
     {
-      "id": "known-gap-zh-coolant",
+      "id": "multilingual-zh-coolant",
       "collection": "808d",
       "query": "粗加工時冷卻液壓力過低，幫浦 ready 訊號消失",
       "expected_codes": ["340100"],
       "expected_sources": ["mock-week2-sop"],
       "required_term_groups": [["coolant"], ["pressure"], ["pump", "nozzle"]],
-      "provenance": "Engineering multilingual gap probe derived from tracked mock knowledge",
+      "provenance": "Engineering multilingual regression case derived from tracked mock knowledge",
       "reviewed": false
     }
   ]
