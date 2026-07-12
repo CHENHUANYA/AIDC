@@ -115,6 +115,25 @@ def test_chat_gate_requires_structured_expected_citation():
     assert "answer_id=True" in check.detail
 
 
+def test_reranker_gate_requires_successful_runtime_inference():
+    health = {
+        "collections": {
+            "808d": {
+                "retrieval_runtime": {
+                    "reranker_loaded": True,
+                    "reranker_active": True,
+                    "reranker_calls": 3,
+                    "last_retrieval_mode": "reranker",
+                    "last_reranker_error": "",
+                }
+            }
+        }
+    }
+    assert runtime.check_reranker_runtime(health, "808d", require=True).status == "PASS"
+    health["collections"]["808d"]["retrieval_runtime"]["reranker_active"] = False
+    assert runtime.check_reranker_runtime(health, "808d", require=True).status == "FAIL"
+
+
 def test_runtime_markdown_discloses_live_gate_boundary():
     report = {
         "status": "pass",
@@ -187,3 +206,52 @@ def test_stream_contract_requires_shared_answer_id_and_expected_citation():
         "answer_id": True,
         "done": True,
     }
+
+
+def test_stream_gate_requires_multiple_content_events():
+    def sse_body(parts):
+        events = []
+        for index, part in enumerate(parts):
+            event = {
+                "id": "chatcmpl_1",
+                "choices": [{"delta": {"content": part}, "finish_reason": None}],
+            }
+            if index == 0:
+                event["rag"] = {
+                    "answer_id": "chatcmpl_1",
+                    "citations": [{"id": "ragcite_1", "code": "3000"}],
+                }
+            events.append(f"data: {json.dumps(event)}\n\n")
+        events.extend([
+            'data: {"id":"chatcmpl_1","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+            "data: [DONE]\n\n",
+        ])
+        return events
+
+    class Response:
+        def __init__(self, lines):
+            self.lines = iter(lines)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def getcode(self):
+            return 200
+
+        def readline(self):
+            return next(self.lines, "").encode("utf-8")
+
+    client = runtime.RuntimeClient("http://localhost:8100", 10)
+    client.token = "token"
+    with patch.object(runtime.request, "urlopen", return_value=Response(sse_body(["first", "second"]))):
+        incremental = runtime.check_stream_chat(client, "808d", "Alarm 3000", "3000")
+    with patch.object(runtime.request, "urlopen", return_value=Response(sse_body(["single"]))):
+        buffered = runtime.check_stream_chat(client, "808d", "Alarm 3000", "3000")
+
+    assert incremental.status == "PASS"
+    assert "incremental=True" in incremental.detail
+    assert buffered.status == "FAIL"
+    assert "incremental=False" in buffered.detail

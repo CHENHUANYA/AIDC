@@ -7,7 +7,7 @@ from scripts.database_check import REQUIRED_TABLES
 def test_alembic_has_one_expected_head():
     script = ScriptDirectory.from_config(Config("alembic.ini"))
 
-    assert script.get_heads() == ["20260701_0004"]
+    assert script.get_heads() == ["20260712_0005"]
 
 
 def test_revision_chain_is_linear_and_starts_at_base():
@@ -15,6 +15,7 @@ def test_revision_chain_is_linear_and_starts_at_base():
     revisions = list(script.walk_revisions())
 
     assert [revision.revision for revision in revisions] == [
+        "20260712_0005",
         "20260701_0004",
         "20260630_0003",
         "20260630_0002",
@@ -33,6 +34,7 @@ def test_database_check_requires_all_model_tables():
         "work_orders",
         "audit_events",
         "feedback",
+        "rag_answers",
         "documents",
         "document_versions",
         "system_settings",

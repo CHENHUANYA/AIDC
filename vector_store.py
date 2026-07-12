@@ -5,6 +5,7 @@ import os
 from typing import List, Optional
 
 from secret_values import secret_value
+from config_values import env_int
 
 
 def _warn(message: str):
@@ -91,7 +92,7 @@ class QdrantStore(BaseVectorStore):
         from qdrant_client import QdrantClient
         from qdrant_client.http import models as qm
         host = os.getenv("QDRANT_HOST", "localhost")
-        port = int(os.getenv("QDRANT_PORT", "6333"))
+        port = env_int("QDRANT_PORT", 6333, minimum=1, maximum=65535)
         use_https = os.getenv("QDRANT_HTTPS", "false").strip().lower() in {"1", "true", "yes", "on"}
         api_key = secret_value("QDRANT_API_KEY")
         if not api_key:
@@ -100,7 +101,7 @@ class QdrantStore(BaseVectorStore):
         self.qm = qm
 
     def ensure_collection(self, collection: str):
-        size = int(os.getenv("QDRANT_VECTOR_SIZE", "1024"))
+        size = env_int("QDRANT_VECTOR_SIZE", 1024, minimum=1)
         try:
             cols = [c.name for c in self.client.get_collections().collections]
             if collection in cols:
@@ -132,7 +133,7 @@ class QdrantStore(BaseVectorStore):
     def add(self, collection: str, texts: List[str], embeddings: List[list], metadatas: List[dict], ids: List[str]):
         self.ensure_collection(collection)
 
-        batch_size = int(os.getenv("QDRANT_UPSERT_BATCH_SIZE", "64"))
+        batch_size = env_int("QDRANT_UPSERT_BATCH_SIZE", 64, minimum=1)
         int_ids = [self._to_int_id(i) for i in ids]
         payloads = []
         for meta, text in zip(metadatas, texts):

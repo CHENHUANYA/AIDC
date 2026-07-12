@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -81,12 +82,49 @@ class LlmProviderMatrixTests(unittest.IsolatedAsyncioTestCase):
 
         ollama.assert_not_called()
 
+    async def test_concurrent_requests_keep_request_local_provider_source(self):
+        chat_lookup_routes.LLM_PROVIDER = "school"
+        chat_lookup_routes.SCHOOL_API_FALLBACK_TO_OLLAMA = True
+
+        async def school(messages, _temperature, _max_tokens):
+            prompt = messages[-1]["content"]
+            await asyncio.sleep(0.02)
+            if prompt == "fallback":
+                raise httpx.TimeoutException("timed out")
+            return "school answer"
+
+        async def ollama(_messages, _temperature, _max_tokens):
+            await asyncio.sleep(0.02)
+            return "ollama answer"
+
+        async def invoke(prompt):
+            content = await chat_lookup_routes.call_llm([{"role": "user", "content": prompt}], 0.1, 64)
+            return content, chat_lookup_routes.request_llm_source.get()
+
+        with (
+            patch.object(chat_lookup_routes, "call_school_api", side_effect=school),
+            patch.object(chat_lookup_routes, "call_ollama", side_effect=ollama),
+        ):
+            school_result, fallback_result = await asyncio.gather(invoke("school"), invoke("fallback"))
+
+        self.assertEqual(("school answer", "school"), school_result)
+        self.assertEqual(("ollama answer", "ollama"), fallback_result)
+
     async def test_streaming_error_response_contains_readable_fallback_and_done(self):
         request = ChatRequest(messages=[Message(role="user", content="Alarm 3000")], stream=True)
 
-        with patch.object(chat_lookup_routes, "get_engine", return_value=FakeEngine()):
-            with patch.object(chat_lookup_routes, "call_llm", new=AsyncMock(side_effect=RuntimeError("LLM timeout"))):
-                response = await chat_lookup_routes.handle_chat(request, "808d")
+        async def failed_stream(*_args, **_kwargs):
+            raise RuntimeError("LLM timeout")
+            yield ""  # pragma: no cover - keeps this function an async generator
+
+        with (
+            patch.object(chat_lookup_routes, "get_existing_engine", return_value=FakeEngine()),
+            patch.object(chat_lookup_routes, "stream_ollama", new=failed_stream),
+            patch.object(chat_lookup_routes, "save_rag_answer"),
+            patch.object(chat_lookup_routes, "record_chat_error"),
+            patch.object(chat_lookup_routes, "log_query"),
+        ):
+            response = await chat_lookup_routes.handle_chat(request, "808d")
 
         chunks = []
         async for chunk in response.body_iterator:
@@ -104,6 +142,8 @@ class LlmProviderMatrixTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, len({event["id"] for event in events}))
         self.assertEqual(events[0]["id"], events[0]["rag"]["answer_id"])
         self.assertEqual("3000", events[0]["rag"]["citations"][0]["code"])
+        self.assertEqual("no-cache", response.headers["cache-control"])
+        self.assertEqual("no", response.headers["x-accel-buffering"])
 
 
 if __name__ == "__main__":

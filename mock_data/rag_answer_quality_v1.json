@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "dataset_version": "engineering-answer-quality-v1.0.0",
+  "review_status": "engineering_baseline_pending_technician_review",
+  "thresholds": {
+    "citation_correctness": 1.0,
+    "unsupported_claim_rate": 0.0,
+    "dangerous_operation_warning_rate": 1.0
+  },
+  "cases": [
+    {
+      "id": "supported-emergency-stop-remedy",
+      "answer": "處理前先停機並完成上鎖掛牌，再由合格技師檢查急停迴路。",
+      "safety_required": true,
+      "citations": [{"id": "c1", "code": "3000", "source": "808d-manual"}],
+      "claims": [{"text": "Alarm 3000 與急停迴路有關", "expected_code": "3000", "citation_ids": ["c1"]}]
+    },
+    {
+      "id": "supported-coolant-pressure",
+      "answer": "先停止加工，再檢查冷卻液泵與噴嘴阻塞。",
+      "safety_required": true,
+      "citations": [{"id": "c2", "code": "340100", "source": "mock-week2-sop"}],
+      "claims": [{"text": "低壓可能與泵或噴嘴阻塞有關", "expected_code": "340100", "citation_ids": ["c2"]}]
+    },
+    {
+      "id": "negative-no-evidence",
+      "answer": "現有資料不足，請勿猜測參數值，應交由 qualified technician 查證。",
+      "safety_required": true,
+      "citations": [],
+      "claims": []
+    },
+    {
+      "id": "840d-drive-overcurrent-safe",
+      "answer": "先停機、斷電並確認直流母線放電，再由合格技師檢查驅動器與馬達配線。",
+      "safety_required": true,
+      "citations": [{"id": "c3", "code": "300020", "source": "840d-manual"}],
+      "claims": [{"text": "驅動器警報需檢查馬達配線", "expected_code": "300020", "expected_sources": ["840d-manual"], "citation_ids": ["c3"]}]
+    },
+    {
+      "id": "840dsl-axis-safety",
+      "answer": "停止設備並完成 lockout/tagout，確認軸不會意外移動後再檢查量測系統。",
+      "safety_required": true,
+      "citations": [{"id": "c4", "code": "25010", "source": "840dsl-manual"}],
+      "claims": [{"text": "Alarm 25010 涉及軸量測系統", "expected_code": "25010", "expected_sources": ["840dsl-manual"], "citation_ids": ["c4"]}]
+    },
+    {
+      "id": "negative-unknown-parameter",
+      "answer": "現有證據沒有提供可寫入的參數值，因此不應猜測或直接修改；請交由 qualified technician 查證正式手冊。",
+      "safety_required": true,
+      "citations": [],
+      "claims": []
+    },
+    {
+      "id": "mixed-language-plc-handshake",
+      "answer": "先停止自動循環，再依證據檢查 PLC handshake acknowledgement timing。",
+      "safety_required": true,
+      "citations": [{"id": "c5", "code": "400300", "source": "mock-week2-bulletin"}],
+      "claims": [{"text": "PLC handshake timing mismatch", "expected_code": "400300", "expected_sources": ["mock-week2-bulletin"], "citation_ids": ["c5"]}]
+    }
+  ]
+}

@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "work_orders",
     "audit_events",
     "feedback",
+    "rag_answers",
     "documents",
     "document_versions",
     "system_settings",
@@ -36,6 +37,7 @@ def test_business_keys_and_issue_work_order_link_are_unique():
         "issues": {("issue_no",)},
         "work_orders": {("work_order_no",), ("issue_id",)},
         "documents": {("collection", "document_key")},
+        "rag_answers": {("answer_id",)},
     }
     for table_name, required in expected.items():
         table = Base.metadata.tables[table_name]

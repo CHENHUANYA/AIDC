@@ -1,4 +1,5 @@
 import argparse
+import http.client
 import json
 import os
 import subprocess
@@ -61,7 +62,7 @@ class RuntimeClient:
                 return exc.code, json.loads(text)
             except json.JSONDecodeError:
                 return exc.code, {"_raw": text}
-        except (TimeoutError, error.URLError) as exc:
+        except (OSError, http.client.HTTPException, error.URLError) as exc:
             return 0, {"_error": str(exc)}
 
     def login(self, username: str) -> Check:
@@ -93,6 +94,24 @@ def check_health(client: RuntimeClient) -> tuple[Check, dict[str, Any]]:
     collections = data.get("collections", {}) if isinstance(data, dict) else {}
     detail = f"HTTP {code}, collections={','.join(sorted(collections)) or '-'}"
     return Check("health", "PASS" if ok else "FAIL", detail), data if isinstance(data, dict) else {}
+
+
+def check_reranker_runtime(health: dict[str, Any], collection: str, require: bool) -> Check:
+    collections = health.get("collections", {}) if isinstance(health, dict) else {}
+    summary = collections.get(collection, {}) if isinstance(collections, dict) else {}
+    runtime = summary.get("retrieval_runtime", {}) if isinstance(summary, dict) else {}
+    loaded = runtime.get("reranker_loaded") is True
+    active = runtime.get("reranker_active") is True
+    calls = int(runtime.get("reranker_calls") or 0)
+    error_text = str(runtime.get("last_reranker_error") or "")
+    ok = loaded and active and calls > 0 and not error_text
+    status = "PASS" if ok else ("FAIL" if require else "WARN")
+    return Check(
+        "rag:reranker-runtime",
+        status,
+        f"collection={collection}, loaded={loaded}, active={active}, calls={calls}, "
+        f"mode={runtime.get('last_retrieval_mode') or '-'}, error={error_text or '-'}",
+    )
 
 
 def check_vector_coverage(
@@ -261,20 +280,47 @@ def check_stream_chat(client: RuntimeClient, manual: str, prompt: str, expected_
         headers=client.headers({"Content-Type": "application/json"}),
         method="POST",
     )
+    started = time.monotonic()
+    first_content_ms = None
+    body_parts: list[str] = []
     try:
         with request.urlopen(req, timeout=client.timeout) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
             code = resp.getcode()
+            while True:
+                raw_line = resp.readline()
+                if not raw_line:
+                    break
+                line = raw_line.decode("utf-8", errors="replace")
+                body_parts.append(line)
+                if first_content_ms is None and line.startswith("data:"):
+                    payload = line[5:].strip()
+                    if payload and payload != "[DONE]":
+                        try:
+                            event = json.loads(payload)
+                        except json.JSONDecodeError:
+                            event = {}
+                        content = event.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        if content:
+                            first_content_ms = int((time.monotonic() - started) * 1000)
     except Exception as exc:
         return Check("rag:stream-chat", "FAIL", str(exc))
+    total_ms = int((time.monotonic() - started) * 1000)
+    body = "".join(body_parts)
     contract_ok, detail = validate_stream_contract(body, expected_code)
-    ok = code == 200 and contract_ok
+    events = parse_sse_events(body)
+    content_events = sum(
+        bool(event.get("choices", [{}])[0].get("delta", {}).get("content", ""))
+        for event in events
+    )
+    incremental = content_events >= 2
+    ok = code == 200 and contract_ok and first_content_ms is not None and incremental
     return Check(
         "rag:stream-chat",
         "PASS" if ok else "FAIL",
         f"HTTP {code}, bytes={len(body)}, events={detail['events']}, ids={detail['ids']}, "
         f"citations={detail['citations']}, expected_code={detail['expected_code']}, "
-        f"answer_id={detail['answer_id']}, done={detail['done']}",
+        f"answer_id={detail['answer_id']}, done={detail['done']}, content_events={content_events}, "
+        f"incremental={incremental}, first_content_ms={first_content_ms}, total_ms={total_ms}",
     )
 
 
@@ -422,6 +468,7 @@ def main() -> int:
     parser.add_argument("--username", default="admin01")
     parser.add_argument("--timeout", type=int, default=90)
     parser.add_argument("--require-vector-coverage", action="store_true")
+    parser.add_argument("--require-reranker", action="store_true", help="fail unless reranker inference succeeds during this gate")
     parser.add_argument("--check-school-api", action="store_true", help="directly call the configured School API provider")
     parser.add_argument("--gold-dataset", type=Path, default=DEFAULT_GOLD_DATASET)
     parser.add_argument("--gold-top-k", type=int, default=5)
@@ -462,6 +509,8 @@ def main() -> int:
     if not args.skip_gold_retrieval:
         gold_check, gold_report = check_gold_retrieval(client, args.gold_dataset, args.gold_top_k)
         checks.append(gold_check)
+    _, post_retrieval_health = check_health(client)
+    checks.append(check_reranker_runtime(post_retrieval_health, args.manual, args.require_reranker))
     checks.append(
         check_chat(
             client,

@@ -196,6 +196,7 @@ async function sendChat() {
       }),
     });
     const content = data?.choices?.[0]?.message?.content || '抱歉，系統目前沒有回傳內容。';
+    app.setState('lastAnswerId', data?.rag?.answer_id || data?.id || '');
     removeTyping();
     appendMessage('assistant', content);
     app.setState('chatHistory', [...requestHistory, { role: 'assistant', content }].slice(-12));

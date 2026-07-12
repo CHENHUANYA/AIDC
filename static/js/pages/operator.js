@@ -155,6 +155,7 @@ async function lookupOperatorSuggestion() {
   setOperatorSuggestion('查詢中...');
   app.setState('operatorLastQuestion', question);
   app.setState('operatorLastSuggestion', '');
+  app.setState('operatorLastAnswerId', '');
   app.$('operatorSuggestionFeedback').style.display = 'none';
 
   try {
@@ -187,6 +188,7 @@ async function lookupOperatorSuggestion() {
     const suggestion = data?.choices?.[0]?.message?.content || '';
     if (!suggestion) throw new Error('LLM 沒有回傳內容');
     app.setState('operatorLastSuggestion', suggestion);
+    app.setState('operatorLastAnswerId', data?.rag?.answer_id || data?.id || '');
     setOperatorSuggestion(renderChatSuggestion(suggestion), false, true);
     app.$('operatorSuggestionFeedback').style.display = 'flex';
   } catch (error) {
@@ -206,6 +208,7 @@ async function sendOperatorSuggestionFeedback(type) {
         query: app.getState('operatorLastQuestion') || getOperatorQuestion(),
         collection: app.$('issueManual').value,
         feedback: type,
+        answer_id: app.getState('operatorLastAnswerId') || '',
         alarm_code: app.$('issueAlarmCode').value.trim(),
         user_id: app.currentUserId?.() || '',
         role: app.currentUserRole?.() || 'operator',
@@ -229,6 +232,7 @@ function readOperatorPayload(createWorkOrder) {
     severity: app.$('issueSeverity').value,
     created_by: app.currentUserId?.() || '',
     rag_suggestion: app.getState('operatorLastSuggestion') || '',
+    rag_answer_id: app.getState('operatorLastAnswerId') || '',
     create_work_order: createWorkOrder,
   };
 }

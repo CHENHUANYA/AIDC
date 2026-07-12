@@ -16,14 +16,14 @@ class CollectionValidationTests(unittest.IsolatedAsyncioTestCase):
     async def test_chat_collection_rejects_unsafe_collection_before_engine_lookup(self):
         request = ChatRequest(messages=[{"role": "user", "content": "hello"}])
 
-        with patch.object(chat_lookup_routes, "get_engine") as get_engine:
+        with patch.object(chat_lookup_routes, "get_existing_engine") as get_engine:
             result = await chat_lookup_routes.chat_collection(request, "../bad", actor=AUTHENTICATED_ACTOR)
 
         self.assert_invalid_name(result, "Invalid collection name")
         get_engine.assert_not_called()
 
     async def test_lookup_rejects_unsafe_collection_before_engine_lookup(self):
-        with patch.object(chat_lookup_routes, "get_engine") as get_engine:
+        with patch.object(chat_lookup_routes, "get_existing_engine") as get_engine:
             result = await chat_lookup_routes.lookup_alarm("../bad", code="1234", actor=AUTHENTICATED_ACTOR)
 
         self.assert_invalid_name(result, "Invalid collection name")

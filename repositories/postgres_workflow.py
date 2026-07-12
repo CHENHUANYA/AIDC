@@ -89,6 +89,7 @@ def issue_dict(session, issue: Issue, users_by_pk: dict, work_order_no: str = ""
         "assigned_to": issue.assigned_to_ref or users_by_pk.get(issue.assigned_to_user_id, ""),
         "work_order_id": work_order_no,
         "rag_suggestion": issue.rag_suggestion,
+        "rag_answer_id": issue.rag_answer_id,
         "operator_notes": [
             {"note": note.note, "created_by": note.created_by_ref, "created_at": iso(note.created_at)}
             for note in notes
@@ -137,6 +138,7 @@ def order_dict(session, order: WorkOrder, users_by_pk: dict, issue_no: str = "")
         "kb_ingest_result": order.kb_ingest_result,
         "kb_duplicate_of": order.kb_duplicate_of,
         "rag_suggestion": order.rag_suggestion,
+        "rag_answer_id": order.rag_answer_id,
         "source": order.source,
         "created_at": iso(order.created_at),
         "updated_at": iso(order.updated_at),
@@ -303,6 +305,7 @@ class PostgresIssueRepository:
                     "created_by_ref": str(payload.get("created_by") or ""),
                     "updated_by_ref": str(payload.get("updated_by") or ""),
                     "rag_suggestion": str(payload.get("rag_suggestion") or ""),
+                    "rag_answer_id": str(payload.get("rag_answer_id") or ""),
                     "resolution_summary": str(payload.get("resolution_summary") or ""),
                     "completed_at": parse_datetime(payload.get("completed_at")),
                 }
@@ -483,6 +486,7 @@ class PostgresWorkOrderRepository:
                     "repair_action": str(payload.get("repair_action") or ""),
                     "failure_category": str(payload.get("failure_category") or ""),
                     "rag_suggestion": str(payload.get("rag_suggestion") or ""),
+                    "rag_answer_id": str(payload.get("rag_answer_id") or ""),
                     "source": str(payload.get("source") or "auto"),
                     "llm_correctness": str(payload.get("llm_correctness") or ""),
                     "llm_coverage": str(payload.get("llm_coverage") or ""),

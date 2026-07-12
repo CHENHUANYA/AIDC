@@ -382,6 +382,7 @@ function normalizeAdminQualityItems(orders, feedbackEntries) {
       collection: order.manual || '',
       issue_id: order.issue_id || '',
       work_order_id: order.id || '',
+      answer_id: order.rag_answer_id || '',
       query: order.description || '',
       feedback: '',
       role: order.updated_by || order.assigned_to || '',
@@ -410,6 +411,7 @@ function normalizeAdminQualityItems(orders, feedbackEntries) {
       collection: entry.collection || '',
       issue_id: entry.issue_id || '',
       work_order_id: entry.work_order_id || '',
+      answer_id: entry.answer_id || '',
       query: entry.query || '',
       feedback: entry.feedback || '',
       role: entry.role || entry.user_id || '',
@@ -457,6 +459,7 @@ function adminQualityFilteredItems() {
       item.collection,
       item.issue_id,
       item.work_order_id,
+      item.answer_id,
       item.query,
       item.missing_info,
       item.expected_fix,
@@ -522,6 +525,7 @@ function renderAdminQualityItem(app, item) {
         ${item.kb_review_status ? `<span class="wo-badge">審核狀態 ${app.esc(qualityLabel(item.kb_review_status))}</span>` : ''}
         ${item.kb_reviewed_by ? `<span class="wo-badge">審核者 ${app.esc(item.kb_reviewed_by)}</span>` : ''}
         ${item.kb_duplicate_of ? `<span class="wo-badge">可能重複 ${app.esc(item.kb_duplicate_of)}</span>` : ''}
+        ${item.answer_id ? `<span class="wo-badge">Answer ${app.esc(item.answer_id)}</span>` : ''}
         <span class="wo-badge">${app.esc(adminTime(item.time))}</span>
       </div>
       ${item.kb_review_note ? `<div class="wo-note">審核備註：${app.esc(item.kb_review_note)}</div>` : ''}
@@ -574,7 +578,7 @@ function renderAdminQuality(feedbackStats, workOrders) {
 function exportAdminQualityCsv() {
   const items = adminQualityFilteredItems();
   downloadAdminCsv('rag-quality-review.csv', [
-    ['type', 'time', 'alarm_code', 'collection', 'issue_id', 'work_order_id', 'feedback', 'correctness', 'coverage', 'missing_info', 'expected_fix', 'kb_candidate', 'kb_review_status', 'kb_review_note', 'kb_reviewed_by', 'kb_duplicate_of', 'query'],
+    ['type', 'time', 'alarm_code', 'collection', 'issue_id', 'work_order_id', 'answer_id', 'feedback', 'correctness', 'coverage', 'missing_info', 'expected_fix', 'kb_candidate', 'kb_review_status', 'kb_review_note', 'kb_reviewed_by', 'kb_duplicate_of', 'query'],
     ...items.map((item) => [
       item.type,
       adminTime(item.time),
@@ -582,6 +586,7 @@ function exportAdminQualityCsv() {
       item.collection,
       item.issue_id,
       item.work_order_id,
+      item.answer_id,
       item.feedback,
       item.correctness,
       item.coverage,

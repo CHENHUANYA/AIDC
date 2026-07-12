@@ -27,6 +27,7 @@ from auth import actor_id, actor_role, get_actor
 from db.session import get_engine
 from rag_engine import model_cache_status
 from repositories.postgres_content import PostgresAlarmRepository, PostgresFeedbackRepository
+from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
 from storage import ALARM_LOG_PATH
 
@@ -34,6 +35,7 @@ from storage import ALARM_LOG_PATH
 router = APIRouter()
 postgres_alarms = PostgresAlarmRepository()
 postgres_feedback = PostgresFeedbackRepository()
+rag_answers = RagAnswerRepository()
 
 
 @router.get("/stats/alarms")
@@ -91,6 +93,15 @@ async def clear_alarm_stats(actor: dict = Depends(get_actor)):
 async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
+    if req.answer_id:
+        answer = rag_answers.get(req.answer_id)
+        if answer is None:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "RAG answer not found"})
+        if req.collection != answer.get("collection") or req.query != answer.get("query"):
+            return JSONResponse(
+                status_code=409,
+                content={"status": "error", "message": "Feedback query or collection does not match the RAG answer"},
+            )
     entry = {
         "time": datetime.now().isoformat(),
         "query": req.query,
@@ -214,7 +225,11 @@ async def error_stats(actor: dict = Depends(get_actor)):
 @router.get("/health")
 async def health():
     collections = {
-        name: {"ready": engine.ready, "alarms_indexed": len(engine.sections)}
+        name: {
+            "ready": engine.ready,
+            "alarms_indexed": len(engine.sections),
+            "retrieval_runtime": engine.retrieval_runtime_status(),
+        }
         for name, engine in engines.items()
     }
     return {

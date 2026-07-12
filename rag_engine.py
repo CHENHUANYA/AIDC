@@ -18,9 +18,11 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
+from config_values import env_int
 from vector_store import get_store
 
 ALARM_PATTERN = re.compile(r"\b(\d{2,6})\b")
+CJK_PATTERN = re.compile(r"[\u3400-\u9fff]")
 DB_PATH = os.getenv("DB_PATH", "./alarm_db")
 EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "mixedbread-ai/mxbai-embed-large-v1")
 RERANKER_MODEL = os.getenv("RAG_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
@@ -37,7 +39,7 @@ VECTOR_STORE_ERROR = (
     "start qdrant or set VECTOR_STORE=chroma to enable vector search."
 )
 VECTOR_HYDRATE_ON_LOAD = os.getenv("RAG_VECTOR_HYDRATE_ON_LOAD", "false").strip().lower() in {"1", "true", "yes", "on"}
-VECTOR_REBUILD_BATCH_SIZE = int(os.getenv("RAG_VECTOR_REBUILD_BATCH_SIZE", "64"))
+VECTOR_REBUILD_BATCH_SIZE = env_int("RAG_VECTOR_REBUILD_BATCH_SIZE", 64, minimum=1)
 
 # Shared models – loaded once, reused by all engine instances
 _embedder = None
@@ -137,8 +139,8 @@ def _get_reranker(local_files_only: bool):
         reranker_model = _resolve_model_path(RERANKER_MODEL, local_files_only)
         _reranker = CrossEncoder(
             reranker_model,
-            automodel_args={"local_files_only": local_files_only},
-            tokenizer_args={"local_files_only": local_files_only},
+            cache_dir=HF_CACHE_DIR,
+            local_files_only=local_files_only,
         )
     return _reranker
 
@@ -192,10 +194,25 @@ class AlarmRAGEngine:
         self.tokenizer_version: str = "none"
         self.ready: bool = False
         self.next_id: int = 0
+        self.reranker_calls: int = 0
+        self.last_reranker_error: str = ""
+        self.last_retrieval_mode: str = "none"
 
         self.embedder, self.reranker = _try_get_models()
         self.model_error = "" if self.embedder else OFFLINE_MODEL_ERROR
         self._try_load_index()
+
+    def retrieval_runtime_status(self) -> dict:
+        return {
+            "embedding_loaded": self.embedder is not None,
+            "reranker_loaded": self.reranker is not None,
+            "reranker_calls": getattr(self, "reranker_calls", 0),
+            "reranker_active": self.reranker is not None
+            and getattr(self, "reranker_calls", 0) > 0
+            and not getattr(self, "last_reranker_error", ""),
+            "last_reranker_error": getattr(self, "last_reranker_error", ""),
+            "last_retrieval_mode": getattr(self, "last_retrieval_mode", "none"),
+        }
 
     def _try_load_index(self):
         pkl_path = f"{DB_PATH}/bm25_{self.collection_name}.pkl"
@@ -518,6 +535,7 @@ class AlarmRAGEngine:
             code = match.group(1)
             exact = self.lookup_code(code)
             if exact:
+                self.last_retrieval_mode = "exact"
                 print(f"[OK][{self.collection_name}] Exact match: {code}")
                 return [exact]
             print(f"[WARN][{self.collection_name}] Code {code} not in index")
@@ -528,6 +546,7 @@ class AlarmRAGEngine:
         bm25_top20 = np.argsort(bm25_scores)[::-1][:20].tolist()
 
         if self.embedder is None:
+            self.last_retrieval_mode = "bm25"
             top_idxs = bm25_top20[:top_k]
             return [{"text": self.sections[i]["text"], "meta": self.sections[i]} for i in top_idxs]
 
@@ -540,6 +559,7 @@ class AlarmRAGEngine:
             vec_top20 = self._valid_section_indexes_from_ids(vec_res.get("ids", [[]])[0])
         except Exception as exc:
             print(f"[WARN][{self.collection_name}] {VECTOR_STORE_ERROR} Detail: {exc}")
+            self.last_retrieval_mode = "bm25-vector-fallback"
             top_idxs = bm25_top20[:top_k]
             return [{"text": self.sections[i]["text"], "meta": self.sections[i]} for i in top_idxs]
 
@@ -553,10 +573,26 @@ class AlarmRAGEngine:
         cand_texts = [self.sections[i]["text"] for i in cand_idxs]
 
         if self.reranker is None:
+            self.last_retrieval_mode = "rrf"
+            return [{"text": cand_texts[i], "meta": self.sections[cand_idxs[i]]} for i in range(min(top_k, len(cand_idxs)))]
+
+        # The bundled MS MARCO cross-encoder is English-only. Keep the proven
+        # multilingual BM25/vector/RRF ordering for Chinese or mixed queries.
+        if CJK_PATTERN.search(query):
+            self.last_retrieval_mode = "rrf-multilingual-safeguard"
             return [{"text": cand_texts[i], "meta": self.sections[cand_idxs[i]]} for i in range(min(top_k, len(cand_idxs)))]
 
         # Stage 5: Rerank
-        scores = self.reranker.predict([(query, t) for t in cand_texts])
+        try:
+            scores = self.reranker.predict([(query, t) for t in cand_texts])
+            self.reranker_calls = getattr(self, "reranker_calls", 0) + 1
+            self.last_reranker_error = ""
+            self.last_retrieval_mode = "reranker"
+        except Exception as exc:
+            self.last_reranker_error = str(exc) or exc.__class__.__name__
+            self.last_retrieval_mode = "rrf-reranker-fallback"
+            print(f"[WARN][{self.collection_name}] Reranker prediction failed; using RRF order. Detail: {exc}")
+            return [{"text": cand_texts[i], "meta": self.sections[cand_idxs[i]]} for i in range(min(top_k, len(cand_idxs)))]
         top_idxs = np.argsort(scores)[::-1][:top_k]
 
         return [{"text": cand_texts[i], "meta": self.sections[cand_idxs[i]]} for i in top_idxs]

@@ -109,6 +109,7 @@ async function doSearch(code, manual) {
 
   const useManual = manual || app.getState('lookupManual');
   app.setState('lastQuery', query);
+  app.setState('lastAnswerId', '');
   app.resetLookupPanels();
   app.$('timerRow').classList.remove('show');
   app.$('fbThanks').classList.remove('show');
@@ -151,6 +152,7 @@ async function doSearch(code, manual) {
     if (!content) {
       throw new Error('Empty response');
     }
+    app.setState('lastAnswerId', data?.rag?.answer_id || data?.id || '');
 
     const retrievalHeader = response.headers.get('X-Retrieval-Time');
     const retrievalMs = retrievalHeader ? Number.parseInt(retrievalHeader, 10) : Math.round((receivedAt - startedAt) * 0.3);
@@ -428,6 +430,7 @@ function sendFeedback(type) {
       query: app.getState('lastQuery'),
       collection: app.getState('lookupManual'),
       feedback: type,
+      answer_id: app.getState('lastAnswerId') || '',
       role: app.PAGE_NAME === 'maintenance' ? 'maintenance' : 'assistant',
     }),
   }).catch(() => {});

@@ -29,6 +29,7 @@ SCRIPT_MODULES = [
     "scripts.replay_demo_alarms",
     "scripts.role_console_smoke",
     "scripts.runtime_soak",
+    "scripts.runtime_restart_recovery",
     "scripts.seed_week2_data",
     "scripts.smoke_test",
     "scripts.week4_acceptance",

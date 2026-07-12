@@ -20,6 +20,7 @@ from app_context import (
     ingest_log,
 )
 from auth import actor_id, actor_role, get_actor, is_admin
+from config_values import env_float, env_int
 from repositories.postgres_content import ConcurrentContentUpdateError
 from storage import (
     DB_PATH,
@@ -44,16 +45,13 @@ REBUILD_LOCK = threading.Lock()
 
 
 def upload_limit_bytes(env_name: str, default_mb: float) -> int:
-    try:
-        mb = float(os.getenv(env_name, str(default_mb)))
-    except ValueError:
-        mb = default_mb
+    mb = env_float(env_name, default_mb, minimum=0.000001)
     return max(int(mb * 1024 * 1024), 1)
 
 
 PDF_UPLOAD_MAX_BYTES = upload_limit_bytes("ALARM_RAG_PDF_UPLOAD_MAX_MB", 50)
 PDF_MAGIC = b"%PDF"
-PDF_MAX_PAGES = int(os.getenv("ALARM_RAG_PDF_MAX_PAGES", "1000"))
+PDF_MAX_PAGES = env_int("ALARM_RAG_PDF_MAX_PAGES", 1000, minimum=1)
 
 
 def _job_public(job: dict) -> dict:

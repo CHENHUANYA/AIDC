@@ -128,6 +128,11 @@ The command writes machine-readable and reviewer-friendly reports to
 Use `--skip-gold-retrieval` only for diagnostics against an older runtime; it
 must not be used for release acceptance.
 
+The streaming gate requires at least two content events and records both
+`first_content_ms` and `total_ms`. For Nginx or another buffering proxy, retain
+the backend `X-Accel-Buffering: no` and `Cache-Control: no-cache` response
+headers, and verify that the proxy does not buffer `text/event-stream`.
+
 For a short soak after deployment:
 
 ```bash
@@ -139,6 +144,21 @@ For a longer handoff soak, raise the duration, for example:
 ```bash
 python scripts/runtime_soak.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --duration-seconds 14400 --interval-seconds 30 --max-failures 0
 ```
+
+The soak command always writes aggregate JSON and Markdown evidence, including
+per-check failure counts and min/average/P95/max latency. Override the default
+paths with `--report-json` and `--report-md` when CI collects artifacts.
+
+For a controlled local Compose restart-recovery drill after the soak:
+
+```bash
+python scripts/runtime_restart_recovery.py --base-url http://localhost:8100 --qdrant-url http://localhost:6333 --services alarm_rag,qdrant
+```
+
+The restart tool accepts only the `alarm_rag` and `qdrant` services, uses a
+non-shell Compose command, and verifies health, login, exact lookup, structured
+retrieval, and Qdrant availability after each restart. Run it only in an
+approved maintenance window on a shared pilot host.
 
 For a final UI screenshot/responsive pass, run:
 

@@ -118,6 +118,7 @@ class Issue(Base):
     updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     updated_by_ref: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     rag_suggestion: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    rag_answer_id: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     resolution_summary: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = created_at_column()
@@ -172,6 +173,7 @@ class WorkOrder(Base):
     repair_action: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     failure_category: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     rag_suggestion: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    rag_answer_id: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     source: Mapped[str] = mapped_column(String(128), nullable=False, server_default="auto")
     llm_correctness: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
     llm_coverage: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
@@ -240,6 +242,28 @@ class Feedback(Base):
     missing_info: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     expected_fix: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     kb_candidate: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    created_at: Mapped[datetime] = created_at_column()
+
+
+class RagAnswer(Base):
+    __tablename__ = "rag_answers"
+    __table_args__ = (
+        Index("ix_rag_answers_created", "created_at"),
+        Index("ix_rag_answers_collection_created", "collection", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    answer_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    query: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    collection: Mapped[str] = mapped_column(String(128), nullable=False, server_default="")
+    answer: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(JSON_TYPE, nullable=False, default=list)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
+    model: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
+    tokenizer_version: Mapped[str] = mapped_column(String(128), nullable=False, server_default="")
+    retrieval_version: Mapped[str] = mapped_column(String(128), nullable=False, server_default="")
+    elapsed_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_by_ref: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     created_at: Mapped[datetime] = created_at_column()
 
 

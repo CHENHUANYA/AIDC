@@ -53,6 +53,9 @@ jobs:
       - name: mypy
         run: mypy
 
+      - name: RAG answer quality gate
+        run: python scripts/rag_answer_quality_evaluation.py
+
       - name: Alembic migration SQL dry-run
         shell: bash
         run: |

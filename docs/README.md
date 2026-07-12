@@ -26,6 +26,10 @@
 | `reports/RAG_OFFLINE_BASELINE_ENGINEERING_V1_1_0_REINDEXED_2026-07-11.md` | 實體 index 升級後的 v1.1 品質回歸報告。 |
 | `reports/RAG_LIVE_RUNTIME_EVALUATION_2026-07-11.md` | Structured retrieval、向量覆蓋、chat citation、Ollama 與 SSE live gate。 |
 | `reports/RAG_LIVE_ANSWER_ID_STREAMING_EVALUATION_2026-07-11.md` | 唯一 answer ID 與 SSE structured citation 的 live 契約證據。 |
+| `reports/RAG_NO_VENDOR_ENGINEERING_IMPLEMENTATION_2026-07-12.md` | Answer repository、UI 關聯、reranker runtime、answer-quality gate、效能與部署 CI 的本機工程實作證據。 |
+| `reports/RAG_NO_VENDOR_ENGINEERING_CONTINUATION_2026-07-13.md` | Answer 關聯完整性、負面品質案例、soak evidence 與 app/Qdrant restart recovery 延伸驗證。 |
+| `reports/RAG_BUGFIX_CODE_QUALITY_REVIEW_2026-07-13.md` | Provider 競態、錯誤 answer 關聯、P95、Qdrant recovery、重複 chat pipeline、engine cache 與設定解析的複查修正。 |
+| `reports/RAG_NATIVE_STREAMING_EVALUATION_2026-07-13.md` | Ollama 原生 NDJSON streaming、逐 chunk SSE、first-content latency 與完成後 answer persistence 證據。 |
 | `MVP_BASELINE_STATUS.md` | 目前 MVP 功能基準與已完成項目。 |
 | `DATA_MAINTENANCE.md` | 本機 demo 資料清理、備份、匯出與歸檔指令。 |
 | `SMOKE_TEST.md` | 基本 smoke test 流程與預期結果。 |

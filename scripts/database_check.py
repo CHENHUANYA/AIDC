@@ -20,6 +20,7 @@ REQUIRED_TABLES = {
     "work_orders",
     "audit_events",
     "feedback",
+    "rag_answers",
     "documents",
     "document_versions",
     "system_settings",

@@ -26,6 +26,7 @@ load_local_env()
 
 from pydantic import BaseModel, Field
 
+from config_values import env_float, env_int
 from rag_engine import AlarmRAGEngine
 from secret_values import secret_value
 from storage import (
@@ -45,13 +46,6 @@ from storage import (
 ensure_db_dir()
 
 
-def env_float(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral-nemo:latest")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
@@ -59,7 +53,12 @@ SCHOOL_API_BASE_URL = os.getenv("SCHOOL_API_BASE_URL", "").rstrip("/")
 SCHOOL_API_KEY = secret_value("SCHOOL_API_KEY")
 SCHOOL_API_MODEL = os.getenv("SCHOOL_API_MODEL", "gpt-oss-120b")
 SCHOOL_API_FALLBACK_TO_OLLAMA = os.getenv("SCHOOL_API_FALLBACK_TO_OLLAMA", "true").strip().lower() == "true"
-LLM_TIMEOUT_SECONDS = env_float("RAG_LLM_TIMEOUT_SECONDS", 20)
+LLM_TIMEOUT_SECONDS = env_float("RAG_LLM_TIMEOUT_SECONDS", 20, minimum=0.1)
+RAG_CHAT_TOP_K = env_int("RAG_CHAT_TOP_K", 3, minimum=1, maximum=20)
+RAG_CONTEXT_CHARS_PER_DOC = env_int("RAG_CONTEXT_CHARS_PER_DOC", 1800, minimum=200)
+RAG_MAX_OUTPUT_TOKENS = env_int("RAG_MAX_OUTPUT_TOKENS", 512, minimum=64)
+RAG_OLLAMA_NUM_CTX = env_int("RAG_OLLAMA_NUM_CTX", 4096, minimum=512)
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m").strip() or "30m"
 REFERENCE_DIR = os.path.join(DB_PATH, "reference")
 FEEDBACK_LOG = os.path.join(DB_PATH, "feedback.jsonl")
 
@@ -174,6 +173,16 @@ def get_engine(collection_name: str) -> AlarmRAGEngine:
     return engines[collection_name]
 
 
+def get_existing_engine(collection_name: str) -> AlarmRAGEngine | None:
+    existing = engines.get(collection_name)
+    if existing is not None:
+        return existing
+    index_path = os.path.join(DB_PATH, f"bm25_{collection_name}.pkl")
+    if not os.path.isfile(index_path):
+        return None
+    return get_engine(collection_name)
+
+
 def load_all_engines() -> None:
     db_path = DB_PATH
     if not os.path.exists(db_path):
@@ -245,9 +254,9 @@ def build_augmented_messages(messages: List[Message], engine: AlarmRAGEngine) ->
     if not user_query:
         return [{"role": m.role, "content": m.content} for m in messages], []
 
-    docs = engine.retrieve(user_query, top_k=4)
+    docs = engine.retrieve(user_query, top_k=RAG_CHAT_TOP_K)
     context = "\n\n".join([
-        f"[Page {d['meta']['page']} | Alarm: {d['meta']['code']}]\n{d['text']}"
+        f"[Page {d['meta']['page']} | Alarm: {d['meta']['code']}]\n{str(d['text'])[:RAG_CONTEXT_CHARS_PER_DOC]}"
         for d in docs
     ]) if docs else "No relevant alarm sections found."
 

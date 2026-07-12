@@ -22,13 +22,16 @@ from pydantic import BaseModel
 
 from audit_history import append_history, field_changes, history_list
 from auth import actor_id, actor_role, can_update_work_order, can_view_work_order, can_verify, get_actor, is_admin, resolve_user
+from config_values import env_float, env_int
 from pagination import InvalidCursor, decode_cursor, encode_cursor, paginate_records
 from repositories.postgres_workflow import PostgresWorkOrderRepository
+from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
 from services.transactions import postgres_transactional
 
 router = APIRouter()
 postgres_work_orders = PostgresWorkOrderRepository()
+rag_answers = RagAnswerRepository()
 
 DB_DIR = os.getenv("DB_PATH", "./alarm_db")
 WO_FILE = os.path.join(DB_DIR, "work_orders.json")
@@ -69,10 +72,7 @@ MAINTENANCE_WORK_ORDER_PATCH_FIELDS = {
 
 
 def upload_limit_bytes(env_name: str, default_mb: float) -> int:
-    try:
-        mb = float(os.getenv(env_name, str(default_mb)))
-    except ValueError:
-        mb = default_mb
+    mb = env_float(env_name, default_mb, minimum=0.000001)
     return max(int(mb * 1024 * 1024), 1)
 
 
@@ -81,8 +81,8 @@ XLSX_MAGIC = b"PK\x03\x04"
 XLS_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 XLSX_MAX_UNCOMPRESSED_BYTES = upload_limit_bytes("ALARM_RAG_XLSX_UNCOMPRESSED_MAX_MB", 50)
 XLSX_MAX_SHARED_STRINGS_BYTES = upload_limit_bytes("ALARM_RAG_XLSX_SHARED_STRINGS_MAX_MB", 10)
-XLSX_MAX_ENTRIES = int(os.getenv("ALARM_RAG_XLSX_MAX_ENTRIES", "2000"))
-XLSX_MAX_COMPRESSION_RATIO = float(os.getenv("ALARM_RAG_XLSX_MAX_COMPRESSION_RATIO", "100"))
+XLSX_MAX_ENTRIES = env_int("ALARM_RAG_XLSX_MAX_ENTRIES", 2000, minimum=1)
+XLSX_MAX_COMPRESSION_RATIO = env_float("ALARM_RAG_XLSX_MAX_COMPRESSION_RATIO", 100, minimum=1.0)
 
 STATUS_LABELS = {
     "pending": "待處理",
@@ -386,6 +386,7 @@ class CreateWorkOrder(BaseModel):
     assigned_to: Optional[str] = ""
     description: Optional[str] = ""
     rag_suggestion: Optional[str] = ""
+    rag_answer_id: Optional[str] = ""
     source: Optional[str] = "manual"  # manual | auto | n8n
     created_by: Optional[str] = ""
 
@@ -427,6 +428,7 @@ def create_order_dict(
     priority: str = "medium",
     description: str = "",
     rag_suggestion: str = "",
+    rag_answer_id: str = "",
     source: str = "auto",
     assigned_to: str = "",
     issue_id: str = "",
@@ -469,6 +471,7 @@ def create_order_dict(
         "kb_ingest_result": None,
         "kb_duplicate_of": "",
         "rag_suggestion": rag_suggestion,
+        "rag_answer_id": rag_answer_id,
         "source": source,
         "created_at": now,
         "updated_at": now,
@@ -592,6 +595,16 @@ async def api_create_order(req: CreateWorkOrder, actor: dict = Depends(get_actor
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("maintenance", "supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
+    linked_issue = None
+    if req.issue_id:
+        from issues import get_issue_dict
+
+        linked_issue = get_issue_dict(req.issue_id)
+        if linked_issue is None:
+            return {"status": "error", "message": "Issue not found"}
+    rag_answer_id = req.rag_answer_id or str((linked_issue or {}).get("rag_answer_id") or "")
+    if rag_answer_id and rag_answers.get(rag_answer_id) is None:
+        return {"status": "error", "message": "RAG answer not found"}
     order = create_order_dict(
         alarm_code=req.alarm_code,
         manual=req.manual or "808d",
@@ -600,6 +613,7 @@ async def api_create_order(req: CreateWorkOrder, actor: dict = Depends(get_actor
         priority=req.priority or "medium",
         description=req.description or "",
         rag_suggestion=req.rag_suggestion or "",
+        rag_answer_id=rag_answer_id,
         source=req.source or "manual",
         assigned_to=req.assigned_to or "",
         created_by=actor_id(actor),

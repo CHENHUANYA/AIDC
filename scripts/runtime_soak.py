@@ -1,9 +1,12 @@
 import argparse
+import http.client
 import json
+import math
 import os
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
@@ -12,6 +15,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from env_utils import EnvConfigError, admin_initial_password, load_project_env
+from rag_runtime_check import check_stream_chat as runtime_check_stream_chat
 
 
 load_project_env()
@@ -59,7 +63,7 @@ class SoakClient:
             except json.JSONDecodeError:
                 data = {"_raw": text}
             return exc.code, data, int((time.monotonic() - started) * 1000)
-        except (TimeoutError, error.URLError) as exc:
+        except (OSError, http.client.HTTPException, error.URLError) as exc:
             return 0, {"_error": str(exc)}, int((time.monotonic() - started) * 1000)
 
     def login(self) -> SoakResult:
@@ -83,6 +87,17 @@ def check_health(client: SoakClient) -> SoakResult:
     return SoakResult("health", ok, f"HTTP {code}, collections={len(collections)}", elapsed)
 
 
+def wait_for_login(client: SoakClient, wait_seconds: int, interval_seconds: float) -> tuple[SoakResult, int]:
+    deadline = time.monotonic() + max(wait_seconds, 0)
+    attempts = 0
+    while True:
+        attempts += 1
+        result = client.login()
+        if result.ok or time.monotonic() >= deadline:
+            return result, attempts
+        time.sleep(max(interval_seconds, 0.1))
+
+
 def check_lookup(client: SoakClient, manual: str, alarm_code: str) -> SoakResult:
     query = parse.urlencode({"code": alarm_code})
     code, data, elapsed = client.request_json(f"/v1/{manual}/lookup?{query}")
@@ -102,6 +117,22 @@ def check_chat(client: SoakClient, manual: str, alarm_code: str) -> SoakResult:
     if isinstance(data, dict):
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
     return SoakResult("chat", code == 200 and bool(content), f"HTTP {code}, chars={len(content)}", elapsed)
+
+
+def check_stream_chat(client: SoakClient, manual: str, alarm_code: str) -> SoakResult:
+    started = time.monotonic()
+    result = runtime_check_stream_chat(
+        client,
+        manual,
+        f"Alarm {alarm_code} stream response soak validation",
+        alarm_code,
+    )
+    return SoakResult(
+        "stream-chat",
+        result.status == "PASS",
+        result.detail,
+        int((time.monotonic() - started) * 1000),
+    )
 
 
 def check_alarm_roundtrip(client: SoakClient, manual: str, alarm_code: str, iteration: int) -> list[SoakResult]:
@@ -124,10 +155,20 @@ def check_alarm_roundtrip(client: SoakClient, manual: str, alarm_code: str, iter
     return [trigger, pending]
 
 
-def run_iteration(client: SoakClient, manual: str, alarm_code: str, iteration: int, include_chat: bool, include_alarm: bool) -> list[SoakResult]:
+def run_iteration(
+    client: SoakClient,
+    manual: str,
+    alarm_code: str,
+    iteration: int,
+    include_chat: bool,
+    include_stream: bool,
+    include_alarm: bool,
+) -> list[SoakResult]:
     results = [check_health(client), check_lookup(client, manual, alarm_code)]
     if include_chat:
         results.append(check_chat(client, manual, alarm_code))
+    if include_stream:
+        results.append(check_stream_chat(client, manual, alarm_code))
     if include_alarm:
         results.extend(check_alarm_roundtrip(client, manual, alarm_code, iteration))
     return results
@@ -136,6 +177,93 @@ def run_iteration(client: SoakClient, manual: str, alarm_code: str, iteration: i
 def print_result(iteration: int, result: SoakResult) -> None:
     status = "PASS" if result.ok else "FAIL"
     print(f"[{status}] iter={iteration:<4} {result.name:<14} {result.elapsed_ms:>6} ms  {result.detail}")
+
+
+def percentile(values: list[int], percent: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    rank = math.ceil(min(max(percent, 0.0), 1.0) * len(ordered))
+    index = min(max(rank - 1, 0), len(ordered) - 1)
+    return ordered[index]
+
+
+def build_report(
+    results: list[tuple[int, SoakResult]],
+    *,
+    base_url: str,
+    manual: str,
+    alarm_code: str,
+    started_at: str,
+    finished_at: str,
+    configured_duration_seconds: int,
+    max_failures: int,
+) -> dict[str, Any]:
+    grouped: dict[str, list[SoakResult]] = {}
+    for _, result in results:
+        grouped.setdefault(result.name, []).append(result)
+    checks = {}
+    for name, entries in sorted(grouped.items()):
+        elapsed = [entry.elapsed_ms for entry in entries]
+        checks[name] = {
+            "count": len(entries),
+            "failures": sum(not entry.ok for entry in entries),
+            "min_ms": min(elapsed, default=0),
+            "avg_ms": round(sum(elapsed) / len(elapsed)) if elapsed else 0,
+            "p95_ms": percentile(elapsed, 0.95),
+            "max_ms": max(elapsed, default=0),
+        }
+    failures = sum(not result.ok for _, result in results)
+    return {
+        "status": "pass" if failures <= max_failures else "fail",
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "base_url": base_url,
+        "manual": manual,
+        "alarm_code": alarm_code,
+        "configured_duration_seconds": configured_duration_seconds,
+        "iterations": max((iteration for iteration, _ in results), default=0),
+        "total_checks": len(results),
+        "failures": failures,
+        "max_failures": max_failures,
+        "checks": checks,
+        "failure_details": [
+            {"iteration": iteration, "name": result.name, "detail": result.detail, "elapsed_ms": result.elapsed_ms}
+            for iteration, result in results
+            if not result.ok
+        ],
+    }
+
+
+def markdown_report(report: dict[str, Any]) -> str:
+    lines = [
+        "# Alarm RAG Runtime Soak Report",
+        "",
+        f"- Status: **{str(report['status']).upper()}**",
+        f"- Started: `{report['started_at']}`",
+        f"- Finished: `{report['finished_at']}`",
+        f"- Configured duration: `{report['configured_duration_seconds']}` seconds",
+        f"- Actual elapsed: `{report.get('elapsed_seconds', '-')}` seconds",
+        f"- Iterations: `{report['iterations']}`",
+        f"- Checks: `{report['total_checks']}`",
+        f"- Failures: `{report['failures']}` / allowed `{report['max_failures']}`",
+        "",
+        "| Check | Count | Failures | Min ms | Avg ms | P95 ms | Max ms |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for name, metrics in report["checks"].items():
+        lines.append(
+            f"| {name} | {metrics['count']} | {metrics['failures']} | {metrics['min_ms']} | "
+            f"{metrics['avg_ms']} | {metrics['p95_ms']} | {metrics['max_ms']} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def write_reports(report: dict[str, Any], json_path: Path, md_path: Path) -> None:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    md_path.write_text(markdown_report(report), encoding="utf-8")
 
 
 def main() -> int:
@@ -147,14 +275,40 @@ def main() -> int:
     parser.add_argument("--interval-seconds", type=float, default=10.0)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--max-failures", type=int, default=0)
+    parser.add_argument("--startup-wait-seconds", type=int, default=120)
     parser.add_argument("--skip-chat", action="store_true", help="skip repeated chat calls")
+    parser.add_argument("--include-stream", action="store_true", help="include incremental SSE chat validation")
     parser.add_argument("--skip-alarm", action="store_true", help="skip repeated trigger/pending queue calls")
+    parser.add_argument("--report-json", type=Path, default=Path("tests_tmp/runtime-soak/report.json"))
+    parser.add_argument("--report-md", type=Path, default=Path("tests_tmp/runtime-soak/report.md"))
     args = parser.parse_args()
+    if args.duration_seconds <= 0:
+        parser.error("--duration-seconds must be positive")
+    if args.interval_seconds <= 0:
+        parser.error("--interval-seconds must be positive")
+    if args.max_failures < 0:
+        parser.error("--max-failures cannot be negative")
 
+    run_started = time.monotonic()
+    started_at = datetime.now(timezone.utc).isoformat()
     client = SoakClient(args.base_url, args.timeout)
-    login = client.login()
+    login, login_attempts = wait_for_login(client, args.startup_wait_seconds, args.interval_seconds)
+    login.detail = f"{login.detail}, attempts={login_attempts}"
     print_result(0, login)
+    recorded: list[tuple[int, SoakResult]] = [(0, login)]
     if not login.ok:
+        report = build_report(
+            recorded,
+            base_url=args.base_url,
+            manual=args.manual,
+            alarm_code=args.alarm_code,
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            configured_duration_seconds=args.duration_seconds,
+            max_failures=args.max_failures,
+        )
+        report["elapsed_seconds"] = round(time.monotonic() - run_started, 3)
+        write_reports(report, args.report_json, args.report_md)
         return 1
 
     deadline = time.monotonic() + max(args.duration_seconds, 1)
@@ -169,8 +323,10 @@ def main() -> int:
             args.alarm_code,
             iteration,
             include_chat=not args.skip_chat,
+            include_stream=args.include_stream,
             include_alarm=not args.skip_alarm,
         ):
+            recorded.append((iteration, result))
             total += 1
             failures += 0 if result.ok else 1
             print_result(iteration, result)
@@ -182,7 +338,21 @@ def main() -> int:
 
     print("-" * 72)
     print(f"iterations={iteration} checks={total} failures={failures} max_failures={args.max_failures}")
-    return 1 if failures > args.max_failures else 0
+    report = build_report(
+        recorded,
+        base_url=args.base_url,
+        manual=args.manual,
+        alarm_code=args.alarm_code,
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc).isoformat(),
+        configured_duration_seconds=args.duration_seconds,
+        max_failures=args.max_failures,
+    )
+    report["elapsed_seconds"] = round(time.monotonic() - run_started, 3)
+    write_reports(report, args.report_json, args.report_md)
+    print(f"json_report={args.report_json}")
+    print(f"markdown_report={args.report_md}")
+    return 0 if report["status"] == "pass" else 1
 
 
 if __name__ == "__main__":

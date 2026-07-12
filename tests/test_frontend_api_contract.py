@@ -144,5 +144,24 @@ class FrontendApiContractTests(unittest.TestCase):
         self.assertIn("/issues/page", role_sources)
         self.assertIn("/work-orders/page", role_sources)
 
+    def test_answer_id_is_carried_into_feedback_issue_and_work_order_payloads(self):
+        lookup = (ROOT / "static" / "js" / "modules" / "lookup.js").read_text(encoding="utf-8")
+        operator = (ROOT / "static" / "js" / "pages" / "operator.js").read_text(encoding="utf-8")
+        operations = (ROOT / "static" / "js" / "modules" / "operations.js").read_text(encoding="utf-8")
+
+        self.assertIn("data?.rag?.answer_id || data?.id", lookup)
+        self.assertIn("answer_id: app.getState('lastAnswerId')", lookup)
+        self.assertIn("operatorLastAnswerId", operator)
+        self.assertIn("rag_answer_id: app.getState('operatorLastAnswerId')", operator)
+        self.assertNotIn("rag_answer_id: app.getState('lastAnswerId')", operations)
+
+    def test_admin_quality_review_keeps_answer_traceability(self):
+        admin = (ROOT / "static" / "js" / "pages" / "admin.js").read_text(encoding="utf-8")
+
+        self.assertIn("answer_id: entry.answer_id", admin)
+        self.assertIn("answer_id: order.rag_answer_id", admin)
+        self.assertIn("'answer_id'", admin)
+        self.assertIn("Answer ${app.esc(item.answer_id)}", admin)
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,16 @@ class StaleIdStore:
         return {"ids": [["s999", "bad", "s0"]]}
 
 
+class FailingReranker:
+    def predict(self, _pairs):
+        raise RuntimeError("incompatible runtime")
+
+
+class UnexpectedReranker:
+    def predict(self, _pairs):
+        raise AssertionError("English reranker must not run for CJK queries")
+
+
 class HydrationStore:
     def __init__(self, count):
         self._count = count
@@ -79,6 +89,45 @@ class RagEngineRetrieveTests(unittest.TestCase):
         self.assertEqual("demo", engine.store.ensured)
         self.assertEqual(["s0", "s1"], engine.store.added["ids"])
         self.assertEqual(["alpha alarm", "beta alarm"], engine.store.added["texts"])
+
+    def test_reranker_runtime_failure_falls_back_to_rrf(self):
+        engine = AlarmRAGEngine.__new__(AlarmRAGEngine)
+        engine.collection_name = "808d"
+        engine.sections = [
+            {"text": "hydraulic pressure alarm remedy", "code": "", "page": 1},
+            {"text": "spindle drive startup procedure", "code": "", "page": 2},
+        ]
+        engine.bm25 = BM25Okapi([section["text"].split() for section in engine.sections])
+        engine.ready = True
+        engine.embedder = FakeEmbedder()
+        engine.reranker = FailingReranker()
+        engine.store = StaleIdStore()
+
+        results = engine.retrieve("hydraulic pressure", top_k=1)
+
+        self.assertEqual(1, len(results))
+        status = engine.retrieval_runtime_status()
+        self.assertEqual("rrf-reranker-fallback", status["last_retrieval_mode"])
+        self.assertEqual("incompatible runtime", status["last_reranker_error"])
+        self.assertFalse(status["reranker_active"])
+
+    def test_cjk_query_uses_multilingual_rrf_safeguard(self):
+        engine = AlarmRAGEngine.__new__(AlarmRAGEngine)
+        engine.collection_name = "808d"
+        engine.sections = [
+            {"text": "coolant pressure pump nozzle", "code": "340100", "page": 1},
+            {"text": "spindle drive startup", "code": "", "page": 2},
+        ]
+        engine.bm25 = BM25Okapi([section["text"].split() for section in engine.sections])
+        engine.ready = True
+        engine.embedder = FakeEmbedder()
+        engine.reranker = UnexpectedReranker()
+        engine.store = StaleIdStore()
+
+        results = engine.retrieve("冷卻液壓力 coolant pressure", top_k=1)
+
+        self.assertEqual(engine.sections[0], results[0]["meta"])
+        self.assertEqual("rrf-multilingual-safeguard", engine.last_retrieval_mode)
 
     def test_skips_vector_hydration_when_count_matches_sections(self):
         previous = rag_engine.VECTOR_HYDRATE_ON_LOAD

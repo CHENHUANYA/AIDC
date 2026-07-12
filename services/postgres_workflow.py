@@ -45,6 +45,7 @@ def create_issue(
     created_by: str = "",
     assigned_to: str = "",
     rag_suggestion: str = "",
+    rag_answer_id: str = "",
     alarm_event_id=None,
     create_work_order: bool = False,
     priority: str | None = None,
@@ -71,6 +72,7 @@ def create_issue(
             updated_by_ref=created_by,
             updated_by_user_id=users.get(created_by),
             rag_suggestion=rag_suggestion,
+            rag_answer_id=rag_answer_id,
             created_at=now,
             updated_at=now,
         )
@@ -89,6 +91,7 @@ def create_issue(
                 priority=priority or priority_from_severity(severity),
                 description=description,
                 rag_suggestion=rag_suggestion,
+                rag_answer_id=rag_answer_id,
                 source=source,
                 assigned_to=assigned_to,
                 created_by=created_by,
@@ -113,7 +116,7 @@ def get_issue_for_alarm_event(alarm_event_id) -> tuple[dict | None, dict | None]
         )
 
 
-def _new_order(session, issue: Issue, *, alarm_code: str, manual: str, machine_id: str, priority: str, description: str, rag_suggestion: str, source: str, assigned_to: str, created_by: str) -> WorkOrder:
+def _new_order(session, issue: Issue, *, alarm_code: str, manual: str, machine_id: str, priority: str, description: str, rag_suggestion: str, rag_answer_id: str = "", source: str, assigned_to: str, created_by: str) -> WorkOrder:
     users, _ = user_maps(session)
     now = datetime.now(timezone.utc)
     status = "assigned" if assigned_to else "pending"
@@ -133,6 +136,7 @@ def _new_order(session, issue: Issue, *, alarm_code: str, manual: str, machine_i
         updated_by_user_id=users.get(created_by),
         description=description,
         rag_suggestion=rag_suggestion,
+        rag_answer_id=rag_answer_id,
         source=source or "operator",
         created_at=now,
         updated_at=now,
@@ -167,6 +171,7 @@ def escalate_issue(issue_no: str, actor_ref: str) -> tuple[dict, dict, bool]:
                 priority=priority_from_severity(issue.severity),
                 description=issue.description,
                 rag_suggestion=issue.rag_suggestion,
+                rag_answer_id=issue.rag_answer_id,
                 source=issue.source,
                 assigned_to=issue.assigned_to_ref,
                 created_by=actor_ref,
