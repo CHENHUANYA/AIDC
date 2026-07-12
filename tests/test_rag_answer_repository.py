@@ -23,6 +23,7 @@ def test_json_answer_repository_is_immutable_and_queryable(tmp_path):
         saved = repository.get("chatcmpl_test")
     assert saved is not None
     assert saved["answer"] == "stop safely"
+    assert saved["answer_state"] == "complete"
     assert saved["citations"][0]["code"] == "3000"
 
 
@@ -35,6 +36,15 @@ def test_concurrent_json_writes_keep_answer_id_unique(tmp_path):
         lines = (tmp_path / "rag_answers.jsonl").read_text(encoding="utf-8").splitlines()
     assert outcomes.count(True) == 1
     assert len(lines) == 1
+
+
+def test_json_answer_repository_normalizes_unknown_answer_state(tmp_path):
+    repository = RagAnswerRepository()
+    with patch.dict("os.environ", {"DB_PATH": str(tmp_path), "DATA_STORE": "json"}):
+        assert repository.add({"answer_id": "chatcmpl_state", "answer_state": "mystery"}) is True
+        saved = repository.get("chatcmpl_state")
+    assert saved is not None
+    assert saved["answer_state"] == "complete"
 
 
 def test_answer_lookup_returns_http_404_for_unknown_id():
@@ -83,3 +93,11 @@ def test_handle_chat_persists_answer_snapshot(tmp_path):
     assert answer["answer_id"] == response["rag"]["answer_id"]
     assert answer["created_by"] == "operator01"
     assert answer["citations"][0]["code"] == "3000"
+    assert answer["answer_state"] == "complete"
+
+
+def test_answer_state_classifies_school_to_ollama_as_fallback():
+    with patch.object(chat_lookup_routes, "LLM_PROVIDER", "school"):
+        assert chat_lookup_routes.classify_answer_state("ollama") == "fallback"
+        assert chat_lookup_routes.classify_answer_state("school") == "complete"
+    assert chat_lookup_routes.classify_answer_state("unavailable") == "unavailable"

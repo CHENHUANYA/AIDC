@@ -19,6 +19,7 @@ from app_context import (
 )
 from auth import actor_id, get_actor
 from repositories.postgres_content import PostgresAlarmRepository
+from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
 from secret_values import secret_value
 from services.postgres_workflow import create_issue as postgres_create_issue
@@ -31,6 +32,7 @@ from work_orders import create_order_dict, get_order_dict
 
 router = APIRouter()
 postgres_alarms = PostgresAlarmRepository()
+rag_answers = RagAnswerRepository()
 
 
 def _normalize_severity(value: Optional[str], fallback: str) -> str:
@@ -117,6 +119,8 @@ async def trigger_alarm(
     invalid_manual = validate_manual_name(manual_name)
     if invalid_manual:
         return invalid_manual
+    if req.rag_answer_id and rag_answers.get(req.rag_answer_id) is None:
+        return {"status": "error", "message": "Unknown RAG answer ID"}
     alarm_info = classify_alarm(parse_alarm_code_int(req.alarm_code), manual_name)
     severity = _normalize_severity(req.severity, alarm_info["severity"])
     external_event_id = _external_event_id(req.external_event_id)
@@ -178,6 +182,7 @@ async def trigger_alarm(
             severity=severity,
             created_by=req.source or "machine",
             rag_suggestion=rag_suggestion,
+            rag_answer_id=req.rag_answer_id or "",
             alarm_event_id=alarm_event_id,
             create_work_order=True,
             priority=_priority_from_severity(severity, req.source),
@@ -205,6 +210,7 @@ async def trigger_alarm(
         severity=severity,
         created_by=req.source or "machine",
         rag_suggestion=rag_suggestion,
+        rag_answer_id=req.rag_answer_id or "",
     )
 
     work_order = create_order_dict(
@@ -214,6 +220,7 @@ async def trigger_alarm(
         priority=_priority_from_severity(severity, req.source),
         description=req.description or f"Alarm {req.alarm_code} reported from {req.source or 'API'}",
         rag_suggestion=rag_suggestion,
+        rag_answer_id=req.rag_answer_id or "",
         source=req.source or "auto",
         issue_id=issue["issue_id"],
         created_by=req.source or "machine",

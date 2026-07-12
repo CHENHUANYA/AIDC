@@ -201,6 +201,7 @@ def save_rag_answer(
     elapsed_ms: int,
     created_by: str,
     tokenizer_version: str,
+    answer_state: str,
 ) -> None:
     try:
         rag_answers.add({
@@ -208,6 +209,7 @@ def save_rag_answer(
             "query": query,
             "collection": collection,
             "answer": answer,
+            "answer_state": answer_state,
             "citations": list(rag_metadata.get("citations") or []),
             "provider": provider,
             "model": model,
@@ -219,6 +221,14 @@ def save_rag_answer(
     except Exception as exc:
         # Persistence must be observable but must not turn an otherwise valid answer into a 500.
         print(f"[WARN] Failed to persist RAG answer {answer_id}: {exc}")
+
+
+def classify_answer_state(provider: str) -> str:
+    if provider == "unavailable":
+        return "unavailable"
+    if LLM_PROVIDER == "school" and provider == "ollama":
+        return "fallback"
+    return "complete"
 
 
 def answer_source_tags(docs: list[dict]) -> str:
@@ -262,6 +272,7 @@ async def stream_chat_events(
     parts: list[str] = []
     first_event = True
     provider = "unavailable"
+    answer_state = "complete"
     tags = answer_source_tags(docs)
     try:
         if LLM_PROVIDER == "ollama":
@@ -292,6 +303,9 @@ async def stream_chat_events(
         record_chat_error(collection_name, user_query, docs, exc)
         if parts and request_llm_source.get() in {"ollama", "school"}:
             provider = request_llm_source.get()
+            answer_state = "fallback"
+        else:
+            answer_state = "unavailable"
         fallback = build_llm_unavailable_message(exc, docs)
         if parts:
             fallback = f"\n\n{fallback}"
@@ -304,6 +318,8 @@ async def stream_chat_events(
 
     elapsed_ms = int((time.time() - start_ts) * 1000)
     answer = "".join(parts)
+    if answer_state == "complete":
+        answer_state = classify_answer_state(provider)
     log_query(collection_name, user_query, source="api-stream", elapsed_ms=elapsed_ms)
     model = SCHOOL_API_MODEL if provider == "school" else OLLAMA_MODEL if provider == "ollama" else ""
     save_rag_answer(
@@ -317,6 +333,7 @@ async def stream_chat_events(
         elapsed_ms=elapsed_ms,
         created_by=created_by,
         tokenizer_version=tokenizer_version,
+        answer_state=answer_state,
     )
     yield make_sse_chunk("", finish=True, response_id=response_id)
     yield "data: [DONE]\n\n"
@@ -342,6 +359,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
             elapsed_ms=0,
             created_by=actor_id(actor),
             tokenizer_version=getattr(engine, "tokenizer_version", "none"),
+            answer_state="unavailable",
         )
         if req.stream:
             async def s():
@@ -408,6 +426,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
         elapsed_ms=elapsed_ms,
         created_by=actor_id(actor),
         tokenizer_version=getattr(engine, "tokenizer_version", "legacy-whitespace-v0"),
+        answer_state=classify_answer_state(provider),
     )
 
     return make_openai_response(content, rag=rag_metadata, response_id=response_id)

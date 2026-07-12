@@ -16,10 +16,16 @@ from repositories.runtime import postgres_store_enabled
 
 
 _JSON_WRITE_LOCK = threading.Lock()
+VALID_ANSWER_STATES = {"complete", "fallback", "unavailable"}
 
 
 def _iso(value: datetime | None) -> str:
     return value.isoformat() if value else ""
+
+
+def normalize_answer_state(value: Any) -> str:
+    state = str(value or "complete")
+    return state if state in VALID_ANSWER_STATES else "complete"
 
 
 def _answer_dict(record: RagAnswer) -> dict[str, Any]:
@@ -28,6 +34,7 @@ def _answer_dict(record: RagAnswer) -> dict[str, Any]:
         "query": record.query,
         "collection": record.collection,
         "answer": record.answer,
+        "answer_state": normalize_answer_state(record.answer_state),
         "citations": list(record.citations or []),
         "provider": record.provider,
         "model": record.model,
@@ -69,6 +76,7 @@ class RagAnswerRepository:
                 except json.JSONDecodeError:
                     continue
                 if entry.get("answer_id") == answer_id:
+                    entry["answer_state"] = normalize_answer_state(entry.get("answer_state"))
                     return entry
         return None
 
@@ -78,6 +86,7 @@ class RagAnswerRepository:
             if self.get(answer_id) is not None:
                 return False
             entry = dict(payload)
+            entry["answer_state"] = normalize_answer_state(entry.get("answer_state"))
             entry.setdefault("created_at", datetime.now(timezone.utc).isoformat())
             path = self._json_path()
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +103,7 @@ class RagAnswerRepository:
                     query=str(payload.get("query") or ""),
                     collection=str(payload.get("collection") or ""),
                     answer=str(payload.get("answer") or ""),
+                    answer_state=normalize_answer_state(payload.get("answer_state")),
                     citations=list(payload.get("citations") or []),
                     provider=str(payload.get("provider") or ""),
                     model=str(payload.get("model") or ""),

@@ -24,6 +24,16 @@ class AlarmTriggerRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("error", result["status"])
         self.assertEqual("Not authenticated", result["message"])
 
+    async def test_trigger_rejects_unknown_rag_answer_id(self):
+        with patch.object(alarm_routes.rag_answers, "get", return_value=None):
+            result = await alarm_routes.trigger_alarm(
+                AlarmTrigger(alarm_code="3000", rag_answer_id="missing"),
+                actor={"user_id": "admin01", "role": "admin"},
+                trigger_token=None,
+            )
+
+        self.assertEqual({"status": "error", "message": "Unknown RAG answer ID"}, result)
+
     async def test_trigger_default_work_order_description_is_clean(self):
         created_orders = []
 

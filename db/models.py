@@ -257,6 +257,7 @@ class RagAnswer(Base):
     query: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     collection: Mapped[str] = mapped_column(String(128), nullable=False, server_default="")
     answer: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    answer_state: Mapped[str] = mapped_column(String(32), nullable=False, server_default="complete")
     citations: Mapped[list[dict[str, Any]]] = mapped_column(JSON_TYPE, nullable=False, default=list)
     provider: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
     model: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")

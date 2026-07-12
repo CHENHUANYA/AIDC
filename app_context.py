@@ -131,6 +131,7 @@ class AlarmTrigger(BaseModel):
     external_event_id: Optional[str] = Field(default=None, max_length=255)
     severity: Optional[str] = None
     description: Optional[str] = None
+    rag_answer_id: Optional[str] = Field(default="", max_length=255)
 
 
 class FeedbackRequest(BaseModel):
