@@ -24,6 +24,7 @@ LEGACY_TRANSACTION_FILES = (
     "work_orders.json",
     "alarm_log.jsonl",
     "feedback.jsonl",
+    "rag_answers.jsonl",
     "system_settings.json",
     "manifest.json",
 )

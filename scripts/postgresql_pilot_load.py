@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from sqlalchemy import delete, func, or_, select
 
-from db.models import AlarmEvent, AuditEvent, Feedback, Issue, LoginSession, WorkOrder
+from db.models import AlarmEvent, AuditEvent, Feedback, Issue, LoginSession, RagAnswer, WorkOrder
 from db.session import reset_database_state_for_tests, session_scope, transaction_scope
 from repositories.postgres_auth import token_digest
 from repositories.runtime import require_known_data_store
@@ -200,6 +200,7 @@ def operational_counts() -> dict[str, int]:
         "work_orders": WorkOrder,
         "audits": AuditEvent,
         "sessions": LoginSession,
+        "rag_answers": RagAnswer,
     }
     with session_scope() as session:
         return {
@@ -211,6 +212,17 @@ def operational_counts() -> dict[str, int]:
 def orphan_audit_count() -> int:
     with session_scope() as session:
         return workflow_orphan_audit_count(session)
+
+
+def orphan_answer_link_count() -> int:
+    with session_scope() as session:
+        answer_ids = set(session.scalars(select(RagAnswer.answer_id)).all())
+        references = (
+            list(session.scalars(select(Issue.rag_answer_id)).all())
+            + list(session.scalars(select(WorkOrder.rag_answer_id)).all())
+            + list(session.scalars(select(Feedback.answer_id)).all())
+        )
+        return sum(1 for value in references if value and value not in answer_ids)
 
 
 def cleanup_iteration(marker: str, issue_no: str = "") -> None:
@@ -244,6 +256,82 @@ def cleanup_session(token: str) -> None:
     with transaction_scope():
         with session_scope() as session:
             session.execute(delete(LoginSession).where(LoginSession.token_hash == token_digest(token)))
+
+
+def cleanup_answer(answer_id: str) -> None:
+    if not answer_id:
+        return
+    with transaction_scope():
+        with session_scope() as session:
+            session.execute(delete(RagAnswer).where(RagAnswer.answer_id == answer_id))
+
+
+def prepare_worker_answers(base_url: str, workers: int, timeout: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    code, login = request_json(
+        base_url,
+        "/auth/login",
+        "POST",
+        {"username": "admin01", "password": admin_initial_password()},
+        timeout=timeout,
+    )
+    token = str(login.get("token") or "")
+    if code != 200 or not token:
+        raise RuntimeError("Pilot load answer setup login failed")
+
+    started = time.monotonic()
+
+    def prepare(worker: int) -> dict[str, Any]:
+        query = f"Pilot load worker {worker}: Alarm 3000 maintenance hint"
+        item_started = time.monotonic()
+        answer_code, answer = request_json(
+            base_url,
+            "/v1/808d/chat/completions",
+            "POST",
+            {
+                "messages": [{"role": "user", "content": query}],
+                "stream": False,
+                "temperature": 0.1,
+                "max_tokens": 120,
+            },
+            token,
+            timeout,
+        )
+        answer_id = str(answer.get("id") or "")
+        snapshot_code, snapshot = request_json(
+            base_url,
+            f"/rag/answers/{answer_id}",
+            token=token,
+            timeout=timeout,
+        ) if answer_id else (0, {})
+        record = snapshot.get("answer", {}) if isinstance(snapshot, dict) else {}
+        ok = (
+            answer_code == 200
+            and snapshot_code == 200
+            and record.get("answer_id") == answer_id
+            and record.get("answer_state") in {"complete", "fallback", "unavailable"}
+        )
+        return {
+            "worker": worker,
+            "answer_id": answer_id,
+            "query": query,
+            "ok": ok,
+            "elapsed_ms": int((time.monotonic() - item_started) * 1000),
+        }
+
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            contexts = list(executor.map(prepare, range(workers)))
+    finally:
+        cleanup_session(token)
+    if not all(item["ok"] for item in contexts):
+        for item in contexts:
+            cleanup_answer(str(item.get("answer_id") or ""))
+        raise RuntimeError("Pilot load failed to create and read one real answer snapshot per worker")
+    return contexts, {
+        "status": "ok",
+        "elapsed_ms": int((time.monotonic() - started) * 1000),
+        "workers": [{"worker": item["worker"], "elapsed_ms": item["elapsed_ms"]} for item in contexts],
+    }
 
 
 def call_api(
@@ -288,6 +376,8 @@ def worker_loop(
     stop: threading.Event,
     max_failures: int,
     timeout: int,
+    answer_id: str,
+    answer_query: str,
 ) -> int:
     token = ""
     iterations = 0
@@ -360,6 +450,7 @@ def worker_loop(
                         "source": marker,
                         "severity": "low",
                         "description": f"Pilot load iteration {marker}",
+                        "rag_answer_id": answer_id,
                     },
                     token,
                     timeout,
@@ -385,11 +476,11 @@ def worker_loop(
                         "/feedback",
                         "POST",
                         {
-                            "query": marker,
+                            "query": answer_query,
                             "collection": "808d",
                             "alarm_code": "3000",
                             "feedback": "good",
-                            "answer_id": marker,
+                            "answer_id": answer_id,
                             "issue_id": issue_no,
                             "work_order_id": order_no,
                             "correctness": "correct",
@@ -464,7 +555,9 @@ def run_load(
     before_settings = database_settings()
     before_fingerprints = legacy_fingerprints(source)
     before_orphans = orphan_audit_count()
+    before_answer_orphans = orphan_answer_link_count()
     started_at = datetime.now(timezone.utc)
+    answer_contexts, answer_setup = prepare_worker_answers(base_url, workers, timeout)
     workload_started = time.monotonic()
     deadline = workload_started + duration_seconds
     limiter = RateLimiter(target_rps)
@@ -483,6 +576,8 @@ def run_load(
                 stop,
                 max_failures,
                 timeout,
+                answer_contexts[index]["answer_id"],
+                answer_contexts[index]["query"],
             )
             for index in range(workers)
         ]
@@ -492,10 +587,13 @@ def run_load(
     if remaining > 0:
         time.sleep(remaining)
     workload_elapsed = time.monotonic() - workload_started
+    for context in answer_contexts:
+        cleanup_answer(context["answer_id"])
     concurrency = run_concurrency_check(max(4, workers))
     after_counts = operational_counts()
     after_settings = database_settings()
     after_orphans = orphan_audit_count()
+    after_answer_orphans = orphan_answer_link_count()
     fingerprints = compare_fingerprints(before_fingerprints, legacy_fingerprints(source))
     achieved_rps = metrics.request_count / workload_elapsed if workload_elapsed > 0 else 0.0
     checks = {
@@ -507,6 +605,7 @@ def run_load(
         "settings_unchanged": after_settings == before_settings,
         "legacy_source_unchanged": fingerprints["unchanged"],
         "orphan_audits_unchanged": after_orphans == before_orphans,
+        "answer_links_valid": before_answer_orphans == 0 and after_answer_orphans == 0,
         "concurrency": concurrency["status"] == "ok",
     }
     completed_at = datetime.now(timezone.utc)
@@ -527,12 +626,15 @@ def run_load(
         "failures": metrics.failures,
         "iterations": sum(iterations_by_worker),
         "iterations_by_worker": iterations_by_worker,
+        "answer_setup": answer_setup,
         "checks": checks,
         "latency_ms": metrics.latency_report(),
         "before_counts": before_counts,
         "after_counts": after_counts,
         "before_orphan_audits": before_orphans,
         "after_orphan_audits": after_orphans,
+        "before_orphan_answer_links": before_answer_orphans,
+        "after_orphan_answer_links": after_answer_orphans,
         "fingerprint_comparison": fingerprints,
         "concurrency": concurrency,
     }

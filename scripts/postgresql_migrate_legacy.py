@@ -10,7 +10,20 @@ from typing import Any, Callable, Iterable
 
 from sqlalchemy import delete, func, select
 
-from db.models import AuditEvent, AlarmEvent, Document, DocumentVersion, Feedback, Issue, IssueNote, LoginSession, SystemSetting, User, WorkOrder
+from db.models import (
+    AuditEvent,
+    AlarmEvent,
+    Document,
+    DocumentVersion,
+    Feedback,
+    Issue,
+    IssueNote,
+    LoginSession,
+    RagAnswer,
+    SystemSetting,
+    User,
+    WorkOrder,
+)
 from db.session import session_scope, transaction_scope
 from repositories.postgres_auth import PostgresUserRepository
 from repositories.postgres_workflow import PostgresIssueRepository, PostgresWorkOrderRepository, parse_datetime
@@ -24,7 +37,7 @@ DEFAULT_SOURCE = ROOT / "alarm_db"
 ISSUE_STRING_FIELDS = (
     "source", "manual", "machine_id", "line_id", "alarm_code", "description",
     "original_description", "severity", "status", "assigned_to", "created_by",
-    "updated_by", "work_order_id", "rag_suggestion", "resolution_summary",
+    "updated_by", "work_order_id", "rag_suggestion", "resolution_summary", "rag_answer_id",
 )
 ORDER_STRING_FIELDS = (
     "issue_id", "alarm_code", "manual", "machine_id", "status", "priority",
@@ -32,7 +45,7 @@ ORDER_STRING_FIELDS = (
     "verified_by", "description", "resolution", "notes", "root_cause",
     "repair_action", "failure_category", "llm_correctness", "llm_coverage",
     "llm_missing_info", "llm_expected_fix", "kb_review_status", "kb_review_note",
-    "kb_reviewed_by", "kb_duplicate_of", "rag_suggestion", "source",
+    "kb_reviewed_by", "kb_duplicate_of", "rag_suggestion", "source", "rag_answer_id",
 )
 ORDER_BOOL_FIELDS = ("llm_answer_used", "kb_candidate")
 
@@ -98,6 +111,27 @@ def order_projection(payload: dict) -> dict:
     return projected
 
 
+def answer_projection(payload: dict) -> dict:
+    state = str(payload.get("answer_state") or "complete")
+    if state not in {"complete", "fallback", "unavailable"}:
+        state = "complete"
+    return {
+        "answer_id": str(payload.get("answer_id") or ""),
+        "query": str(payload.get("query") or ""),
+        "collection": str(payload.get("collection") or ""),
+        "answer": str(payload.get("answer") or ""),
+        "answer_state": state,
+        "citations": list(payload.get("citations") or []),
+        "provider": str(payload.get("provider") or ""),
+        "model": str(payload.get("model") or ""),
+        "tokenizer_version": str(payload.get("tokenizer_version") or ""),
+        "retrieval_version": str(payload.get("retrieval_version") or ""),
+        "elapsed_ms": int(payload.get("elapsed_ms") or 0),
+        "created_by": str(payload.get("created_by") or ""),
+        "created_at": normalized_datetime(payload.get("created_at")),
+    }
+
+
 def partition_records(
     source: Iterable[dict],
     target: Iterable[dict],
@@ -145,6 +179,7 @@ def source_snapshot(source_dir: Path) -> dict:
     manifest, manifest_meta = load_json_source(source_dir / "manifest.json", dict)
     alarms, alarms_meta = load_jsonl_source(source_dir / "alarm_log.jsonl")
     feedback, feedback_meta = load_jsonl_source(source_dir / "feedback.jsonl")
+    rag_answers, rag_answers_meta = load_jsonl_source(source_dir / "rag_answers.jsonl")
 
     users = {
         str(user_id): {"user_id": str(user_id), **payload}
@@ -176,6 +211,7 @@ def source_snapshot(source_dir: Path) -> dict:
         "alarm_keys": occurrence_keys("alarm", alarms),
         "feedback": feedback,
         "feedback_keys": occurrence_keys("feedback", feedback),
+        "rag_answers": rag_answers,
         "files": {
             "users": users_meta,
             "sessions": sessions_meta,
@@ -185,6 +221,7 @@ def source_snapshot(source_dir: Path) -> dict:
             "manifest": manifest_meta,
             "alarms": alarms_meta,
             "feedback": feedback_meta,
+            "rag_answers": rag_answers_meta,
         },
         "phase0_summary": phase0["summary"],
         "blocking_checks": blocking_checks,
@@ -199,6 +236,24 @@ def target_snapshot() -> dict:
     with session_scope() as session:
         alarm_keys = set(session.scalars(select(AlarmEvent.event_key).where(AlarmEvent.event_key.is_not(None))).all())
         feedback_keys = set(session.scalars(select(Feedback.legacy_key).where(Feedback.legacy_key.is_not(None))).all())
+        rag_answers = {
+            row.answer_id: answer_projection({
+                "answer_id": row.answer_id,
+                "query": row.query,
+                "collection": row.collection,
+                "answer": row.answer,
+                "answer_state": row.answer_state,
+                "citations": row.citations,
+                "provider": row.provider,
+                "model": row.model,
+                "tokenizer_version": row.tokenizer_version,
+                "retrieval_version": row.retrieval_version,
+                "elapsed_ms": row.elapsed_ms,
+                "created_by": row.created_by_ref,
+                "created_at": row.created_at,
+            })
+            for row in session.scalars(select(RagAnswer)).all()
+        }
         documents = {
             (collection, document_key): {"filename": filename, "source_hash": source_hash or ""}
             for collection, document_key, filename, source_hash in session.execute(
@@ -216,6 +271,7 @@ def target_snapshot() -> dict:
         "work_orders": orders,
         "alarm_keys": alarm_keys,
         "feedback_keys": feedback_keys,
+        "rag_answers": rag_answers,
         "documents": documents,
         "settings": settings,
     }
@@ -224,7 +280,7 @@ def target_snapshot() -> dict:
 def build_plan(source: dict, target: dict | None = None) -> dict:
     target = target or {
         "users": {}, "issues": [], "work_orders": [], "alarm_keys": set(),
-        "feedback_keys": set(), "documents": {}, "settings": {},
+        "feedback_keys": set(), "rag_answers": {}, "documents": {}, "settings": {},
     }
     users = partition_records(
         source["users"].values(), target["users"].values(),
@@ -237,6 +293,10 @@ def build_plan(source: dict, target: dict | None = None) -> dict:
     orders = partition_records(
         source["work_orders"], target["work_orders"],
         lambda item: str(item.get("id") or ""), order_projection,
+    )
+    rag_answers = partition_records(
+        source["rag_answers"], target["rag_answers"].values(),
+        lambda item: str(item.get("answer_id") or ""), answer_projection,
     )
     alarm_new = [
         (key, record) for key, record in zip(source["alarm_keys"], source["alarms"])
@@ -272,6 +332,7 @@ def build_plan(source: dict, target: dict | None = None) -> dict:
         "users": users,
         "issues": issues,
         "work_orders": orders,
+        "rag_answers": rag_answers,
         "alarms": {"insert_records": alarm_new, "insert": len(alarm_new), "skip": len(source["alarms"]) - len(alarm_new), "conflict": 0},
         "feedback": {"insert_records": feedback_new, "insert": len(feedback_new), "skip": len(source["feedback"]) - len(feedback_new), "conflict": 0},
         "documents": {"insert_records": document_new, "insert": len(document_new), "skip": len(document_skip), "conflict": len(document_conflicts), "conflict_examples": document_conflicts[:20]},
@@ -342,6 +403,27 @@ def import_feedback(records: list[tuple[str, dict]]) -> None:
             ))
 
 
+def import_rag_answers(records: list[dict]) -> None:
+    with session_scope() as session:
+        for record in records:
+            projected = answer_projection(record)
+            session.add(RagAnswer(
+                answer_id=projected["answer_id"],
+                query=projected["query"],
+                collection=projected["collection"],
+                answer=projected["answer"],
+                answer_state=projected["answer_state"],
+                citations=projected["citations"],
+                provider=projected["provider"],
+                model=projected["model"],
+                tokenizer_version=projected["tokenizer_version"],
+                retrieval_version=projected["retrieval_version"],
+                elapsed_ms=projected["elapsed_ms"],
+                created_by_ref=projected["created_by"],
+                created_at=parse_datetime(record.get("created_at")) or datetime.now(timezone.utc),
+            ))
+
+
 def import_documents(records: list[dict]) -> None:
     with session_scope() as session:
         for record in records:
@@ -383,6 +465,7 @@ def apply_plan(source: dict, plan: dict) -> None:
         users = {item["user_id"]: item for item in plan["users"]["insert_records"]}
         if users:
             PostgresUserRepository().save_all(users)
+        import_rag_answers(plan["rag_answers"]["insert_records"])
         if plan["issues"]["insert_records"]:
             PostgresIssueRepository().save_all(plan["issues"]["insert_records"])
         if plan["work_orders"]["insert_records"]:
@@ -399,6 +482,7 @@ def verify_import(source: dict) -> dict:
     source_issue_keys = {str(item.get("issue_id") or "") for item in source["issues"]}
     source_order_keys = {str(item.get("id") or "") for item in source["work_orders"]}
     source_document_keys = {(item["collection"], item["document_key"]) for item in source["documents"]}
+    source_answer_keys = {str(item.get("answer_id") or "") for item in source["rag_answers"] if item.get("answer_id")}
     target_orders = {str(item.get("id") or ""): item for item in target["work_orders"]}
     expected_audits = sum(len(item.get("issue_history") or []) for item in source["issues"])
     expected_audits += sum(len(item.get("work_order_history") or []) for item in source["work_orders"])
@@ -409,6 +493,7 @@ def verify_import(source: dict) -> dict:
         "work_orders": source_order_keys <= {str(item.get("id") or "") for item in target["work_orders"]},
         "alarms": set(source["alarm_keys"]) <= target["alarm_keys"],
         "feedback": set(source["feedback_keys"]) <= target["feedback_keys"],
+        "rag_answers": source_answer_keys <= set(target["rag_answers"]),
         "documents": source_document_keys <= set(target["documents"]),
         "settings": set(source["settings"]) <= set(target["settings"]),
         "issue_work_order_links": all(
@@ -421,12 +506,23 @@ def verify_import(source: dict) -> dict:
         ),
     }
     with session_scope() as session:
+        target_answer_keys = set(session.scalars(select(RagAnswer.answer_id)).all())
+        referenced_answer_keys = {
+            str(value)
+            for value in (
+                list(session.scalars(select(Issue.rag_answer_id)).all())
+                + list(session.scalars(select(WorkOrder.rag_answer_id)).all())
+                + list(session.scalars(select(Feedback.answer_id)).all())
+            )
+            if value
+        }
         counts = {
             "users": session.scalar(select(func.count()).select_from(User)),
             "issues": session.scalar(select(func.count()).select_from(Issue)),
             "work_orders": session.scalar(select(func.count()).select_from(WorkOrder)),
             "alarms": session.scalar(select(func.count()).select_from(AlarmEvent)),
             "feedback": session.scalar(select(func.count()).select_from(Feedback)),
+            "rag_answers": session.scalar(select(func.count()).select_from(RagAnswer)),
             "documents": session.scalar(select(func.count()).select_from(Document)),
             "settings": session.scalar(select(func.count()).select_from(SystemSetting)),
             "sessions": session.scalar(select(func.count()).select_from(LoginSession)),
@@ -434,6 +530,7 @@ def verify_import(source: dict) -> dict:
             "issue_notes": session.scalar(select(func.count()).select_from(IssueNote)),
             "document_versions": session.scalar(select(func.count()).select_from(DocumentVersion)),
         }
+    checks["answer_link_integrity"] = referenced_answer_keys <= target_answer_keys
     checks["sessions_revoked"] = counts["sessions"] == 0
     checks["audit_events"] = counts["audit_events"] >= expected_audits
     checks["issue_notes"] = counts["issue_notes"] >= expected_notes
@@ -450,6 +547,7 @@ def source_counts(source: dict) -> dict:
         "work_orders": len(source["work_orders"]),
         "alarms": len(source["alarms"]),
         "feedback": len(source["feedback"]),
+        "rag_answers": len(source["rag_answers"]),
         "documents": len(source["documents"]),
         "settings": len(source["settings"]),
         "audit_events": sum(len(item.get("issue_history") or []) for item in source["issues"])

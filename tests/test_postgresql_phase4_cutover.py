@@ -39,6 +39,7 @@ def test_archive_contains_manifest_and_only_present_legacy_files(tmp_path, monke
     backup.mkdir()
     (source / "issues.json").write_text("[]", encoding="utf-8")
     (source / "feedback.jsonl").write_text('{"feedback":"good"}\n', encoding="utf-8")
+    (source / "rag_answers.jsonl").write_text('{"answer_id":"chatcmpl_1"}\n', encoding="utf-8")
     monkeypatch.setattr(cutover, "DEFAULT_BACKUP_DIR", backup)
 
     report = cutover.archive_legacy_source(source, "cutover.zip", apply=True)
@@ -47,6 +48,7 @@ def test_archive_contains_manifest_and_only_present_legacy_files(tmp_path, monke
         assert sorted(archive.namelist()) == [
             "alarm_db/feedback.jsonl",
             "alarm_db/issues.json",
+            "alarm_db/rag_answers.jsonl",
             "cutover_manifest.json",
         ]
         manifest = json.loads(archive.read("cutover_manifest.json"))

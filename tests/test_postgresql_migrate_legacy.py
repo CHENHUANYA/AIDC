@@ -56,6 +56,10 @@ def test_source_snapshot_and_dry_plan_do_not_need_database(tmp_path):
     write_json(db_dir / "manifest.json", {"collections": {}})
     (db_dir / "alarm_log.jsonl").write_text('{"alarm_code":"3000"}\n', encoding="utf-8")
     (db_dir / "feedback.jsonl").write_text('{"feedback":"good"}\n', encoding="utf-8")
+    (db_dir / "rag_answers.jsonl").write_text(
+        '{"answer_id":"chatcmpl_1","query":"Alarm 3000","answer":"Stop safely"}\n',
+        encoding="utf-8",
+    )
     for filename in ("query_log.jsonl", "ingest_log.jsonl", "error_log.jsonl"):
         (db_dir / filename).write_text("", encoding="utf-8")
 
@@ -66,4 +70,5 @@ def test_source_snapshot_and_dry_plan_do_not_need_database(tmp_path):
     assert plan["users"]["insert"] == 1
     assert plan["alarms"]["insert"] == 1
     assert plan["feedback"]["insert"] == 1
+    assert plan["rag_answers"]["insert"] == 1
     assert plan["sessions"]["skip"] == 1
