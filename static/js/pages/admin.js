@@ -497,6 +497,9 @@ function qualityLabel(value, fallback = '未評估') {
 
 function renderAdminQualityItem(app, item) {
   const riskClass = item.has_gap ? 'quality-risk' : item.kb_candidate ? 'quality-candidate' : '';
+  const answerAction = item.answer_id
+    ? `<button class="wo-btn alt" type="button" onclick="AnswerTrace.open(${adminJsArg(item.answer_id)})">查看原回答</button>`
+    : '';
   const titleParts = [
     item.alarm_code ? `Alarm ${item.alarm_code}` : item.type,
     item.collection ? String(item.collection).toUpperCase() : '',
@@ -530,7 +533,7 @@ function renderAdminQualityItem(app, item) {
       </div>
       ${item.kb_review_note ? `<div class="wo-note">審核備註：${app.esc(item.kb_review_note)}</div>` : ''}
     </div>
-    <div class="role-row-actions">${action}</div>
+    <div class="role-row-actions">${answerAction}${action}</div>
   </div>`;
 }
 

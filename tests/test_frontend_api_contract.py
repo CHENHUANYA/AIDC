@@ -163,5 +163,19 @@ class FrontendApiContractTests(unittest.TestCase):
         self.assertIn("'answer_id'", admin)
         self.assertIn("Answer ${app.esc(item.answer_id)}", admin)
 
+    def test_supervisor_and_admin_share_read_only_answer_snapshot_panel(self):
+        answer_trace = (ROOT / "static" / "js" / "modules" / "answer_trace.js").read_text(encoding="utf-8")
+        admin = (ROOT / "static" / "js" / "pages" / "admin.js").read_text(encoding="utf-8")
+        supervisor = (ROOT / "static" / "js" / "pages" / "supervisor.js").read_text(encoding="utf-8")
+        admin_html = (ROOT / "admin.html").read_text(encoding="utf-8")
+        supervisor_html = (ROOT / "supervisor.html").read_text(encoding="utf-8")
+
+        self.assertIn("/rag/answers/", answer_trace)
+        self.assertIn("answer.answer_state", answer_trace)
+        self.assertIn("AnswerTrace.open", admin)
+        self.assertIn("AnswerTrace.open", supervisor)
+        self.assertIn("answer_trace.js", admin_html)
+        self.assertIn("answer_trace.js", supervisor_html)
+
 if __name__ == "__main__":
     unittest.main()

@@ -225,6 +225,10 @@ function renderSupervisorBulkAssigneeOptions() {
 }
 
 function renderSupervisorVerificationOrder(app, order, issue) {
+  const answerId = order.rag_answer_id || issue?.rag_answer_id || '';
+  const answerButton = answerId
+    ? `<button class="wo-btn alt" type="button" onclick="AnswerTrace.open(${supervisorJsArg(answerId)})">查看原回答</button>`
+    : '';
   const issueButton = order.issue_id
     ? `<button class="wo-btn alt" type="button" onclick="requestSupervisorRework(${supervisorJsArg(order.issue_id)})">退回重工</button>`
     : '';
@@ -240,6 +244,7 @@ function renderSupervisorVerificationOrder(app, order, issue) {
       </div>
     </div>
     <div class="role-row-actions">
+      ${answerButton}
       <button class="wo-btn" type="button" onclick="verifySupervisorOrder(${supervisorJsArg(order.id)})">驗證完成</button>
       ${issueButton}
     </div>
@@ -312,6 +317,10 @@ function visibleSupervisorOrders(app, issues, orders) {
 }
 
 function renderSupervisorResponsibilityOrder(app, order, issue) {
+  const answerId = order.rag_answer_id || issue.rag_answer_id || '';
+  const answerButton = answerId
+    ? `<button class="wo-btn alt" type="button" onclick="AnswerTrace.open(${supervisorJsArg(answerId)})">查看原回答</button>`
+    : '';
   const editable = order.status !== 'completed';
   const editControls = editable ? `<div class="sv-order-edit">
     <select class="wo-select" id="svAssignee_${supervisorAttr(order.id)}" aria-label="負責人">${supervisorAssigneeOptions(order.assigned_to || '')}</select>
@@ -330,6 +339,7 @@ function renderSupervisorResponsibilityOrder(app, order, issue) {
         <span class="wo-badge">產線 ${app.esc(issue.line_id || '-')}</span>
       </div>
       ${editControls}
+      ${answerButton ? `<div class="role-row-actions">${answerButton}</div>` : ''}
     </div>
   </div>`;
 }
