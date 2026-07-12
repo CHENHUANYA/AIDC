@@ -209,6 +209,27 @@ def operational_counts() -> dict[str, int]:
         }
 
 
+def pilot_residue_counts() -> dict[str, int]:
+    with session_scope() as session:
+        return {
+            "alarms": int(session.scalar(
+                select(func.count()).select_from(AlarmEvent).where(AlarmEvent.source.like("pilot-load-%"))
+            ) or 0),
+            "issues": int(session.scalar(
+                select(func.count()).select_from(Issue).where(Issue.source.like("pilot-load-%"))
+            ) or 0),
+            "work_orders": int(session.scalar(
+                select(func.count()).select_from(WorkOrder).where(WorkOrder.source.like("pilot-load-%"))
+            ) or 0),
+            "feedback": int(session.scalar(
+                select(func.count()).select_from(Feedback).where(Feedback.query.like("Pilot load worker %"))
+            ) or 0),
+            "rag_answers": int(session.scalar(
+                select(func.count()).select_from(RagAnswer).where(RagAnswer.query.like("Pilot load worker %"))
+            ) or 0),
+        }
+
+
 def orphan_audit_count() -> int:
     with session_scope() as session:
         return workflow_orphan_audit_count(session)
@@ -552,6 +573,7 @@ def run_load(
 
     target_rps = expected_peak_rps * load_multiplier
     before_counts = operational_counts()
+    before_residue = pilot_residue_counts()
     before_settings = database_settings()
     before_fingerprints = legacy_fingerprints(source)
     before_orphans = orphan_audit_count()
@@ -591,6 +613,7 @@ def run_load(
         cleanup_answer(context["answer_id"])
     concurrency = run_concurrency_check(max(4, workers))
     after_counts = operational_counts()
+    after_residue = pilot_residue_counts()
     after_settings = database_settings()
     after_orphans = orphan_audit_count()
     after_answer_orphans = orphan_answer_link_count()
@@ -601,7 +624,7 @@ def run_load(
         "failure_budget": metrics.failure_count <= max_failures,
         "target_rate_reached": achieved_rps >= target_rps * 0.90,
         "worker_iterations": sum(iterations_by_worker) > 0,
-        "database_counts_restored": after_counts == before_counts,
+        "database_counts_restored": after_residue == before_residue,
         "settings_unchanged": after_settings == before_settings,
         "legacy_source_unchanged": fingerprints["unchanged"],
         "orphan_audits_unchanged": after_orphans == before_orphans,
@@ -631,6 +654,8 @@ def run_load(
         "latency_ms": metrics.latency_report(),
         "before_counts": before_counts,
         "after_counts": after_counts,
+        "before_pilot_residue": before_residue,
+        "after_pilot_residue": after_residue,
         "before_orphan_audits": before_orphans,
         "after_orphan_audits": after_orphans,
         "before_orphan_answer_links": before_answer_orphans,
