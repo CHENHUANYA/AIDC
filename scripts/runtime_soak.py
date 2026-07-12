@@ -15,7 +15,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from env_utils import EnvConfigError, admin_initial_password, load_project_env
-from rag_runtime_check import check_stream_chat as runtime_check_stream_chat
+from rag_runtime_check import check_stream_chat_with_snapshot, qdrant_count
 
 
 load_project_env()
@@ -116,21 +116,70 @@ def check_chat(client: SoakClient, manual: str, alarm_code: str) -> SoakResult:
     content = ""
     if isinstance(data, dict):
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    return SoakResult("chat", code == 200 and bool(content), f"HTTP {code}, chars={len(content)}", elapsed)
+    answer_id = str(data.get("id") or "") if isinstance(data, dict) else ""
+    rag = data.get("rag", {}) if isinstance(data, dict) else {}
+    snapshot_code, snapshot_payload, snapshot_elapsed = client.request_json(f"/rag/answers/{answer_id}") if answer_id else (0, {}, 0)
+    snapshot = snapshot_payload.get("answer", {}) if isinstance(snapshot_payload, dict) else {}
+    state = str(snapshot.get("answer_state") or "")
+    snapshot_ok = (
+        snapshot_code == 200
+        and snapshot.get("answer_id") == answer_id
+        and snapshot.get("answer") == content
+        and list(snapshot.get("citations") or []) == list(rag.get("citations") or [])
+        and state in {"complete", "fallback", "unavailable"}
+        and "provider" in snapshot
+        and "model" in snapshot
+    )
+    return SoakResult(
+        "chat",
+        code == 200 and bool(content) and snapshot_ok,
+        f"HTTP {code}, chars={len(content)}, answer_id={bool(answer_id)}, snapshot={snapshot_ok}, state={state or '-'}",
+        elapsed + snapshot_elapsed,
+    )
 
 
 def check_stream_chat(client: SoakClient, manual: str, alarm_code: str) -> SoakResult:
     started = time.monotonic()
-    result = runtime_check_stream_chat(
+    result, answer_id, content = check_stream_chat_with_snapshot(
         client,
         manual,
         f"Alarm {alarm_code} stream response soak validation",
         alarm_code,
     )
+    snapshot_code, snapshot_payload, snapshot_elapsed = client.request_json(f"/rag/answers/{answer_id}") if answer_id else (0, {}, 0)
+    snapshot = snapshot_payload.get("answer", {}) if isinstance(snapshot_payload, dict) else {}
+    snapshot_ok = (
+        snapshot_code == 200
+        and snapshot.get("answer_id") == answer_id
+        and snapshot.get("answer") == content
+        and str(snapshot.get("answer_state") or "") in {"complete", "fallback", "unavailable"}
+    )
     return SoakResult(
         "stream-chat",
-        result.status == "PASS",
-        result.detail,
+        result.status == "PASS" and snapshot_ok,
+        f"{result.detail}, snapshot={snapshot_ok}",
+        int((time.monotonic() - started) * 1000) + snapshot_elapsed,
+    )
+
+
+def check_vector_coverage(client: SoakClient, qdrant_url: str, collections: list[str], timeout: int) -> SoakResult:
+    started = time.monotonic()
+    code, health, _ = client.request_json("/health")
+    health_collections = health.get("collections", {}) if isinstance(health, dict) else {}
+    api_key = os.environ.get("QDRANT_API_KEY", "").strip()
+    details = []
+    ok = code == 200
+    for collection_name in collections:
+        collection = health_collections.get(collection_name, {})
+        expected = int(collection.get("alarms_indexed") or 0) if isinstance(collection, dict) else 0
+        points = qdrant_count(qdrant_url, collection_name, timeout, api_key)
+        covered = expected > 0 and points is not None and points >= expected
+        ok = ok and covered
+        details.append(f"{collection_name}={points}/{expected}")
+    return SoakResult(
+        "vector-coverage",
+        ok,
+        ", ".join(details),
         int((time.monotonic() - started) * 1000),
     )
 
@@ -163,6 +212,9 @@ def run_iteration(
     include_chat: bool,
     include_stream: bool,
     include_alarm: bool,
+    qdrant_url: str,
+    coverage_collections: list[str],
+    coverage_every: int,
 ) -> list[SoakResult]:
     results = [check_health(client), check_lookup(client, manual, alarm_code)]
     if include_chat:
@@ -171,6 +223,8 @@ def run_iteration(
         results.append(check_stream_chat(client, manual, alarm_code))
     if include_alarm:
         results.extend(check_alarm_roundtrip(client, manual, alarm_code, iteration))
+    if coverage_collections and (iteration == 1 or iteration % coverage_every == 0):
+        results.append(check_vector_coverage(client, qdrant_url, coverage_collections, client.timeout))
     return results
 
 
@@ -210,6 +264,7 @@ def build_report(
             "failures": sum(not entry.ok for entry in entries),
             "min_ms": min(elapsed, default=0),
             "avg_ms": round(sum(elapsed) / len(elapsed)) if elapsed else 0,
+            "p50_ms": percentile(elapsed, 0.50),
             "p95_ms": percentile(elapsed, 0.95),
             "max_ms": max(elapsed, default=0),
         }
@@ -248,13 +303,13 @@ def markdown_report(report: dict[str, Any]) -> str:
         f"- Checks: `{report['total_checks']}`",
         f"- Failures: `{report['failures']}` / allowed `{report['max_failures']}`",
         "",
-        "| Check | Count | Failures | Min ms | Avg ms | P95 ms | Max ms |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Check | Count | Failures | Min ms | Avg ms | P50 ms | P95 ms | Max ms |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name, metrics in report["checks"].items():
         lines.append(
             f"| {name} | {metrics['count']} | {metrics['failures']} | {metrics['min_ms']} | "
-            f"{metrics['avg_ms']} | {metrics['p95_ms']} | {metrics['max_ms']} |"
+            f"{metrics['avg_ms']} | {metrics['p50_ms']} | {metrics['p95_ms']} | {metrics['max_ms']} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -279,6 +334,10 @@ def main() -> int:
     parser.add_argument("--skip-chat", action="store_true", help="skip repeated chat calls")
     parser.add_argument("--include-stream", action="store_true", help="include incremental SSE chat validation")
     parser.add_argument("--skip-alarm", action="store_true", help="skip repeated trigger/pending queue calls")
+    parser.add_argument("--qdrant-url", default="http://localhost:6333")
+    parser.add_argument("--coverage-collections", default="808d,840d,840dsl")
+    parser.add_argument("--coverage-every", type=int, default=10, help="check vector coverage every N iterations")
+    parser.add_argument("--skip-vector-coverage", action="store_true")
     parser.add_argument("--report-json", type=Path, default=Path("tests_tmp/runtime-soak/report.json"))
     parser.add_argument("--report-md", type=Path, default=Path("tests_tmp/runtime-soak/report.md"))
     args = parser.parse_args()
@@ -288,10 +347,15 @@ def main() -> int:
         parser.error("--interval-seconds must be positive")
     if args.max_failures < 0:
         parser.error("--max-failures cannot be negative")
+    if args.coverage_every <= 0:
+        parser.error("--coverage-every must be positive")
 
     run_started = time.monotonic()
     started_at = datetime.now(timezone.utc).isoformat()
     client = SoakClient(args.base_url, args.timeout)
+    coverage_collections = [] if args.skip_vector_coverage else [
+        value.strip() for value in args.coverage_collections.split(",") if value.strip()
+    ]
     login, login_attempts = wait_for_login(client, args.startup_wait_seconds, args.interval_seconds)
     login.detail = f"{login.detail}, attempts={login_attempts}"
     print_result(0, login)
@@ -325,6 +389,9 @@ def main() -> int:
             include_chat=not args.skip_chat,
             include_stream=args.include_stream,
             include_alarm=not args.skip_alarm,
+            qdrant_url=args.qdrant_url,
+            coverage_collections=coverage_collections,
+            coverage_every=args.coverage_every,
         ):
             recorded.append((iteration, result))
             total += 1

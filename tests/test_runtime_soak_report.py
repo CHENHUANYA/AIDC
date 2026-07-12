@@ -27,10 +27,11 @@ def test_percentile_and_soak_report_aggregate_latency_and_failures():
         "failures": 1,
         "min_ms": 20,
         "avg_ms": 30,
+        "p50_ms": 20,
         "p95_ms": 40,
         "max_ms": 40,
     }
-    assert "| health | 2 | 1 | 20 | 30 | 40 | 40 |" in markdown_report(report)
+    assert "| health | 2 | 1 | 20 | 30 | 20 | 40 | 40 |" in markdown_report(report)
 
 
 def test_wait_for_login_retries_transient_startup_failure():

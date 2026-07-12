@@ -61,12 +61,14 @@ jobs:
         run: >
           python scripts/runtime_soak.py
           --base-url "${{ inputs.base_url }}"
+          --qdrant-url "${{ inputs.qdrant_url }}"
           --manual 808d
           --alarm-code 3000
           --duration-seconds "${{ inputs.soak_seconds }}"
           --interval-seconds 30
           --max-failures 0
           --include-stream
+          --coverage-every 10
           --report-json tests_tmp/rag-live-ci/soak-report.json
           --report-md tests_tmp/rag-live-ci/soak-report.md
 

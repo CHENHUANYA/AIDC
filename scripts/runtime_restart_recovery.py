@@ -69,6 +69,27 @@ def validate_runtime(client: RuntimeClient, manual: str, alarm_code: str) -> dic
         f"/v1/{manual}/retrieve?query=hydraulic%20clamp%20pressure%20switch&top_k=5"
     ) if login.status == "PASS" else (0, {})
     retrieval_ok = code == 200 and isinstance(retrieval, dict) and retrieval.get("ready") is True and bool(retrieval.get("results"))
+    chat_code, chat = client.request_json(
+        f"/v1/{manual}/chat/completions",
+        "POST",
+        {
+            "messages": [{"role": "user", "content": f"Alarm {alarm_code}: recovery validation"}],
+            "stream": False,
+            "temperature": 0.1,
+            "max_tokens": 120,
+        },
+    ) if login.status == "PASS" else (0, {})
+    answer_id = str(chat.get("id") or "") if isinstance(chat, dict) else ""
+    snapshot_code, snapshot_payload = client.request_json(f"/rag/answers/{answer_id}") if answer_id else (0, {})
+    snapshot = snapshot_payload.get("answer", {}) if isinstance(snapshot_payload, dict) else {}
+    chat_content = chat.get("choices", [{}])[0].get("message", {}).get("content", "") if isinstance(chat, dict) else ""
+    answer_ok = (
+        chat_code == 200
+        and snapshot_code == 200
+        and snapshot.get("answer_id") == answer_id
+        and snapshot.get("answer") == chat_content
+        and snapshot.get("answer_state") in {"complete", "fallback", "unavailable"}
+    )
     return {
         "login": {"status": login.status, "detail": login.detail},
         "lookup": {"status": lookup.status, "detail": lookup.detail} if lookup else {"status": "SKIP"},
@@ -76,7 +97,11 @@ def validate_runtime(client: RuntimeClient, manual: str, alarm_code: str) -> dic
             "status": "PASS" if retrieval_ok else "FAIL",
             "detail": f"HTTP {code}, results={len(retrieval.get('results', [])) if isinstance(retrieval, dict) else 0}",
         },
-        "ok": login.status == "PASS" and lookup is not None and lookup.status == "PASS" and retrieval_ok,
+        "answer_snapshot": {
+            "status": "PASS" if answer_ok else "FAIL",
+            "detail": f"chat_http={chat_code}, snapshot_http={snapshot_code}, answer_id={bool(answer_id)}",
+        },
+        "ok": login.status == "PASS" and lookup is not None and lookup.status == "PASS" and retrieval_ok and answer_ok,
     }
 
 
@@ -85,6 +110,7 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://localhost:8100")
     parser.add_argument("--qdrant-url", default="http://localhost:6333")
     parser.add_argument("--manual", default="808d")
+    parser.add_argument("--coverage-collections", default="808d,840d,840dsl")
     parser.add_argument("--alarm-code", default="3000")
     parser.add_argument("--services", default="alarm_rag,qdrant")
     parser.add_argument("--timeout", type=int, default=90)
@@ -102,6 +128,9 @@ def main() -> int:
         parser.error(f"services must be drawn from {sorted(ALLOWED_SERVICES)}; invalid={invalid}")
 
     api_key = os.environ.get("QDRANT_API_KEY", "").strip()
+    coverage_collections = [value.strip() for value in args.coverage_collections.split(",") if value.strip()]
+    if not coverage_collections:
+        parser.error("coverage-collections must not be empty")
     report: dict[str, Any] = {
         "started_at": datetime.now(timezone.utc).isoformat(),
         "base_url": args.base_url,
@@ -112,20 +141,34 @@ def main() -> int:
     for service in services:
         started = time.monotonic()
         preflight_health, health_payload = check_health(RuntimeClient(args.base_url, args.timeout))
-        preflight_points = qdrant_count(args.qdrant_url, args.manual, args.timeout, api_key)
-        collection = health_payload.get("collections", {}).get(args.manual, {}) if isinstance(health_payload, dict) else {}
-        expected_points = int(collection.get("alarms_indexed") or 0) if isinstance(collection, dict) else 0
+        health_collections = health_payload.get("collections", {}) if isinstance(health_payload, dict) else {}
+        expected_by_collection = {
+            name: int((health_collections.get(name) or {}).get("alarms_indexed") or 0)
+            for name in coverage_collections
+        }
+        points_by_collection = {
+            name: qdrant_count(args.qdrant_url, name, args.timeout, api_key)
+            for name in coverage_collections
+        }
+        expected_points = expected_by_collection.get(args.manual, 0)
+        preflight_points = points_by_collection.get(args.manual)
+        coverage_ok = all(
+            expected_by_collection[name] > 0
+            and points_by_collection[name] is not None
+            and int(points_by_collection[name] or 0) >= expected_by_collection[name]
+            for name in coverage_collections
+        )
         preflight_ok = (
             preflight_health.status == "PASS"
-            and expected_points > 0
-            and preflight_points is not None
-            and preflight_points >= expected_points
+            and coverage_ok
         )
         service_result: dict[str, Any] = {
             "service": service,
             "preflight_health": preflight_health.status,
             "preflight_qdrant_points": preflight_points,
             "expected_qdrant_points": expected_points,
+            "preflight_points_by_collection": points_by_collection,
+            "expected_points_by_collection": expected_by_collection,
         }
         if not preflight_ok:
             service_result.update({
@@ -148,16 +191,21 @@ def main() -> int:
         recovered = completed.returncode == 0
         deadline = time.monotonic() + max(args.recovery_seconds, 1)
         if recovered and service == "qdrant":
-            recovered, count = wait_for_qdrant(
-                args.qdrant_url,
-                args.manual,
-                args.timeout,
-                api_key,
-                deadline,
-                args.interval_seconds,
-                expected_points,
-            )
-            service_result["qdrant_points"] = count
+            recovered_points = {}
+            for collection_name in coverage_collections:
+                collection_recovered, count = wait_for_qdrant(
+                    args.qdrant_url,
+                    collection_name,
+                    args.timeout,
+                    api_key,
+                    deadline,
+                    args.interval_seconds,
+                    expected_by_collection[collection_name],
+                )
+                recovered_points[collection_name] = count
+                recovered = recovered and collection_recovered
+            service_result["qdrant_points"] = recovered_points.get(args.manual)
+            service_result["qdrant_points_by_collection"] = recovered_points
         if recovered:
             recovered, detail = wait_for_app(
                 RuntimeClient(args.base_url, args.timeout), deadline, args.interval_seconds
