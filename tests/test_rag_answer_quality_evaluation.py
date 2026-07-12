@@ -36,3 +36,14 @@ def test_missing_safety_warning_fails_gate():
     })
     assert report["status"] == "fail"
     assert report["metrics"]["dangerous_operation_warning_rate"] == 0.0
+
+
+def test_v2_adversarial_cases_are_detected_without_lowering_valid_answer_metrics():
+    report = evaluate(load_dataset(Path("mock_data/rag_answer_quality_v2.json")))
+
+    assert report["status"] == "pass"
+    assert report["metrics"]["valid_case_count"] == 7
+    assert report["metrics"]["adversarial_case_count"] == 5
+    assert report["metrics"]["citation_correctness"] == 1.0
+    assert report["metrics"]["unsupported_claim_rate"] == 0.0
+    assert report["metrics"]["adversarial_detection_rate"] == 1.0

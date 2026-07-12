@@ -22,7 +22,7 @@ from rag_offline_evaluation import evaluate, load_dataset
 
 
 load_project_env()
-DEFAULT_GOLD_DATASET = ROOT / "mock_data" / "rag_gold_v1.json"
+DEFAULT_GOLD_DATASET = ROOT / "mock_data" / "rag_gold_v2.json"
 DEFAULT_JSON_REPORT = ROOT / "tests_tmp" / "rag-runtime" / "report.json"
 DEFAULT_MD_REPORT = ROOT / "tests_tmp" / "rag-runtime" / "report.md"
 
@@ -273,7 +273,12 @@ def validate_stream_contract(body: str, expected_code: str) -> tuple[bool, dict[
     }
 
 
-def check_stream_chat(client: RuntimeClient, manual: str, prompt: str, expected_code: str) -> Check:
+def check_stream_chat_with_snapshot(
+    client: RuntimeClient,
+    manual: str,
+    prompt: str,
+    expected_code: str,
+) -> tuple[Check, str, str]:
     req = request.Request(
         client.url(f"/v1/{manual}/chat/completions"),
         data=json.dumps(chat_payload(prompt, stream=True)).encode("utf-8"),
@@ -303,13 +308,19 @@ def check_stream_chat(client: RuntimeClient, manual: str, prompt: str, expected_
                         if content:
                             first_content_ms = int((time.monotonic() - started) * 1000)
     except Exception as exc:
-        return Check("rag:stream-chat", "FAIL", str(exc))
+        return Check("rag:stream-chat", "FAIL", str(exc)), "", ""
     total_ms = int((time.monotonic() - started) * 1000)
     body = "".join(body_parts)
     contract_ok, detail = validate_stream_contract(body, expected_code)
     events = parse_sse_events(body)
     content_events = sum(
         bool(event.get("choices", [{}])[0].get("delta", {}).get("content", ""))
+        for event in events
+    )
+    ids = {str(event.get("id") or "") for event in events if event.get("id")}
+    answer_id = next(iter(ids)) if len(ids) == 1 else ""
+    content_text = "".join(
+        str(event.get("choices", [{}])[0].get("delta", {}).get("content", ""))
         for event in events
     )
     incremental = content_events >= 2
@@ -321,7 +332,12 @@ def check_stream_chat(client: RuntimeClient, manual: str, prompt: str, expected_
         f"citations={detail['citations']}, expected_code={detail['expected_code']}, "
         f"answer_id={detail['answer_id']}, done={detail['done']}, content_events={content_events}, "
         f"incremental={incremental}, first_content_ms={first_content_ms}, total_ms={total_ms}",
-    )
+    ), answer_id, content_text
+
+
+def check_stream_chat(client: RuntimeClient, manual: str, prompt: str, expected_code: str) -> Check:
+    check, _, _ = check_stream_chat_with_snapshot(client, manual, prompt, expected_code)
+    return check
 
 
 def check_school_api_direct(timeout: int) -> Check:

@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
 
 
-DEFAULT_DATASET = ROOT / "mock_data" / "rag_gold_v1.json"
+DEFAULT_DATASET = ROOT / "mock_data" / "rag_gold_v2.json"
 DEFAULT_INDEX_DIR = ROOT / "alarm_db"
 DEFAULT_JSON_REPORT = ROOT / "tests_tmp" / "rag-evaluation" / "report.json"
 DEFAULT_MD_REPORT = ROOT / "tests_tmp" / "rag-evaluation" / "report.md"
@@ -190,13 +190,48 @@ def evaluate(dataset: dict, retrievers: dict[str, OfflineBm25Retriever], top_k: 
         name: {"actual": metrics.get(name, 0), "threshold": threshold, "pass": metrics.get(name, 0) >= threshold}
         for name, threshold in thresholds.items()
     }
+    collection_metrics = {}
+    collection_gates = {}
+    if dataset.get("enforce_thresholds_per_collection"):
+        for collection in sorted({str(result["collection"]) for result in results}):
+            subset = [result for result in results if str(result["collection"]) == collection]
+            subset_source_hits = [result["source_hit"] for result in subset if result["source_hit"] is not None]
+            values = {
+                "case_count": len(subset),
+                "recall_at_k": round(sum(result["hit"] for result in subset) / len(subset), 4),
+                "mrr": round(sum(result["reciprocal_rank"] for result in subset) / len(subset), 4),
+                "evidence_coverage_rate": round(
+                    sum(result["evidence_coverage"] for result in subset) / len(subset), 4
+                ),
+                "source_hit_rate": round(sum(subset_source_hits) / len(subset_source_hits), 4)
+                if subset_source_hits else 1.0,
+            }
+            collection_metrics[collection] = values
+            collection_gates[collection] = {
+                name: {
+                    "actual": values.get(name, 0),
+                    "threshold": threshold,
+                    "pass": values.get(name, 0) >= threshold,
+                }
+                for name, threshold in thresholds.items()
+            }
+    all_collection_gates = [
+        gate
+        for per_collection in collection_gates.values()
+        for gate in per_collection.values()
+    ]
+    passed = all(gate["pass"] for gate in gates.values()) and all(
+        gate["pass"] for gate in all_collection_gates
+    )
     return {
         "dataset_version": dataset["dataset_version"],
         "review_status": dataset.get("review_status", ""),
         "top_k": top_k,
         "metrics": metrics,
         "gates": gates,
-        "status": "pass" if all(gate["pass"] for gate in gates.values()) else "fail",
+        "collection_metrics": collection_metrics,
+        "collection_gates": collection_gates,
+        "status": "pass" if passed else "fail",
         "cases": results,
     }
 
@@ -232,6 +267,12 @@ def markdown_report(report: dict) -> str:
     ]
     for name, gate in report["gates"].items():
         lines.append(f"| {name} | {gate['actual']:.4f} | {gate['threshold']:.4f} | {'PASS' if gate['pass'] else 'FAIL'} |")
+    for collection, collection_gates in report.get("collection_gates", {}).items():
+        for name, gate in collection_gates.items():
+            lines.append(
+                f"| {collection}:{name} | {gate['actual']:.4f} | {gate['threshold']:.4f} | "
+                f"{'PASS' if gate['pass'] else 'FAIL'} |"
+            )
     lines.extend([
         "",
         f"Cases: {metrics['case_count']}",

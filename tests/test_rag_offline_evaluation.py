@@ -32,6 +32,19 @@ def test_tracked_gold_dataset_has_versioned_engineering_boundary():
     assert any(case["id"].startswith("multilingual-") for case in dataset["cases"])
 
 
+def test_v2_gold_dataset_has_15_cases_per_supported_collection():
+    dataset = evaluation.load_dataset(Path("mock_data/rag_gold_v2.json"))
+    counts = {
+        collection: sum(case["collection"] == collection for case in dataset["cases"])
+        for collection in ("808d", "840d", "840dsl")
+    }
+
+    assert dataset["dataset_version"] == "engineering-v2.0.0"
+    assert len(dataset["cases"]) == 45
+    assert counts == {"808d": 15, "840d": 15, "840dsl": 15}
+    assert dataset["enforce_thresholds_per_collection"] is True
+
+
 def test_dataset_validation_rejects_duplicate_ids(tmp_path):
     path = tmp_path / "invalid.json"
     path.write_text(
@@ -88,6 +101,28 @@ def test_evaluation_calculates_recall_mrr_evidence_and_source_gates():
     assert report["metrics"]["source_hit_rate"] == 1.0
     assert report["status"] == "pass"
     assert all(gate["pass"] for gate in report["gates"].values())
+
+
+def test_per_collection_gate_can_fail_independently_of_global_gate():
+    dataset = {
+        "dataset_version": "test-v2",
+        "review_status": "test",
+        "thresholds": {"recall_at_k": 0.5},
+        "enforce_thresholds_per_collection": True,
+        "cases": [
+            {"id": "a", "collection": "a", "query": "1", "expected_codes": ["1"]},
+            {"id": "b", "collection": "b", "query": "2", "expected_codes": ["2"]},
+        ],
+    }
+    report = evaluation.evaluate(
+        dataset,
+        {"a": FakeRetriever([document("1", "ok")]), "b": FakeRetriever([document("9", "miss")])},
+        top_k=1,
+    )
+
+    assert report["gates"]["recall_at_k"]["pass"] is True
+    assert report["collection_gates"]["b"]["recall_at_k"]["pass"] is False
+    assert report["status"] == "fail"
 
 
 def test_markdown_report_discloses_evidence_proxy():
