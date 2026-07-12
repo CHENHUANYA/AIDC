@@ -136,17 +136,19 @@ headers, and verify that the proxy does not buffer `text/event-stream`.
 For a short soak after deployment:
 
 ```bash
-python scripts/runtime_soak.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --duration-seconds 300 --interval-seconds 10
+python scripts/runtime_soak.py --base-url http://localhost:8100 --qdrant-url http://localhost:6333 --manual 808d --alarm-code 3000 --duration-seconds 300 --interval-seconds 10 --include-stream
 ```
 
 For a longer handoff soak, raise the duration, for example:
 
 ```bash
-python scripts/runtime_soak.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --duration-seconds 14400 --interval-seconds 30 --max-failures 0
+python scripts/runtime_soak.py --base-url http://localhost:8100 --qdrant-url http://localhost:6333 --manual 808d --alarm-code 3000 --duration-seconds 14400 --interval-seconds 30 --max-failures 0 --include-stream
 ```
 
 The soak command always writes aggregate JSON and Markdown evidence, including
-per-check failure counts and min/average/P95/max latency. Override the default
+per-check failure counts and min/average/P50/P95/max latency. Chat and streaming
+checks also read the immutable Answer snapshot back, while vector coverage is
+checked periodically for `808d`, `840d`, and `840dsl`. Override the default
 paths with `--report-json` and `--report-md` when CI collects artifacts.
 
 For a controlled local Compose restart-recovery drill after the soak:

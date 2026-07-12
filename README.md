@@ -42,12 +42,13 @@ Set `ADMIN_INITIAL_PASSWORD` before the first startup. Existing `alarm_db/users.
 python scripts/phase0_closeout_check.py
 python scripts/bm25_index_upgrade.py
 python scripts/rag_offline_evaluation.py
+python scripts/rag_answer_quality_evaluation.py
 python scripts/rag_runtime_check.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000
 python scripts/standalone_acceptance.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000
 python scripts/smoke_test.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000
 python scripts/regression_checks.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000
 python scripts/role_console_smoke.py --base-url http://localhost:8100
-python scripts/runtime_soak.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000 --duration-seconds 60 --interval-seconds 10
+python scripts/runtime_soak.py --base-url http://localhost:8100 --qdrant-url http://localhost:6333 --manual 808d --alarm-code 3000 --duration-seconds 60 --interval-seconds 10 --include-stream
 python scripts/production_boundary_check.py --base-url http://localhost:8100 --allow-http-local --skip-stream
 python -m scripts.postgresql_pilot_readiness
 python scripts/browser_e2e_responsive.py
