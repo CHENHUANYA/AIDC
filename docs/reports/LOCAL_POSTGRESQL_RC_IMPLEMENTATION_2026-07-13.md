@@ -42,13 +42,26 @@ factory, or technician acceptance.
   zero orphan Answer links, concurrency PASS.
 - Controlled JSON rollback: health and historical lookup PASS with every archived
   JSON fingerprint unchanged; the app was then returned to PostgreSQL mode.
+- Formal functional soak: PASS, 14,404.094 seconds, 191 iterations, 1,167
+  checks, zero failures, and 20/20 three-collection vector coverage checks.
+- Functional latency: chat P50/P95/max 25,638/26,015/76,905 ms; streaming
+  P50/P95/max 13,077/13,576/38,654 ms.
+- Formal PostgreSQL load: PASS, 14,402.031 seconds, 27,717 requests, 4,616
+  iterations, zero failures, and 1.925 RPS against the 2.0 RPS target.
+- PostgreSQL load latency: overall P50/P95/max 2,063/2,093/2,250 ms; every
+  cleanup, settings, fingerprint, orphan-link, and concurrency check passed.
+- Final recovery: App PASS in 88.452 seconds and Qdrant PASS in 59.750
+  seconds; Answer snapshot recovery passed and Qdrant returned to
+  2,075/3,143/4,449 points.
+- PostgreSQL custom-format backup, checksum verification, scratch restore drill,
+  product backup-health, and product restore-smoke: PASS at revision
+  `20260713_0006`.
 
 ## Deliberately pending
 
-- The formal 14,400-second PostgreSQL functional soak and load run.
-- Post-soak App and Qdrant restart recovery on the final commit.
 - Interactive modal visual QA because the in-app browser was unavailable during
-  this run; automated browser and frontend contract checks remain required.
+  this run. Automated browser E2E passed with zero browser, HTTP, or layout
+  failures, and frontend traceability contract tests passed.
 - Technician review, real machine mapping/events, School API success, n8n
   production credentials, and production network/security boundaries.
 
