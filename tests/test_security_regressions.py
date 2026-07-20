@@ -269,11 +269,13 @@ def test_qdrant_https_is_explicitly_opt_in():
 
 def test_qdrant_and_postgresql_container_boundaries_are_declared():
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    dockerfile = (ROOT / "Dockerfile.postgresql").read_text(encoding="utf-8")
+    base_dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    postgres_dockerfile = (ROOT / "Dockerfile.postgresql").read_text(encoding="utf-8")
 
     assert "${ALARM_RAG_BIND_ADDRESS:-127.0.0.1}" in compose
     assert "${QDRANT_BIND_ADDRESS:-127.0.0.1}" in compose
     assert "${N8N_BIND_ADDRESS:-127.0.0.1}" in compose
     assert "QDRANT__SERVICE__API_KEY" in compose
     assert "QDRANT_API_KEY: ${QDRANT_API_KEY:?" in compose
-    assert "USER alarm-rag" in dockerfile
+    assert "USER alarm-rag" in base_dockerfile
+    assert "USER alarm-rag" in postgres_dockerfile

@@ -1,6 +1,4 @@
-import io
 import unittest
-from contextlib import redirect_stdout
 
 from vector_store import ChromaStore, QdrantStore
 
@@ -18,22 +16,17 @@ class VectorStoreWarningTests(unittest.TestCase):
         store = ChromaStore.__new__(ChromaStore)
         store.client = FailingDeleteClient("Collection demo does not exist")
 
-        output = io.StringIO()
-        with redirect_stdout(output):
+        with self.assertNoLogs("alarm_rag.vector_store", level="WARNING"):
             store.delete_collection("demo")
-
-        self.assertEqual("", output.getvalue())
 
     def test_qdrant_delete_collection_warns_for_unexpected_failure(self):
         store = QdrantStore.__new__(QdrantStore)
         store.client = FailingDeleteClient("connection refused")
 
-        output = io.StringIO()
-        with redirect_stdout(output):
+        with self.assertLogs("alarm_rag.vector_store", level="WARNING") as captured:
             store.delete_collection("demo")
 
-        self.assertIn("[WARN][vector_store]", output.getvalue())
-        self.assertIn("connection refused", output.getvalue())
+        self.assertIn("connection refused", "\n".join(captured.output))
 
 
 if __name__ == "__main__":

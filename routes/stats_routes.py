@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from api_schemas import HealthResponse, ReadyResponse, ReadyUnavailableResponse
 from app_context import (
     FEEDBACK_LOG,
     LLM_PROVIDER,
@@ -222,7 +223,7 @@ async def error_stats(actor: dict = Depends(get_actor)):
     return {"recent": error_log[-50:], "total": len(error_log)}
 
 
-@router.get("/health")
+@router.get("/health", response_model=HealthResponse)
 async def health():
     collections = {
         name: {
@@ -246,7 +247,11 @@ async def health():
     }
 
 
-@router.get("/ready")
+@router.get(
+    "/ready",
+    response_model=ReadyResponse,
+    responses={503: {"model": ReadyUnavailableResponse, "description": "Required dependency unavailable"}},
+)
 async def ready():
     if postgres_store_enabled():
         try:

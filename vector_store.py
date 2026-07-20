@@ -1,6 +1,7 @@
 """
 vector_store.py - abstraction layer for interchangeable vector backends (Chroma or Qdrant).
 """
+import logging
 import os
 from typing import List, Optional
 
@@ -8,8 +9,11 @@ from secret_values import secret_value
 from config_values import env_int
 
 
+logger = logging.getLogger("alarm_rag.vector_store")
+
+
 def _warn(message: str):
-    print(f"[WARN][vector_store] {message}")
+    logger.warning(message)
 
 
 def _looks_like_missing_collection(exc: Exception) -> bool:

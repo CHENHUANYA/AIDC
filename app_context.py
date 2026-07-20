@@ -1,11 +1,15 @@
 import hashlib
 import json
+import logging
 import os
 import re
 import time
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
+
+
+logger = logging.getLogger("alarm_rag.app_context")
 
 
 def load_local_env(path: str = ".env") -> None:
@@ -169,7 +173,7 @@ error_log: list[dict] = read_jsonl(ERROR_LOG_PATH, limit=500)
 
 def get_engine(collection_name: str) -> AlarmRAGEngine:
     if collection_name not in engines:
-        print(f"Creating engine for collection: {collection_name}")
+        logger.info("Creating engine for collection: %s", collection_name)
         engines[collection_name] = AlarmRAGEngine(collection_name)
     return engines[collection_name]
 
@@ -187,14 +191,14 @@ def get_existing_engine(collection_name: str) -> AlarmRAGEngine | None:
 def load_all_engines() -> None:
     db_path = DB_PATH
     if not os.path.exists(db_path):
-        print(f"{db_path}/ not found - run ingest.py first")
+        logger.warning("%s/ not found - run ingest.py first", db_path)
         return
     for fname in os.listdir(db_path):
         if fname.startswith("bm25_") and fname.endswith(".pkl"):
             get_engine(fname[5:-4])
     if not engines:
-        print(f"No indexes found in {db_path}/")
-        print("  Run: docker exec -it alarm_rag python ingest.py --pdf data/manual.pdf --name mymanual")
+        logger.warning("No indexes found in %s/", db_path)
+        logger.warning("Run: docker exec -it alarm_rag python ingest.py --pdf data/manual.pdf --name mymanual")
 
 
 def sort_documents(documents: list[dict]) -> list[dict]:

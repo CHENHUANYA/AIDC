@@ -41,6 +41,30 @@ LOCAL_BROWSER_CANDIDATES = [
     Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
 ]
+TRACE_ANSWER_ID = "chatcmpl_browser_answer_trace"
+TRACE_ANSWER = {
+    "answer_id": TRACE_ANSWER_ID,
+    "query": "Alarm 5200 spindle feedback signal is unstable after startup",
+    "collection": "808d",
+    "answer": (
+        "Stop the spindle and isolate energy before inspecting the feedback circuit.\n\n"
+        "Check the encoder connector, cable shield, and supply voltage. Reseat the connector, "
+        "then verify the feedback signal at low speed before returning the machine to service."
+    ),
+    "citations": [
+        {"code": "5200", "source_file": "808D-alarm-manual.pdf", "page": 321},
+        {"title": "Spindle encoder inspection", "source_file": "maintenance-sop.md", "page": 8},
+        {"title": "Electrical isolation", "source_file": "plant-safety-standard.pdf", "page": 14},
+    ],
+    "provider": "ollama",
+    "model": "qwen2.5:7b",
+    "tokenizer_version": "multilingual-bm25-v1",
+    "retrieval_version": "hybrid-rerank-v2",
+    "elapsed_ms": 1842,
+    "answer_state": "complete",
+    "created_by": "operator01",
+    "created_at": "2026-07-13T10:30:00+08:00",
+}
 
 
 def find_free_port() -> int:
@@ -77,6 +101,11 @@ def start_server(port: int, preserve_db: bool) -> subprocess.Popen[str]:
         shutil.rmtree(db_dir, ignore_errors=True)
     db_dir.mkdir(parents=True, exist_ok=True)
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    if not preserve_db:
+        (db_dir / "rag_answers.jsonl").write_text(
+            json.dumps(TRACE_ANSWER, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
 
     env = os.environ.copy()
     env.update(
@@ -138,7 +167,8 @@ def visible_layout_issues(page) -> dict[str, Any]:
           const bad = [];
           const selectors = [
             'button', 'input', 'select', 'textarea', '.card', '.wo-card',
-            '.wo-modal-card', '.wo-board', '.tabs', 'header', '.role-row'
+            '.wo-modal-card', '.answer-trace-card', '.answer-trace-grid',
+            '.answer-trace-citations li', '.wo-board', '.tabs', 'header', '.role-row'
           ];
           for (const el of document.querySelectorAll(selectors.join(','))) {
             const style = getComputedStyle(el);
@@ -172,9 +202,9 @@ def visible_layout_issues(page) -> dict[str, Any]:
     )
 
 
-def screenshot(page, label: str) -> str:
+def screenshot(page, label: str, *, full_page: bool = True) -> str:
     path = SCREENSHOT_DIR / f"{label}.png"
-    page.screenshot(path=str(path), full_page=True)
+    page.screenshot(path=str(path), full_page=full_page)
     return str(path.relative_to(ROOT))
 
 
@@ -203,8 +233,23 @@ def login(page, base_url: str, username: str, report: dict[str, Any]) -> None:
     report["flows"].append({"name": f"login:{username}", "status": "ok", "url": page.url})
 
 
-def create_operator_issue(page, *, create_work_order: bool, machine: str, alarm: str, description: str) -> str:
+def create_operator_issue(
+    page,
+    *,
+    create_work_order: bool,
+    machine: str,
+    alarm: str,
+    description: str,
+    answer_id: str = "",
+) -> str:
     existing_ids = set(page.locator("[data-issue-id]").evaluate_all("(nodes) => nodes.map((node) => node.dataset.issueId)"))
+    page.evaluate(
+        """([answerId, suggestion]) => {
+          window.AlarmApp?.setState('operatorLastAnswerId', answerId);
+          window.AlarmApp?.setState('operatorLastSuggestion', suggestion);
+        }""",
+        [answer_id, TRACE_ANSWER["answer"] if answer_id else ""],
+    )
     page.fill("#issueMachine", machine)
     page.fill("#issueAlarmCode", alarm)
     page.fill("#issueDescription", description)
@@ -235,12 +280,84 @@ def complete_first_maintenance_order(page) -> None:
     page.wait_for_timeout(1200)
 
 
-def scan_page(page, name: str, report: dict[str, Any]) -> None:
+def scan_page(page, name: str, report: dict[str, Any], *, full_page: bool = True) -> None:
     page.wait_for_load_state("domcontentloaded")
     page.wait_for_timeout(500)
     layout = visible_layout_issues(page)
-    shot = screenshot(page, name)
+    shot = screenshot(page, name, full_page=full_page)
     report["responsive"].append({"name": name, "screenshot": shot, **layout})
+
+
+def inspect_answer_trace_modal(page, expected_answer_id: str) -> dict[str, Any]:
+    page.wait_for_selector("#answerTraceModal.show .state-complete", timeout=10000)
+    details = page.evaluate(
+        """(expectedId) => {
+          const modal = document.querySelector('#answerTraceModal.show');
+          const card = modal?.querySelector('.answer-trace-card');
+          const rect = card?.getBoundingClientRect();
+          const style = card ? getComputedStyle(card) : null;
+          const sections = [...(modal?.querySelectorAll('.answer-trace-body section') || [])];
+          const sectionText = (heading) => sections.find(
+            (section) => section.querySelector('h3')?.textContent === heading
+          )?.querySelector('.answer-trace-text')?.textContent || '';
+          return {
+            expectedId,
+            answerId: modal?.querySelector('#answerTraceId')?.textContent || '',
+            title: modal?.querySelector('#answerTraceTitle')?.textContent || '',
+            state: modal?.querySelector('.answer-trace-state')?.textContent || '',
+            provider: modal?.querySelector('.answer-trace-field b')?.textContent || '',
+            queryText: sectionText('Query'),
+            answerText: sectionText('Answer'),
+            citationCount: modal?.querySelectorAll('.answer-trace-citations li').length || 0,
+            closeVisible: Boolean(modal?.querySelector('[data-answer-trace-close]')?.offsetParent),
+            viewport: {width: innerWidth, height: innerHeight},
+            card: rect ? {
+              left: Math.round(rect.left), right: Math.round(rect.right),
+              top: Math.round(rect.top), bottom: Math.round(rect.bottom),
+              clientHeight: card.clientHeight, scrollHeight: card.scrollHeight,
+              overflowY: style?.overflowY || '',
+            } : null,
+          };
+        }""",
+        expected_answer_id,
+    )
+    card = details.get("card") or {}
+    viewport = details.get("viewport") or {}
+    if details.get("answerId") != expected_answer_id:
+        raise AssertionError(f"answer trace id mismatch: {details.get('answerId')}")
+    if details.get("title") != "RAG 回答快照" or details.get("state") != "complete":
+        raise AssertionError(f"answer trace header/state mismatch: {details}")
+    if details.get("provider") != TRACE_ANSWER["provider"] or details.get("citationCount") != 3:
+        raise AssertionError(f"answer trace metadata/citations mismatch: {details}")
+    if details.get("queryText") != TRACE_ANSWER["query"] or "Stop the spindle" not in details.get("answerText", ""):
+        raise AssertionError(f"answer trace query/answer mismatch: {details}")
+    if not details.get("closeVisible") or not card:
+        raise AssertionError(f"answer trace controls/card are not visible: {details}")
+    if card.get("left", -1) < 0 or card.get("right", 0) > viewport.get("width", 0):
+        raise AssertionError(f"answer trace card is horizontally clipped: {details}")
+    if card.get("top", -1) < 0 or card.get("bottom", 0) > viewport.get("height", 0):
+        raise AssertionError(f"answer trace card is vertically clipped: {details}")
+    if viewport.get("width", 0) <= VIEWPORTS["mobile"]["width"]:
+        if card.get("overflowY") != "auto" or card.get("scrollHeight", 0) <= card.get("clientHeight", 0):
+            raise AssertionError(f"mobile answer trace card is not independently scrollable: {details}")
+    return details
+
+
+def open_answer_trace(page, button, name: str, report: dict[str, Any]) -> None:
+    button.click()
+    details = inspect_answer_trace_modal(page, TRACE_ANSWER_ID)
+    scan_page(page, name, report, full_page=False)
+    report["modal_checks"].append({"name": name, "status": "ok", **details})
+
+
+def close_answer_trace(page, method: str) -> None:
+    if method == "button":
+        page.click("#answerTraceModal [data-answer-trace-close]")
+    elif method == "backdrop":
+        page.locator("#answerTraceModal").click(position={"x": 4, "y": 4})
+    else:
+        raise ValueError(f"unsupported answer trace close method: {method}")
+    page.wait_for_selector("#answerTraceModal", state="hidden", timeout=5000)
 
 
 def scan_responsive(playwright, base_url: str, report: dict[str, Any]) -> None:
@@ -340,6 +457,7 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
             machine="E2E-NC-SV",
             alarm="5200",
             description="Browser E2E supervisor verification path",
+            answer_id=TRACE_ANSWER_ID,
         )
         login(page, base_url, "maintenance01", report)
         complete_first_maintenance_order(page)
@@ -347,13 +465,70 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
         page.goto(f"{base_url}/supervisor", wait_until="domcontentloaded")
         page.click('[data-supervisor-section-target="verification"]')
         page.wait_for_selector("#svVerificationQueue .role-row", timeout=10000)
-        page.locator('[onclick^="verifySupervisorOrder"]').first.click()
+        trace_button = page.locator(
+            f'#svVerificationQueue button[onclick*="{TRACE_ANSWER_ID}"]'
+        )
+        trace_button.wait_for(state="visible", timeout=10000)
+        trace_row = trace_button.locator(
+            "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' role-row ')][1]"
+        )
+        open_answer_trace(
+            page,
+            trace_button,
+            "flow-supervisor-answer-trace",
+            report,
+        )
+        close_answer_trace(page, "button")
+        trace_button.click()
+        inspect_answer_trace_modal(page, TRACE_ANSWER_ID)
+        close_answer_trace(page, "backdrop")
+        trace_row.locator('[onclick^="verifySupervisorOrder"]').click()
         page.wait_for_timeout(1200)
         report["flows"].append({"name": "supervisor:verify_completed_order", "status": "ok", "issue_id": supervisor_issue_id})
         scan_page(page, "flow-supervisor-verified", report)
 
         login(page, base_url, "admin01", report)
         page.on("dialog", lambda dialog: dialog.accept())
+        page.click('[data-admin-section-target="quality"]')
+        admin_trace_button = page.locator(
+            f'#adminQualityList .role-row:has-text("{TRACE_ANSWER_ID}") button[onclick^="AnswerTrace.open"]'
+        )
+        admin_trace_button.wait_for(state="visible", timeout=10000)
+        open_answer_trace(page, admin_trace_button, "flow-admin-answer-trace", report)
+        close_answer_trace(page, "backdrop")
+
+        page.set_viewport_size(VIEWPORTS["mobile"])
+        admin_trace_button.click()
+        details = inspect_answer_trace_modal(page, TRACE_ANSWER_ID)
+        scan_page(page, "mobile-admin-answer-trace", report, full_page=False)
+        scroll_check = page.evaluate(
+            """() => {
+              const card = document.querySelector('#answerTraceModal.show .answer-trace-card');
+              const lastCitation = document.querySelector('#answerTraceModal.show .answer-trace-citations li:last-child');
+              card.scrollTop = card.scrollHeight;
+              const cardRect = card.getBoundingClientRect();
+              const citationRect = lastCitation.getBoundingClientRect();
+              return {
+                scrollTop: card.scrollTop,
+                citationTop: Math.round(citationRect.top),
+                citationBottom: Math.round(citationRect.bottom),
+                cardTop: Math.round(cardRect.top),
+                cardBottom: Math.round(cardRect.bottom),
+              };
+            }"""
+        )
+        if (
+            scroll_check["scrollTop"] <= 0
+            or scroll_check["citationTop"] < scroll_check["cardTop"]
+            or scroll_check["citationBottom"] > scroll_check["cardBottom"]
+        ):
+            raise AssertionError(f"mobile answer trace citations are not reachable by scrolling: {scroll_check}")
+        details["scrollVerified"] = True
+        scan_page(page, "mobile-admin-answer-trace-scrolled", report, full_page=False)
+        report["modal_checks"].append({"name": "mobile-admin-answer-trace", "status": "ok", **details})
+        close_answer_trace(page, "button")
+        page.set_viewport_size(VIEWPORTS["desktop"])
+
         page.click('[data-admin-section-target="knowledge"]')
         page.fill("#adminIngestCode", "E2E-5000")
         page.fill("#adminIngestTitle", "Browser E2E note")
@@ -427,6 +602,7 @@ def main() -> int:
         "responsive": [],
         "browser_errors": [],
         "http_errors": [],
+        "modal_checks": [],
         "server_output_tail": "",
     }
 

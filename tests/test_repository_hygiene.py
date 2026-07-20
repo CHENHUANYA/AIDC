@@ -13,6 +13,9 @@ RUNTIME_IGNORE_ENTRIES = {
     "data/",
     "tests_tmp/",
     ".pytest_cache/",
+    ".coverage",
+    ".coverage.*",
+    "htmlcov/",
     "tmp*/",
 }
 SECRET_PLACEHOLDERS = {
@@ -74,6 +77,9 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertIn("PYTORCH_CPU_INDEX_URL", text)
         self.assertIn("requirements-postgresql.txt", text)
         self.assertIn("-r requirements-postgresql.txt", text)
+        self.assertIn("useradd --system --uid 10001", text)
+        self.assertIn("COPY --chown=alarm-rag:alarm-rag", text)
+        self.assertIn("USER alarm-rag", text)
 
     def test_ci_runs_quality_and_compose_gates(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -83,9 +89,21 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertGreaterEqual(text.count("QDRANT_API_KEY=ci-qdrant-api-key"), 2)
         self.assertIn("ruff check .", text)
         self.assertIn("mypy", text)
-        self.assertIn("python -m pytest -q", text)
+        self.assertIn("windows-latest", text)
+        self.assertIn("coverage run -m pytest -q", text)
+        self.assertIn("coverage report", text)
+        self.assertIn("actions/setup-node@v4", text)
+        self.assertIn("node --test", text)
+        self.assertIn("python -m pip_audit", text)
+        self.assertIn("--ignore-vuln PYSEC-2026-311", text)
         self.assertIn("docker compose --env-file .env config --quiet", text)
         self.assertIn("docker-compose.postgresql-secrets.yml", text)
+
+    def test_dependency_update_automation_is_configured(self):
+        text = (ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+
+        self.assertIn("package-ecosystem: pip", text)
+        self.assertIn("package-ecosystem: github-actions", text)
 
 
 if __name__ == "__main__":

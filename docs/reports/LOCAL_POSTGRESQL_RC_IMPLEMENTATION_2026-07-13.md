@@ -56,12 +56,15 @@ factory, or technician acceptance.
 - PostgreSQL custom-format backup, checksum verification, scratch restore drill,
   product backup-health, and product restore-smoke: PASS at revision
   `20260713_0006`.
+- Answer Trace modal visual QA: PASS from the Supervisor verification queue and
+  Admin RAG quality review. Real Chromium interactions verified snapshot content,
+  button and backdrop close behavior, desktop card bounds, and mobile internal
+  scrolling through all citations. The final browser report contains 28 UI
+  evidence scans, zero browser errors, zero HTTP errors, and zero layout failures;
+  `scripts/ui_evidence_check.py` reports 9 PASS / 0 FAIL.
 
 ## Deliberately pending
 
-- Interactive modal visual QA because the in-app browser was unavailable during
-  this run. Automated browser E2E passed with zero browser, HTTP, or layout
-  failures, and frontend traceability contract tests passed.
 - Technician review, real machine mapping/events, School API success, n8n
   production credentials, and production network/security boundaries.
 

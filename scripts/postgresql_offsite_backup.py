@@ -9,6 +9,7 @@ import secrets
 import shutil
 import struct
 import tempfile
+import time
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -37,10 +38,27 @@ NONCE_BYTES = 12
 TAG_BYTES = 16
 KEY_BYTES = 32
 CHUNK_BYTES = 1024 * 1024
+DIRECTORY_PUBLISH_ATTEMPTS = 5
+DIRECTORY_PUBLISH_RETRY_SECONDS = 0.05
+IS_WINDOWS = os.name == "nt"
 
 
 class EncryptedBackupError(RuntimeError):
     pass
+
+
+def publish_verified_directory(source: Path, destination: Path) -> None:
+    """Atomically publish a verified directory, tolerating transient Windows locks."""
+    for attempt in range(DIRECTORY_PUBLISH_ATTEMPTS):
+        if destination.exists():
+            raise FileExistsError(f"Refusing to overwrite restored backup: {destination}")
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if not IS_WINDOWS or attempt + 1 >= DIRECTORY_PUBLISH_ATTEMPTS:
+                raise
+            time.sleep(DIRECTORY_PUBLISH_RETRY_SECONDS * (2**attempt))
 
 
 def sha256_file(path: Path) -> str:
@@ -318,7 +336,7 @@ def restore_encrypted_backup(artifact: Path, key_path: Path, output: Path) -> di
             verification = verify_bundle(bundle)
             temporary_output.mkdir(parents=False, exist_ok=False)
             safe_extract_bundle(bundle, temporary_output)
-        os.replace(temporary_output, output)
+        publish_verified_directory(temporary_output, output)
     except Exception:
         if temporary_output.exists():
             shutil.rmtree(temporary_output)

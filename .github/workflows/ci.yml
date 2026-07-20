@@ -8,14 +8,37 @@ on:
       - master
 
 jobs:
-  python:
-    name: Python ${{ matrix.python-version }} quality and tests
+  javascript:
+    name: JavaScript unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Node test runner
+        run: node --test
+
+  python:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
 
     steps:
       - name: Check out repository
@@ -32,6 +55,7 @@ jobs:
             requirements-dev.txt
 
       - name: Prepare CI env files
+        shell: bash
         run: |
           cp .env.example .env
           cp .env.postgresql.example .env.postgresql
@@ -56,6 +80,15 @@ jobs:
       - name: RAG answer quality gate
         run: python scripts/rag_answer_quality_evaluation.py
 
+      - name: Audit runtime dependencies
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        # Chroma is used only through the embedded PersistentClient. PYSEC-2026-311
+        # affects the separately launched, network-facing `chroma run` server.
+        run: >
+          python -m pip_audit
+          --requirement requirements-postgresql.txt
+          --ignore-vuln PYSEC-2026-311
+
       - name: Alembic migration SQL dry-run
         shell: bash
         run: |
@@ -66,7 +99,10 @@ jobs:
           python -m alembic upgrade head --sql > tests_tmp/alembic_upgrade_head.sql
 
       - name: Pytest
-        run: python -m pytest -q --basetemp tests_tmp/pytest-ci
+        run: coverage run -m pytest -q --basetemp tests_tmp/pytest-ci
+
+      - name: Coverage gate
+        run: coverage report
 
   container-build:
     name: Container build

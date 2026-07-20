@@ -9,6 +9,7 @@ Features
 """
 
 import json
+import logging
 import os
 import zipfile
 from difflib import SequenceMatcher
@@ -29,6 +30,7 @@ from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
 from services.transactions import postgres_transactional
 
+logger = logging.getLogger("alarm_rag.work_orders")
 router = APIRouter()
 postgres_work_orders = PostgresWorkOrderRepository()
 rag_answers = RagAnswerRepository()
@@ -319,7 +321,7 @@ def _issue_map_by_id() -> dict[str, dict]:
             if issue.get("issue_id")
         }
     except Exception as exc:
-        print(f"[WO] issue visibility map failed: {exc}")
+        logger.warning("Issue visibility map failed: %s", exc)
         return {}
 
 
@@ -492,7 +494,7 @@ def create_order_dict(
         orders = _load_orders()
         orders.insert(0, order)
         _save_orders(orders)
-    print(f"[WO] created {order['id']} (alarm {alarm_code})")
+    logger.info("Created work order %s for alarm %s", order["id"], alarm_code)
     return order
 
 
@@ -841,7 +843,7 @@ async def api_get_order_history(order_id: str, actor: dict = Depends(get_actor))
             from issues import get_issue_dict
             linked_issue = get_issue_dict(issue_id)
         except Exception as exc:
-            print(f"[WO] issue history lookup failed for {order_id}: {exc}")
+            logger.warning("Issue history lookup failed for %s: %s", order_id, exc)
 
     return {
         "status": "ok",
@@ -989,7 +991,7 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
             from issues import sync_issue_from_work_order
             synced_issue = sync_issue_from_work_order(order)
         except Exception as exc:
-            print(f"[WO] issue sync failed for {order['id']}: {exc}")
+            logger.warning("Issue sync failed for %s: %s", order["id"], exc)
 
     review_result = {
         "candidate": bool(order.get("kb_candidate")),
@@ -1191,7 +1193,7 @@ async def review_work_order_knowledge(
     if review_status == "validation_failed":
         return {
             "status": "error",
-            "message": ingest_result.get("error") or "Knowledge ingestion failed",
+            "message": (ingest_result or {}).get("error") or "Knowledge ingestion failed",
             "order": order,
             "ingest": ingest_result,
         }

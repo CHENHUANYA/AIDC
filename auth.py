@@ -6,8 +6,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from api_schemas import (
+    ApiErrorResponse,
+    CurrentUserSuccessResponse,
+    LoginConfigResponse,
+    LoginSuccessResponse,
+    StatusOkResponse,
+)
 from repositories.postgres_auth import ConcurrentUserUpdateError, PostgresSessionRepository, PostgresUserRepository
 from repositories.runtime import postgres_store_enabled
 from secret_values import secret_value
@@ -255,6 +263,14 @@ def api_error(message: str) -> dict:
     return {"status": "error", "message": message}
 
 
+def authentication_error(message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=401,
+        content=api_error(message),
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 def concurrency_error() -> dict:
     return api_error("User was updated by another administrator; reload and retry")
 
@@ -450,14 +466,18 @@ async def api_revoke_session(token_prefix: str, actor: dict = Depends(get_actor)
     return api_ok(revoked=len(matched))
 
 
-@router.post("/auth/login")
+@router.post(
+    "/auth/login",
+    response_model=LoginSuccessResponse,
+    responses={401: {"model": ApiErrorResponse, "description": "Invalid credentials"}},
+)
 async def login(req: LoginRequest):
     users = load_users()
     user = users.get(req.username.strip())
     if not user or not user.get("active", True):
-        return {"status": "error", "message": "Invalid username or password"}
+        return authentication_error("Invalid username or password")
     if not verify_password(req.password, str(user.get("password_hash") or "")):
-        return {"status": "error", "message": "Invalid username or password"}
+        return authentication_error("Invalid username or password")
 
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
@@ -472,7 +492,7 @@ async def login(req: LoginRequest):
     return {"status": "ok", "token": token, "expires_at": expires_at, "user": public_user(user)}
 
 
-@router.get("/auth/login-config")
+@router.get("/auth/login-config", response_model=LoginConfigResponse)
 async def login_config():
     return {
         "status": "ok",
@@ -482,15 +502,19 @@ async def login_config():
     }
 
 
-@router.get("/auth/me")
+@router.get(
+    "/auth/me",
+    response_model=CurrentUserSuccessResponse,
+    responses={401: {"model": ApiErrorResponse, "description": "Missing, expired, or invalid session"}},
+)
 async def me(authorization: Optional[str] = Header(default=None, alias="Authorization")):
     current = actor_from_token(authorization)
     if not current:
-        return {"status": "error", "message": "Not authenticated"}
+        return authentication_error("Not authenticated")
     return {"status": "ok", "user": current}
 
 
-@router.post("/auth/logout")
+@router.post("/auth/logout", response_model=StatusOkResponse)
 async def logout(req: LogoutRequest, authorization: Optional[str] = Header(default=None, alias="Authorization")):
     token = req.token or bearer_token(authorization)
     if not token:

@@ -22,6 +22,10 @@ def make_report(**overrides):
     report = {
         "status": "ok",
         "responsive": entries,
+        "modal_checks": [
+            {"name": name, "status": "ok"}
+            for name in sorted(ui_evidence_check.REQUIRED_MODAL_CHECKS)
+        ],
         "browser_errors": [],
         "http_errors": [],
     }
@@ -75,3 +79,11 @@ def test_clipped_or_overflowing_entry_fails():
 
     assert result["responsive:overflow"] == "FAIL"
     assert result["responsive:clipped"] == "FAIL"
+
+
+def test_missing_or_failed_modal_interaction_fails():
+    report = make_report(modal_checks=[{"name": "flow-supervisor-answer-trace", "status": "failed"}])
+    with patch.object(Path, "exists", fake_exists):
+        result = statuses(ui_evidence_check.validate_report(report, SCREENSHOTS_DIR))
+
+    assert result["modal:interactions"] == "FAIL"

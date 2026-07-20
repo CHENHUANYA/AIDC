@@ -30,6 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from app_context import load_all_engines
 from auth import router as auth_router
 from issues import router as issue_router
+from observability import RequestLoggingMiddleware, configure_logging
 from routes.alarm_routes import router as alarm_router
 from routes.chat_lookup_routes import router as chat_lookup_router
 from routes.ingest_routes import router as ingest_router
@@ -39,6 +40,7 @@ from routes.stats_routes import router as stats_router
 from work_orders import router as work_order_router
 
 
+configure_logging()
 app = FastAPI(title="Alarm RAG Server - Multi Manual")
 
 def cors_origins() -> list[str]:
@@ -54,7 +56,9 @@ app.add_middleware(
     allow_origins=cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+app.add_middleware(RequestLoggingMiddleware)
 
 load_all_engines()
 

@@ -24,7 +24,12 @@ ignore_missing_imports = true
 explicit_package_bases = true
 follow_imports = "skip"
 files = [
+    "api_schemas.py",
     "auth.py",
+    "issues.py",
+    "main.py",
+    "observability.py",
+    "work_orders.py",
     "bm25_text.py",
     "db/",
     "secret_values.py",
@@ -32,7 +37,7 @@ files = [
     "repositories/postgres_auth.py",
     "repositories/postgres_content.py",
     "repositories/postgres_workflow.py",
-    "routes/stats_routes.py",
+    "routes/",
     "scripts/postgresql_backup.py",
     "scripts/postgresql_health.py",
     "scripts/postgresql_secret_overlay_check.py",
@@ -46,3 +51,33 @@ files = [
     "vector_store.py",
 ]
 exclude = "(alarm_db|backups|data|exports|hf_cache|n8n_data|qdrant_data|tests_tmp)/"
+
+[tool.coverage.run]
+branch = true
+source = [
+    "app_context",
+    "auth",
+    "bm25_text",
+    "config_values",
+    "db",
+    "ingest",
+    "issues",
+    "observability",
+    "pagination",
+    "rag_engine",
+    "repositories",
+    "routes",
+    "secret_values",
+    "services",
+    "storage",
+    "vector_store",
+    "work_orders",
+]
+
+[tool.coverage.report]
+fail_under = 50
+show_missing = true
+skip_covered = true
+omit = [
+    "tests/*",
+]

@@ -15,6 +15,8 @@ REQUIRED_SCREENSHOTS = {
     "flow-operator-verified.png",
     "flow-operator-reopened.png",
     "flow-supervisor-verified.png",
+    "flow-supervisor-answer-trace.png",
+    "flow-admin-answer-trace.png",
     "flow-admin-kb-ingest.png",
     "flow-admin-kb-delete.png",
     "flow-admin-kb-rebuild.png",
@@ -24,6 +26,8 @@ REQUIRED_SCREENSHOTS = {
     "mobile-supervisor.png",
     "mobile-admin.png",
     "mobile-operations.png",
+    "mobile-admin-answer-trace.png",
+    "mobile-admin-answer-trace-scrolled.png",
     "tablet-operator.png",
     "tablet-maintenance.png",
     "tablet-supervisor.png",
@@ -34,6 +38,12 @@ REQUIRED_SCREENSHOTS = {
     "desktop-supervisor.png",
     "desktop-admin.png",
     "desktop-operations.png",
+}
+
+REQUIRED_MODAL_CHECKS = {
+    "flow-supervisor-answer-trace",
+    "flow-admin-answer-trace",
+    "mobile-admin-answer-trace",
 }
 
 
@@ -107,6 +117,24 @@ def validate_report(report: dict[str, Any], screenshots_dir: Path) -> list[Check
     ]
     record(results, "responsive:overflow", not overflow, "none" if not overflow else ", ".join(map(str, overflow)))
     record(results, "responsive:clipped", not clipped, "none" if not clipped else ", ".join(map(str, clipped)))
+
+    modal_checks = report.get("modal_checks", [])
+    if not isinstance(modal_checks, list):
+        modal_checks = []
+    passed_modal_checks = {
+        str(item.get("name") or "")
+        for item in modal_checks
+        if isinstance(item, dict) and item.get("status") == "ok"
+    }
+    missing_modal_checks = sorted(REQUIRED_MODAL_CHECKS - passed_modal_checks)
+    record(
+        results,
+        "modal:interactions",
+        not missing_modal_checks,
+        "open, content, layout, and close checks passed"
+        if not missing_modal_checks
+        else "missing or failed " + ", ".join(missing_modal_checks),
+    )
 
     reported_names = {screenshot_name(entry.get("screenshot")) for entry in entries}
     missing_from_report = sorted(REQUIRED_SCREENSHOTS - reported_names)

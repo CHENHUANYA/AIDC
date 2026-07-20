@@ -11,6 +11,9 @@ venv/
 .env
 .env.postgresql
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
 pytest-cache-files-*/
 tests_tmp/
 tmp*/

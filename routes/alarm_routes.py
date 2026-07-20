@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 import hashlib
+import logging
 import os
 import secrets
 
@@ -30,6 +31,7 @@ from issues import create_issue_dict, get_issue_dict, set_issue_work_order
 from work_orders import create_order_dict, get_order_dict
 
 
+logger = logging.getLogger("alarm_rag.alarm")
 router = APIRouter()
 postgres_alarms = PostgresAlarmRepository()
 rag_answers = RagAnswerRepository()
@@ -165,7 +167,7 @@ async def trigger_alarm(
                     for d in docs
                 ])
     except Exception as exc:
-        print(f"RAG lookup for work order failed: {exc}")
+        logger.warning("RAG lookup for work order failed: %s", exc)
 
     entry["alarm_type"] = alarm_info["type"]
     entry["category"] = alarm_info["category"]
@@ -190,7 +192,12 @@ async def trigger_alarm(
         entry["issue_id"] = issue.get("issue_id") or ""
         entry["work_order_id"] = work_order.get("id") if work_order else ""
         _publish_alarm(entry)
-        print(f"Alarm triggered: {req.alarm_code} from {req.machine_id or req.source} -> work order {work_order['id']}")
+        logger.info(
+            "Alarm triggered: %s from %s -> work order %s",
+            req.alarm_code,
+            req.machine_id or req.source,
+            entry["work_order_id"],
+        )
         return {
             "status": "ok",
             "duplicate": False,
@@ -232,7 +239,12 @@ async def trigger_alarm(
     append_jsonl(ALARM_LOG_PATH, entry)
     _publish_alarm(entry)
 
-    print(f"Alarm triggered: {req.alarm_code} from {req.machine_id or req.source} -> work order {work_order['id']}")
+    logger.info(
+        "Alarm triggered: %s from %s -> work order %s",
+        req.alarm_code,
+        req.machine_id or req.source,
+        work_order["id"],
+    )
     return {
         "status": "ok",
         "duplicate": False,

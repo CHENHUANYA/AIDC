@@ -14,5 +14,8 @@ __pycache__/
 venv/
 tests_tmp/
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
 pytest-cache-files-*/
 tmp*/

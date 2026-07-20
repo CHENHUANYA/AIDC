@@ -7,6 +7,7 @@ issues when escalation is needed.
 """
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta
@@ -27,6 +28,7 @@ from services.transactions import postgres_transactional
 from work_orders import create_order_dict, sync_work_order_from_issue, validate_issue_verification
 
 
+logger = logging.getLogger("alarm_rag.issues")
 router = APIRouter()
 postgres_issues = PostgresIssueRepository()
 rag_answers = RagAnswerRepository()
@@ -574,7 +576,7 @@ async def api_get_issue_history(issue_id: str, actor: dict = Depends(get_actor))
             from work_orders import get_order_dict
             linked_order = get_order_dict(work_order_id)
         except Exception as exc:
-            print(f"[ISSUE] work order history lookup failed for {issue_id}: {exc}")
+            logger.warning("Work order history lookup failed for %s: %s", issue_id, exc)
 
     return {
         "status": "ok",

@@ -15,7 +15,7 @@ This file summarizes the local browser evidence for the no-vendor Alarm RAG MVP.
 | E2E script | `scripts/browser_e2e_responsive.py` | Re-runs the browser flow and responsive checks. |
 | Evidence check | `scripts/ui_evidence_check.py` | Verifies report status, errors, responsive layout results, and required screenshot files. |
 
-The latest local run completed with no browser errors, no HTTP errors, no horizontal overflow, and no clipped UI elements in the recorded responsive checks.
+The latest local run completed with no browser errors, no HTTP errors, no horizontal overflow, and no clipped UI elements in the recorded responsive checks. The Answer Trace modal checks also validate real UI open/load/close interactions, snapshot content, card bounds, and independent mobile scrolling.
 
 ## Flow Evidence
 
@@ -26,6 +26,9 @@ The latest local run completed with no browser errors, no HTTP errors, no horizo
 | `flow-operator-verified.png` | Operator can verify a completed issue. |
 | `flow-operator-reopened.png` | Operator can reopen a completed issue when verification fails. |
 | `flow-supervisor-verified.png` | Supervisor can verify completed work from the Supervisor UI. |
+| `flow-supervisor-answer-trace.png` | Supervisor can open the immutable RAG Answer snapshot before verification and close it by button or backdrop. |
+| `flow-admin-answer-trace.png` | Admin can inspect the same shared read-only Answer Trace panel from RAG quality review. |
+| `mobile-admin-answer-trace.png` / `mobile-admin-answer-trace-scrolled.png` | The Answer Trace card fits the 390 x 844 viewport; its citations remain reachable through internal scrolling without page overflow. |
 | `flow-admin-kb-ingest.png` | Admin can ingest a knowledge document. |
 | `flow-admin-kb-delete.png` | Admin can delete a knowledge document. |
 | `flow-admin-kb-rebuild.png` | Admin can trigger knowledge index rebuild. |
@@ -35,7 +38,7 @@ The latest local run completed with no browser errors, no HTTP errors, no horizo
 
 | Viewport group | Screenshots |
 |---|---|
-| Mobile 390 x 844 | `mobile-operator.png`, `mobile-maintenance.png`, `mobile-supervisor.png`, `mobile-admin.png`, `mobile-operations.png` |
+| Mobile 390 x 844 | `mobile-operator.png`, `mobile-maintenance.png`, `mobile-supervisor.png`, `mobile-admin.png`, `mobile-admin-answer-trace.png`, `mobile-admin-answer-trace-scrolled.png`, `mobile-operations.png` |
 | Tablet 768 x 1024 | `tablet-operator.png`, `tablet-maintenance.png`, `tablet-supervisor.png`, `tablet-admin.png`, `tablet-operations.png` |
 | Desktop 1440 x 950 | `desktop-operator.png`, `desktop-maintenance.png`, `desktop-supervisor.png`, `desktop-admin.png`, `desktop-operations.png` |
 

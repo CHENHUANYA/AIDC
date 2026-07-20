@@ -22,7 +22,8 @@
   }
 
   function incrementStoredCounter(key) {
-    const current = Number(localStorage.getItem(key) || '0');
+    const parsed = Number(localStorage.getItem(key) || '0');
+    const current = Number.isFinite(parsed) ? parsed : 0;
     localStorage.setItem(key, String(current + 1));
   }
 

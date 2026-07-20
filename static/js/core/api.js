@@ -120,10 +120,18 @@
     return data;
   }
 
+  function positiveInteger(value, fallback, maximum) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+    return Math.min(Math.max(Math.trunc(parsed), 1), maximum);
+  }
+
   async function apiPaged(path, collectionKey, options = {}) {
     const separator = path.includes('?') ? '&' : '?';
-    const pageLimit = Math.min(Math.max(Number(options.limit || 100), 1), 200);
-    const maxPages = Math.max(Number(options.maxPages || 100), 1);
+    const pageLimit = positiveInteger(options.limit ?? 100, 100, 200);
+    const maxPages = positiveInteger(options.maxPages ?? 100, 100, 1000);
     const items = [];
     let cursor = '';
     let response = {};

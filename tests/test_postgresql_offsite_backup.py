@@ -1,4 +1,5 @@
 import json
+import os
 import secrets
 
 import pytest
@@ -112,3 +113,42 @@ def test_restore_bundle_publishes_verified_postgresql_backup(tmp_path, monkeypat
     assert result["status"] == "ok"
     assert (restored / "database.dump").read_bytes() == dump.read_bytes()
     assert json.loads((restored / "manifest.json").read_text(encoding="utf-8")) == manifest
+
+
+def test_publish_verified_directory_retries_transient_windows_lock(tmp_path, monkeypatch):
+    source = tmp_path / "verified.part"
+    destination = tmp_path / "published"
+    source.mkdir()
+    (source / "manifest.json").write_text("{}", encoding="utf-8")
+    real_replace = os.replace
+    attempts = 0
+
+    def transient_replace(current, target):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PermissionError("transient file lock")
+        real_replace(current, target)
+
+    monkeypatch.setattr(offsite, "IS_WINDOWS", True)
+    monkeypatch.setattr(offsite.os, "replace", transient_replace)
+    monkeypatch.setattr(offsite.time, "sleep", lambda _: None)
+
+    offsite.publish_verified_directory(source, destination)
+
+    assert attempts == 2
+    assert not source.exists()
+    assert (destination / "manifest.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_publish_verified_directory_does_not_overwrite_destination(tmp_path):
+    source = tmp_path / "verified.part"
+    destination = tmp_path / "published"
+    source.mkdir()
+    destination.mkdir()
+
+    with pytest.raises(FileExistsError, match="Refusing to overwrite"):
+        offsite.publish_verified_directory(source, destination)
+
+    assert source.is_dir()
+    assert destination.is_dir()

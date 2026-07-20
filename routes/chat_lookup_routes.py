@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import time
 from contextvars import ContextVar
@@ -44,6 +45,7 @@ from repositories.rag_answers import RagAnswerRepository
 from storage import ERROR_LOG_PATH, append_jsonl
 
 
+logger = logging.getLogger("alarm_rag.chat")
 router = APIRouter()
 last_llm_source = "none"
 request_llm_source: ContextVar[str] = ContextVar("request_llm_source", default="none")
@@ -177,11 +179,11 @@ async def call_llm(messages: list[dict], temperature: float, max_tokens: int) ->
         except httpx.HTTPStatusError as exc:
             if not SCHOOL_API_FALLBACK_TO_OLLAMA or exc.response.status_code < 500:
                 raise
-            print(f"[LLM] school API failed with {exc.response.status_code}; falling back to Ollama")
+            logger.warning("School API failed with %s; falling back to Ollama", exc.response.status_code)
         except httpx.HTTPError as exc:
             if not SCHOOL_API_FALLBACK_TO_OLLAMA:
                 raise
-            print(f"[LLM] school API connection failed: {exc}; falling back to Ollama")
+            logger.warning("School API connection failed: %s; falling back to Ollama", exc)
 
     content = await call_ollama(messages, temperature, max_tokens)
     last_llm_source = "ollama"
@@ -220,7 +222,7 @@ def save_rag_answer(
         })
     except Exception as exc:
         # Persistence must be observable but must not turn an otherwise valid answer into a 500.
-        print(f"[WARN] Failed to persist RAG answer {answer_id}: {exc}")
+        logger.warning("Failed to persist RAG answer %s: %s", answer_id, exc)
 
 
 def classify_answer_state(provider: str) -> str:

@@ -10,6 +10,8 @@ services:
     environment:
       ALARM_RAG_ENV: ${ALARM_RAG_ENV:-production}
       ALARM_RAG_CORS_ORIGINS: ${ALARM_RAG_CORS_ORIGINS:-http://localhost:8100,http://127.0.0.1:8100}
+      ALARM_RAG_LOG_LEVEL: ${ALARM_RAG_LOG_LEVEL:-INFO}
+      ALARM_RAG_LOG_FORMAT: ${ALARM_RAG_LOG_FORMAT:-json}
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-change-me-now}
       ALARM_RAG_TRIGGER_TOKEN: ${ALARM_RAG_TRIGGER_TOKEN:-}
       DB_PATH: /app/alarm_db
