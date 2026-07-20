@@ -10,6 +10,14 @@ import httpx
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from api_schemas import (
+    API_ERROR_RESPONSES,
+    LookupResponse,
+    ModelsResponse,
+    OpenAIChatResponse,
+    RagAnswerEnvelope,
+    RetrieveResponse,
+)
 from app_context import (
     CHAT_SYSTEM_PROMPT,
     FREE_CHAT_SYSTEM,
@@ -53,6 +61,14 @@ rag_answers = RagAnswerRepository()
 SSE_HEADERS = {
     "Cache-Control": "no-cache",
     "X-Accel-Buffering": "no",
+}
+CHAT_RESPONSES = {
+    **API_ERROR_RESPONSES,
+    200: {
+        "model": OpenAIChatResponse,
+        "description": "OpenAI-compatible JSON response or an SSE stream when stream=true",
+        "content": {"text/event-stream": {"schema": {"type": "string"}}},
+    },
 }
 
 
@@ -434,7 +450,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
     return make_openai_response(content, rag=rag_metadata, response_id=response_id)
 
 
-@router.post("/v1/chat/completions")
+@router.post("/v1/chat/completions", responses=CHAT_RESPONSES)
 async def chat_default(req: ChatRequest, collection: str = "alarms", actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -442,7 +458,10 @@ async def chat_default(req: ChatRequest, collection: str = "alarms", actor: dict
     return await handle_chat(req, collection, actor)
 
 
-@router.post("/v1/free/chat/completions")
+@router.post(
+    "/v1/free/chat/completions",
+    responses={200: {"model": OpenAIChatResponse}, **API_ERROR_RESPONSES},
+)
 async def free_chat(req: ChatRequest, actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -457,7 +476,7 @@ async def free_chat(req: ChatRequest, actor: dict = Depends(get_actor)):
     return make_openai_response(content or "Error: empty response from LLM.")
 
 
-@router.post("/v1/{collection_name}/chat/completions")
+@router.post("/v1/{collection_name}/chat/completions", responses=CHAT_RESPONSES)
 async def chat_collection(req: ChatRequest, collection_name: str, actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -468,7 +487,10 @@ async def chat_collection(req: ChatRequest, collection_name: str, actor: dict = 
     return await handle_chat(req, collection_name, actor)
 
 
-@router.get("/v1/{collection_name}/retrieve")
+@router.get(
+    "/v1/{collection_name}/retrieve",
+    responses={200: {"model": RetrieveResponse}, **API_ERROR_RESPONSES},
+)
 async def retrieve_collection(
     collection_name: str,
     query: str = Query(min_length=1, max_length=1000),
@@ -513,7 +535,7 @@ async def retrieve_collection(
     }
 
 
-@router.post("/v1/{collection_name}/chat")
+@router.post("/v1/{collection_name}/chat", responses=CHAT_RESPONSES)
 async def chat_multiturn(req: ChatRequest, collection_name: str, actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -524,7 +546,10 @@ async def chat_multiturn(req: ChatRequest, collection_name: str, actor: dict = D
     return await handle_chat(req, collection_name, actor)
 
 
-@router.get("/rag/answers/{answer_id}")
+@router.get(
+    "/rag/answers/{answer_id}",
+    responses={200: {"model": RagAnswerEnvelope}, **API_ERROR_RESPONSES},
+)
 async def get_rag_answer(answer_id: str, actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -537,7 +562,10 @@ async def get_rag_answer(answer_id: str, actor: dict = Depends(get_actor)):
     return {"status": "ok", "answer": answer}
 
 
-@router.get("/v1/{collection_name}/lookup")
+@router.get(
+    "/v1/{collection_name}/lookup",
+    responses={200: {"model": LookupResponse}, **API_ERROR_RESPONSES},
+)
 async def lookup_alarm(collection_name: str, code: str, actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -598,7 +626,10 @@ async def lookup_alarm(collection_name: str, code: str, actor: dict = Depends(ge
         return {"found": False, "error": str(exc)}
 
 
-@router.get("/v1/{collection_name}/models")
+@router.get(
+    "/v1/{collection_name}/models",
+    responses={200: {"model": ModelsResponse}, **API_ERROR_RESPONSES},
+)
 async def models_collection(collection_name: str):
     invalid = validate_collection_name(collection_name)
     if invalid:
@@ -609,6 +640,6 @@ async def models_collection(collection_name: str):
     }
 
 
-@router.get("/v1/models")
+@router.get("/v1/models", responses={200: {"model": ModelsResponse}, **API_ERROR_RESPONSES})
 async def models_default():
     return {"object": "list", "data": [{"id": "alarm-rag", "object": "model", "owned_by": "local"}]}

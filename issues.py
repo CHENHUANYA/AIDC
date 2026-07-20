@@ -16,6 +16,16 @@ from typing import List, Optional, Tuple
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from api_schemas import (
+    API_ERROR_RESPONSES,
+    IssueEscalatedResponse,
+    IssueHistoryResponse,
+    IssueMutationResponse,
+    IssueStatsResponse,
+    IssueSuccessResponse,
+    IssuesPageResponse,
+    IssuesResponse,
+)
 from audit_history import append_history, field_changes, history_list
 from auth import actor_id, actor_role, can_update_issue, can_view_issue, get_actor
 from pagination import InvalidCursor, decode_cursor, encode_cursor, paginate_records
@@ -352,7 +362,10 @@ def sync_issue_from_work_order(order: dict) -> Optional[dict]:
     return None
 
 
-@router.post("/issues")
+@router.post(
+    "/issues",
+    responses={200: {"model": IssueMutationResponse}, **API_ERROR_RESPONSES},
+)
 @postgres_transactional
 async def api_create_issue(req: CreateIssue, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
@@ -412,7 +425,7 @@ async def api_create_issue(req: CreateIssue, actor: dict = Depends(get_actor)):
     return {"status": "ok", "issue": issue, "work_order": work_order}
 
 
-@router.get("/issues")
+@router.get("/issues", responses={200: {"model": IssuesResponse}, **API_ERROR_RESPONSES})
 async def api_list_issues(
     status: Optional[str] = None,
     line_id: Optional[str] = None,
@@ -437,7 +450,10 @@ async def api_list_issues(
     return {"total": len(issues), "issues": issues}
 
 
-@router.get("/issues/page")
+@router.get(
+    "/issues/page",
+    responses={200: {"model": IssuesPageResponse}, **API_ERROR_RESPONSES},
+)
 async def api_page_issues(
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str = "",
@@ -504,7 +520,10 @@ async def api_page_issues(
     }
 
 
-@router.get("/issues/stats")
+@router.get(
+    "/issues/stats",
+    responses={200: {"model": IssueStatsResponse}, **API_ERROR_RESPONSES},
+)
 async def api_issue_stats(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -547,7 +566,10 @@ async def api_issue_stats(actor: dict = Depends(get_actor)):
     }
 
 
-@router.get("/issues/{issue_id}")
+@router.get(
+    "/issues/{issue_id}",
+    responses={200: {"model": IssueSuccessResponse}, **API_ERROR_RESPONSES},
+)
 async def api_get_issue(issue_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -559,7 +581,10 @@ async def api_get_issue(issue_id: str, actor: dict = Depends(get_actor)):
     return {"status": "ok", "issue": issue}
 
 
-@router.get("/issues/{issue_id}/history")
+@router.get(
+    "/issues/{issue_id}/history",
+    responses={200: {"model": IssueHistoryResponse}, **API_ERROR_RESPONSES},
+)
 async def api_get_issue_history(issue_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -587,7 +612,10 @@ async def api_get_issue_history(issue_id: str, actor: dict = Depends(get_actor))
     }
 
 
-@router.patch("/issues/{issue_id}")
+@router.patch(
+    "/issues/{issue_id}",
+    responses={200: {"model": IssueMutationResponse}, **API_ERROR_RESPONSES},
+)
 @postgres_transactional
 async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
@@ -688,7 +716,10 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
     return {"status": "ok", "issue": issue, "work_order": synced_work_order}
 
 
-@router.post("/issues/{issue_id}/escalate")
+@router.post(
+    "/issues/{issue_id}/escalate",
+    responses={200: {"model": IssueEscalatedResponse}, **API_ERROR_RESPONSES},
+)
 @postgres_transactional
 async def api_escalate_issue(issue_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):

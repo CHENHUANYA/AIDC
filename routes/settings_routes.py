@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from api_schemas import API_ERROR_RESPONSES, SystemSettingsEnvelope
 from auth import actor_id, get_actor, is_admin
 from repositories.postgres_content import ConcurrentContentUpdateError, PostgresSettingsRepository
 from repositories.runtime import postgres_store_enabled
@@ -56,7 +57,10 @@ def _save_settings(settings: dict, updated_by: str = "", expected_revision: str 
     return str(settings.get("revision") or "")
 
 
-@router.get("/system-settings")
+@router.get(
+    "/system-settings",
+    responses={200: {"model": SystemSettingsEnvelope}, **API_ERROR_RESPONSES},
+)
 async def get_system_settings(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -65,7 +69,10 @@ async def get_system_settings(actor: dict = Depends(get_actor)):
     return {"status": "ok", "settings": _load_settings()}
 
 
-@router.patch("/system-settings")
+@router.patch(
+    "/system-settings",
+    responses={200: {"model": SystemSettingsEnvelope}, **API_ERROR_RESPONSES},
+)
 async def update_system_settings(req: UpdateSystemSettings, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}

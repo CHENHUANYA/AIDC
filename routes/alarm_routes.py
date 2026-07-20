@@ -8,6 +8,7 @@ import secrets
 
 from fastapi import APIRouter, Depends, Header
 
+from api_schemas import API_ERROR_RESPONSES, AlarmTriggerResponse, PendingAlarmsResponse
 from app_context import (
     AlarmTrigger,
     alarm_history,
@@ -108,7 +109,10 @@ def _publish_alarm(entry: dict) -> None:
         alarm_history.pop(0)
 
 
-@router.post("/trigger-alarm")
+@router.post(
+    "/trigger-alarm",
+    responses={200: {"model": AlarmTriggerResponse}, **API_ERROR_RESPONSES},
+)
 @postgres_transactional
 async def trigger_alarm(
     req: AlarmTrigger,
@@ -255,7 +259,10 @@ async def trigger_alarm(
     }
 
 
-@router.get("/pending-alarms")
+@router.get(
+    "/pending-alarms",
+    responses={200: {"model": PendingAlarmsResponse}, **API_ERROR_RESPONSES},
+)
 async def get_pending_alarms(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}

@@ -21,6 +21,20 @@ from typing import List, Optional, Tuple
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from api_schemas import (
+    API_ERROR_RESPONSES,
+    KnowledgeReviewErrorResponse,
+    KnowledgeReviewResponse,
+    WorkOrderArchiveResponse,
+    WorkOrderDeleteResponse,
+    WorkOrderHistoryResponse,
+    WorkOrderImportResponse,
+    WorkOrderMutationResponse,
+    WorkOrderStatsResponse,
+    WorkOrderSuccessResponse,
+    WorkOrdersPageResponse,
+    WorkOrdersResponse,
+)
 from audit_history import append_history, field_changes, history_list
 from auth import actor_id, actor_role, can_update_work_order, can_view_work_order, can_verify, get_actor, is_admin, resolve_user
 from config_values import env_float, env_int
@@ -590,7 +604,10 @@ def sync_work_order_from_issue(issue: dict, user_id: str = "", note: str = "") -
 
 
 # ----------------- API routes -----------------
-@router.post("/work-orders")
+@router.post(
+    "/work-orders",
+    responses={200: {"model": WorkOrderSuccessResponse}, **API_ERROR_RESPONSES},
+)
 @postgres_transactional
 async def api_create_order(req: CreateWorkOrder, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
@@ -623,7 +640,10 @@ async def api_create_order(req: CreateWorkOrder, actor: dict = Depends(get_actor
     return {"status": "ok", "order": order}
 
 
-@router.get("/work-orders")
+@router.get(
+    "/work-orders",
+    responses={200: {"model": WorkOrdersResponse}, **API_ERROR_RESPONSES},
+)
 async def api_list_orders(status: Optional[str] = None, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -633,7 +653,10 @@ async def api_list_orders(status: Optional[str] = None, actor: dict = Depends(ge
     return {"total": len(orders), "orders": orders}
 
 
-@router.get("/work-orders/page")
+@router.get(
+    "/work-orders/page",
+    responses={200: {"model": WorkOrdersPageResponse}, **API_ERROR_RESPONSES},
+)
 async def api_page_orders(
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str = "",
@@ -684,7 +707,10 @@ async def api_page_orders(
     }
 
 
-@router.get("/work-orders/stats")
+@router.get(
+    "/work-orders/stats",
+    responses={200: {"model": WorkOrderStatsResponse}, **API_ERROR_RESPONSES},
+)
 async def api_order_stats(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -784,7 +810,10 @@ async def api_order_stats(actor: dict = Depends(get_actor)):
     }
 
 
-@router.get("/work-orders/archive")
+@router.get(
+    "/work-orders/archive",
+    responses={200: {"model": WorkOrderArchiveResponse}, **API_ERROR_RESPONSES},
+)
 async def api_work_order_archive(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -804,7 +833,10 @@ async def api_work_order_archive(actor: dict = Depends(get_actor)):
     }
 
 
-@router.get("/work-orders/{order_id}")
+@router.get(
+    "/work-orders/{order_id}",
+    responses={200: {"model": WorkOrderSuccessResponse}, **API_ERROR_RESPONSES},
+)
 async def api_get_order(order_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -821,7 +853,10 @@ async def api_get_order(order_id: str, actor: dict = Depends(get_actor)):
     return {"status": "ok", "order": order}
 
 
-@router.get("/work-orders/{order_id}/history")
+@router.get(
+    "/work-orders/{order_id}/history",
+    responses={200: {"model": WorkOrderHistoryResponse}, **API_ERROR_RESPONSES},
+)
 async def api_get_order_history(order_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -854,7 +889,10 @@ async def api_get_order_history(order_id: str, actor: dict = Depends(get_actor))
     }
 
 
-@router.patch("/work-orders/{order_id}")
+@router.patch(
+    "/work-orders/{order_id}",
+    responses={200: {"model": WorkOrderMutationResponse}, **API_ERROR_RESPONSES},
+)
 @postgres_transactional
 async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
@@ -1000,7 +1038,10 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
     return {"status": "ok", "order": order, "knowledge_review": review_result, "issue": synced_issue}
 
 
-@router.delete("/work-orders/{order_id}")
+@router.delete(
+    "/work-orders/{order_id}",
+    responses={200: {"model": WorkOrderDeleteResponse}, **API_ERROR_RESPONSES},
+)
 @postgres_transactional
 async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
@@ -1109,7 +1150,14 @@ async def _auto_feedback_to_kb(order: dict) -> dict:
         }
 
 
-@router.post("/work-orders/{order_id}/knowledge-review")
+@router.post(
+    "/work-orders/{order_id}/knowledge-review",
+    responses={
+        **API_ERROR_RESPONSES,
+        200: {"model": KnowledgeReviewResponse},
+        400: {"model": KnowledgeReviewErrorResponse, "description": "Review or ingestion validation failed"},
+    },
+)
 async def review_work_order_knowledge(
     order_id: str,
     req: KnowledgeReviewRequest,
@@ -1277,7 +1325,10 @@ def _validate_xlsx_archive(content: bytes) -> str:
     return ""
 
 
-@router.post("/work-orders/import-excel")
+@router.post(
+    "/work-orders/import-excel",
+    responses={200: {"model": WorkOrderImportResponse}, **API_ERROR_RESPONSES},
+)
 async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}

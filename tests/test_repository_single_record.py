@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 import issues
 import work_orders
+from api_schemas import IssueResponse, WorkOrderResponse
 from db.base import Base
 from db.models import Issue, WorkOrder
 from repositories.postgres_workflow import PostgresIssueRepository, PostgresWorkOrderRepository
@@ -74,6 +75,8 @@ def test_postgres_single_record_repositories_do_not_change_siblings(monkeypatch)
         order_payload["priority"] = "high"
         saved_order = order_repository.save_one(order_payload)
 
+        IssueResponse.model_validate(saved_issue)
+        WorkOrderResponse.model_validate(saved_order)
         assert saved_issue["description"] == "after"
         assert saved_order["priority"] == "high"
         assert session.scalar(select(Issue.description).where(Issue.issue_no == "ISS-ONE-B")) == "untouched"

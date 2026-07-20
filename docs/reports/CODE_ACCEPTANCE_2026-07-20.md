@@ -9,7 +9,7 @@ the approved target host.
 
 | Gate | Result | Evidence |
 |---|---|---|
-| Python tests | PASS | `430 passed, 30 subtests passed` |
+| Python tests | PASS | `437 passed, 30 subtests passed` |
 | Coverage | PASS | 63% total branch coverage; CI floor raised to 60% |
 | Focus coverage | PASS | `ingest.py` 74%; `repositories/postgres_auth.py` 91% |
 | Ruff | PASS | `ruff check .` |
@@ -30,9 +30,20 @@ the approved target host.
 - User listing/creation/update/password reset and session listing/revocation now
   publish explicit success models; session contracts expose only a token hash
   prefix and never the bearer token.
-- Every historical FastAPI operation documents the shared standard error
-  response schemas, so later endpoint-specific success models can be added
-  incrementally without another error-contract migration.
+- Issue creation/list/page/stats/detail/history/update/escalation now publish
+  explicit models for status/severity enums, optimistic versions, operator
+  notes, audit events, pagination, and work-order linkage.
+- Work-order CRUD/list/page/stats/archive/history, knowledge review, and Excel
+  import now publish explicit models. JSON and PostgreSQL repository records
+  share one contract; archival/deletion fields are explicit compatibility
+  fields, and knowledge-ingestion failures retain typed diagnostic payloads.
+- Alarm, feedback/statistics, settings, static reference, lookup, model-list,
+  retrieval, and RAG-answer endpoints now publish explicit success models.
+- Chat endpoints document both their JSON response and native
+  `text/event-stream` response, including the streaming media type in OpenAPI.
+- Every JSON success response now has an OpenAPI schema, enforced by a global
+  contract test. Every historical FastAPI operation also documents the shared
+  standard error response schemas.
 
 ## Qdrant Transport Boundary
 

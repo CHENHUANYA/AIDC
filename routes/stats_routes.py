@@ -9,7 +9,17 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from api_schemas import HealthResponse, ReadyResponse, ReadyUnavailableResponse
+from api_schemas import (
+    API_ERROR_RESPONSES,
+    AlarmStatsResponse,
+    ErrorStatsResponse,
+    FeedbackStatsResponse,
+    HealthResponse,
+    QueryStatsResponse,
+    ReadyResponse,
+    ReadyUnavailableResponse,
+    StatusOkResponse,
+)
 from app_context import (
     FEEDBACK_LOG,
     LLM_PROVIDER,
@@ -39,7 +49,10 @@ postgres_feedback = PostgresFeedbackRepository()
 rag_answers = RagAnswerRepository()
 
 
-@router.get("/stats/alarms")
+@router.get(
+    "/stats/alarms",
+    responses={200: {"model": AlarmStatsResponse}, **API_ERROR_RESPONSES},
+)
 async def alarm_stats(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -72,7 +85,10 @@ async def alarm_stats(actor: dict = Depends(get_actor)):
     }
 
 
-@router.delete("/stats/alarms")
+@router.delete(
+    "/stats/alarms",
+    responses={200: {"model": StatusOkResponse}, **API_ERROR_RESPONSES},
+)
 async def clear_alarm_stats(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -90,7 +106,10 @@ async def clear_alarm_stats(actor: dict = Depends(get_actor)):
     return {"status": "ok"}
 
 
-@router.post("/feedback")
+@router.post(
+    "/feedback",
+    responses={200: {"model": StatusOkResponse}, **API_ERROR_RESPONSES},
+)
 async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -129,7 +148,10 @@ async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
     return {"status": "ok"}
 
 
-@router.get("/feedback/stats")
+@router.get(
+    "/feedback/stats",
+    responses={200: {"model": FeedbackStatsResponse}, **API_ERROR_RESPONSES},
+)
 async def feedback_stats(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -177,7 +199,10 @@ async def feedback_stats(actor: dict = Depends(get_actor)):
     }
 
 
-@router.get("/stats/queries")
+@router.get(
+    "/stats/queries",
+    responses={200: {"model": QueryStatsResponse}, **API_ERROR_RESPONSES},
+)
 async def query_stats(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -214,7 +239,10 @@ async def query_stats(actor: dict = Depends(get_actor)):
     }
 
 
-@router.get("/stats/errors")
+@router.get(
+    "/stats/errors",
+    responses={200: {"model": ErrorStatsResponse}, **API_ERROR_RESPONSES},
+)
 async def error_stats(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}

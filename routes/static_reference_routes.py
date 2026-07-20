@@ -3,6 +3,7 @@ import os
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
 
+from api_schemas import API_ERROR_RESPONSES, ActionNumbersResponse, ErrorCodesResponse
 from app_context import (
     REFERENCE_DIR,
     filter_entries,
@@ -70,7 +71,10 @@ async def serve_operations():
     return _read_html("operations.html")
 
 
-@router.get("/v1/{collection_name}/reference/action-numbers")
+@router.get(
+    "/v1/{collection_name}/reference/action-numbers",
+    responses={200: {"model": ActionNumbersResponse}, **API_ERROR_RESPONSES},
+)
 async def action_numbers(collection_name: str, q: str = "", actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -80,7 +84,10 @@ async def action_numbers(collection_name: str, q: str = "", actor: dict = Depend
     return {"collection": collection_name, "total": len(filtered), "entries": filtered}
 
 
-@router.get("/v1/{collection_name}/reference/error-codes")
+@router.get(
+    "/v1/{collection_name}/reference/error-codes",
+    responses={200: {"model": ErrorCodesResponse}, **API_ERROR_RESPONSES},
+)
 async def error_codes_300500(collection_name: str, q: str = "", actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -88,4 +95,3 @@ async def error_codes_300500(collection_name: str, q: str = "", actor: dict = De
     entries = load_json_entries(os.path.join(REFERENCE_DIR, "error_codes_300500.json"))
     filtered = filter_entries(entries, q, ["hex", "code", "meaning", "cause", "remedy", "severity"])
     return {"collection": collection_name, "total": len(filtered), "entries": filtered}
-
