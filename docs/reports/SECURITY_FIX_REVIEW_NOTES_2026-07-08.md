@@ -26,7 +26,7 @@ review. It is intended as a reviewer guide; it does not contain secret values.
 | --- | --- | --- | --- |
 | Secrets overlay drift | `docker-compose.postgresql-secrets.yml` | Removed copied environment block; overlay now only changes password source. | Compose config and overlay contract tests pass. |
 | Container user | `Dockerfile.postgresql` | App image now runs as non-root `alarm-rag`. | Docker inspect showed `user=alarm-rag`. |
-| Service exposure | `docker-compose.yml`, `.env.example`, `scripts/preflight_check.py`, `docs/DEPLOYMENT.md` | Alarm RAG, PostgreSQL, Qdrant, and n8n are loopback-bound by default; preflight warns for non-loopback binds. | Live stack shows only `127.0.0.1` host binds; preflight `PASS=42 WARN=0 FAIL=0`. |
+| Service exposure | `docker-compose.yml`, `.env.example`, `scripts/preflight_check.py`, `docs/guides/DEPLOYMENT.md` | Alarm RAG, PostgreSQL, Qdrant, and n8n are loopback-bound by default; preflight warns for non-loopback binds. | Live stack shows only `127.0.0.1` host binds; preflight `PASS=42 WARN=0 FAIL=0`. |
 | Static gates | `.github/workflows/ci.yml`, `pyproject.toml`, `requirements-dev.txt` | Added CI for Ruff, mypy, pytest, and Compose config; mypy covers 10 high-risk files. | Local gates pass: Ruff, mypy, full pytest, Compose config. |
 | Deprecation warnings | `storage.py`, `pytest.ini` | Replaced repo `datetime.utcnow()` use; retained scoped Starlette multipart warning filter because the warning originates in Starlette internals. | Warning source verified with pytest override. |
 

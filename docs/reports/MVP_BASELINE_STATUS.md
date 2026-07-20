@@ -5,7 +5,7 @@ Generated for the delivery baseline review on 2026-06-08.
 ## Current Baseline
 
 - Live Alarm RAG service is expected at `http://localhost:8100`.
-- Current acceptance evidence is stored in `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md`.
+- Current acceptance evidence is stored in `docs/reports/MVP_WEEK4_ACCEPTANCE_REPORT.md`.
 - The latest regenerated acceptance report is an offline evidence pass: `17 PASS / 0 FAIL`, generated at `2026-06-08T19:21:42`.
 - The previous tracked report contained live checks and showed `24 PASS / 0 FAIL`; the regenerated report intentionally removed the 7 live rows because the offline acceptance path was used.
 - Static demo package docs live under `docs/`.
@@ -21,7 +21,7 @@ Generated for the delivery baseline review on 2026-06-08.
 | Legacy single-page shell removal | Intentional refactor | `alarm_app.html` was removed. No current root HTML, static JS, or page CSS reference it. |
 | Legacy CSS removal | Intentional refactor | `static/alarm_app.css` and `static/login.css` were removed. Current pages load `/static/css/*.css` instead. |
 | Legacy JS removal | Intentional refactor | `static/js/pages/legacy.js` was removed. No current root HTML or static JS reference it. |
-| Deployment baseline | Include | `docker-compose.yml`, `Dockerfile`, `.dockerignore`, `.env.example`, and `docs/DEPLOYMENT.md` form the compose/deployment source set. |
+| Deployment baseline | Include | `docker-compose.yml`, `Dockerfile`, `.dockerignore`, `.env.example`, and `docs/guides/DEPLOYMENT.md` form the compose/deployment source set. |
 | Test baseline | Include | `pytest.ini` and the new `tests/test_*.py` files should be committed with the scripts they exercise. |
 | Runtime data | Exclude | `qdrant_data/`, `n8n_data/`, `tests_tmp/`, `pytest-cache-files-*`, `.pytest_cache/`, `tmp*/`, logs, and `__pycache__/` are local products. |
 | Generated plan exports | Needs owner decision | `docs/期末計畫書撰寫摘要.docx`, `.pdf`, `_v2.pdf`, and `_v3.pdf` are binary/generated exports. Keep only if they are required deliverables; otherwise keep the Markdown source as canonical. |
@@ -37,8 +37,8 @@ These groups should move together when preparing the delivery commit:
 | Auth and API routing | `main.py`, `auth.py`, `app_context.py`, `routes/`, `issues.py`, `storage.py`, `work_orders.py` |
 | RAG and data maintenance | `rag_engine.py`, `mock_data/n8n_mock_workflow.json`, `scripts/data_maintenance.py`, `scripts/model_cache.py`, `scripts/preflight_check.py`, `scripts/bootstrap_env.py`, `scripts/env_utils.py` |
 | Acceptance and smoke tooling | `pytest.ini`, `scripts/regression_checks.py`, `scripts/smoke_test.py`, `scripts/week4_acceptance.py`, `scripts/standalone_acceptance.py`, `scripts/n8n_workflow_check.py`, `scripts/replay_demo_alarms.py`, `scripts/role_console_smoke.py`, `scripts/seed_week2_data.py`, `tests/` |
-| Deployment docs and config | `.dockerignore`, `.env.example`, `.gitignore`, `Dockerfile`, `docker-compose.yml`, `README.md`, `docs/DEPLOYMENT.md`, `docs/DATA_MAINTENANCE.md`, `docs/SMOKE_TEST.md`, `docs/N8N_MOCK_WORKFLOW.md` |
-| Planning and delivery docs | `docs/MVP_BASELINE_STATUS.md`, `docs/MVP_ACCEPTANCE_CHECKLIST.md`, `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md`, `docs/DEMO_SCRIPT.md`, `docs/DEMO_RECORDING_SCRIPT.md`, `docs/plans/` |
+| Deployment docs and config | `.dockerignore`, `.env.example`, `.gitignore`, `Dockerfile`, `docker-compose.yml`, `README.md`, `docs/guides/DEPLOYMENT.md`, `docs/guides/DATA_MAINTENANCE.md`, `docs/guides/SMOKE_TEST.md`, `docs/guides/N8N_MOCK_WORKFLOW.md` |
+| Planning and delivery docs | `docs/reports/MVP_BASELINE_STATUS.md`, `docs/guides/MVP_ACCEPTANCE_CHECKLIST.md`, `docs/reports/MVP_WEEK4_ACCEPTANCE_REPORT.md`, `docs/guides/DEMO_SCRIPT.md`, `docs/guides/DEMO_RECORDING_SCRIPT.md`, `docs/plans/` |
 
 ## Hold Or Decide Before Commit
 
@@ -47,7 +47,7 @@ These groups should move together when preparing the delivery commit:
 | `docs/期末計畫書撰寫摘要.md` | Include if this is the canonical final-plan source | Text source is reviewable and diffable. |
 | `docs/期末計畫書撰寫摘要.docx` | Include only as a required submission artifact | Binary document cannot be meaningfully reviewed in Git. |
 | `docs/期末計畫書撰寫摘要.pdf`, `_v2.pdf`, `_v3.pdf` | Include only the final required version | Multiple binary exports increase noise; prefer one final PDF if needed. |
-| `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md` | Include with note | The current report is offline-only `17 PASS / 0 FAIL`; rerun live acceptance if live evidence is required for delivery. |
+| `docs/reports/MVP_WEEK4_ACCEPTANCE_REPORT.md` | Include with note | The current report is offline-only `17 PASS / 0 FAIL`; rerun live acceptance if live evidence is required for delivery. |
 
 ## Frontend CSS Replacement Check
 
@@ -68,7 +68,7 @@ These groups should move together when preparing the delivery commit:
 
 | Item | Status | Notes |
 |---|---|---|
-| `docs/SMOKE_TEST.md` | Current | Smoke test documentation moved under `docs/`. |
+| `docs/guides/SMOKE_TEST.md` | Current | Smoke test documentation moved under `docs/`. |
 | `scripts/smoke_test.py` | Current | Smoke test runner moved under `scripts/`. |
 | `scripts/week4_acceptance.py` | Current | Acceptance runner writes the Week 4 report. |
 | `scripts/regression_checks.py` | Current | Focused regression runner for the next development cycle. |

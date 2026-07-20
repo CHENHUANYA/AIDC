@@ -13,7 +13,7 @@ from env_utils import EnvConfigError, admin_initial_password, load_project_env
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_REPORT = ROOT / "docs" / "MVP_WEEK4_ACCEPTANCE_REPORT.md"
+DEFAULT_REPORT = ROOT / "docs" / "reports" / "MVP_WEEK4_ACCEPTANCE_REPORT.md"
 
 
 load_project_env()
@@ -84,12 +84,12 @@ def workflow_nodes() -> set[str]:
 
 def static_checks() -> list[tuple[str, str, str]]:
     required_files = [
-        "docs/DEMO_SCRIPT.md",
-        "docs/MOCK_DATA_SPEC.md",
-        "docs/N8N_MOCK_WORKFLOW.md",
-        "docs/MVP_ACCEPTANCE_CHECKLIST.md",
-        "docs/DEMO_RECORDING_SCRIPT.md",
-        "docs/VENDOR_DATA_FIELD_CHECKLIST.md",
+        "docs/guides/DEMO_SCRIPT.md",
+        "docs/reference/MOCK_DATA_SPEC.md",
+        "docs/guides/N8N_MOCK_WORKFLOW.md",
+        "docs/guides/MVP_ACCEPTANCE_CHECKLIST.md",
+        "docs/guides/DEMO_RECORDING_SCRIPT.md",
+        "docs/reference/VENDOR_DATA_FIELD_CHECKLIST.md",
         "scripts/smoke_test.py",
         "scripts/seed_week2_data.py",
         "scripts/replay_demo_alarms.py",

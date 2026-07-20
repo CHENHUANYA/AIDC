@@ -8,6 +8,8 @@ exports/
 data/
 __pycache__/
 *.pyc
+.mypy_cache/
+.ruff_cache/
 .env
 .env.postgresql
 .venv/

@@ -90,8 +90,8 @@ The following remain intentionally outside this local-only acceptance:
 
 ## Next Best Work
 
-1. Record the local demo using `docs/DEMO_RECORDING_SCRIPT.md`.
-2. Use `docs/UI_EVIDENCE_SUMMARY_2026-06-24.md` and the browser E2E screenshots under `tests_tmp/browser_e2e/screenshots` as UI evidence where appropriate.
-3. Use `docs/VENDOR_MACHINE_MAPPING_EXAMPLE.md` and `mock_data/machine_mapping_example.json` in vendor-data discussions.
-4. Use `docs/LOCAL_HANDOFF_MANIFEST_2026-06-24.md` as the package checklist.
+1. Record the local demo using `docs/guides/DEMO_RECORDING_SCRIPT.md`.
+2. Use `docs/reports/UI_EVIDENCE_SUMMARY_2026-06-24.md` and the browser E2E screenshots under `tests_tmp/browser_e2e/screenshots` as UI evidence where appropriate.
+3. Use `docs/reference/VENDOR_MACHINE_MAPPING_EXAMPLE.md` and `mock_data/machine_mapping_example.json` in vendor-data discussions.
+4. Use `docs/reports/LOCAL_HANDOFF_MANIFEST_2026-06-24.md` as the package checklist.
 5. Keep this local acceptance report with the final handoff package.

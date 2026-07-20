@@ -96,8 +96,8 @@ def count_total(data: dict[str, Any]) -> int:
 
 def check_static_baseline(runner: Runner) -> None:
     required = [
-        ROOT / "docs" / "SMOKE_TEST.md",
-        ROOT / "docs" / "MVP_ACCEPTANCE_CHECKLIST.md",
+        ROOT / "docs" / "guides" / "SMOKE_TEST.md",
+        ROOT / "docs" / "guides" / "MVP_ACCEPTANCE_CHECKLIST.md",
         ROOT / "scripts" / "smoke_test.py",
         ROOT / "scripts" / "week4_acceptance.py",
         ROOT / "mock_data" / "n8n_mock_workflow.json",

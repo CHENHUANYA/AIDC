@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class DeploymentDocsTests(unittest.TestCase):
     def test_deployment_doc_covers_runtime_contract(self):
-        text = (ROOT / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
+        text = (ROOT / "docs" / "guides" / "DEPLOYMENT.md").read_text(encoding="utf-8")
         required = [
             "python scripts/bootstrap_env.py --show-admin-password",
             "python scripts/preflight_check.py",
@@ -32,13 +32,13 @@ class DeploymentDocsTests(unittest.TestCase):
     def test_readme_points_to_deployment_doc_and_validation(self):
         text = (ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("docs/DEPLOYMENT.md", text)
-        self.assertIn("docs/DELIVERY_RISK_STATUS.md", text)
+        self.assertIn("docs/guides/DEPLOYMENT.md", text)
+        self.assertIn("docs/reports/DELIVERY_RISK_STATUS.md", text)
         self.assertIn("python scripts/standalone_acceptance.py", text)
         self.assertIn("python scripts/preflight_check.py --require-model-cache", text)
 
     def test_delivery_risk_status_tracks_external_blockers(self):
-        text = (ROOT / "docs" / "DELIVERY_RISK_STATUS.md").read_text(encoding="utf-8")
+        text = (ROOT / "docs" / "reports" / "DELIVERY_RISK_STATUS.md").read_text(encoding="utf-8")
         required = [
             "School API success path",
             "Production TLS / reverse proxy",

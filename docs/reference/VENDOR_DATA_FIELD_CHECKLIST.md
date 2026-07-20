@@ -61,7 +61,7 @@ Minimum fields for manually keyed operator issues:
 Useful fields for replacing mock `machine_id` values:
 
 Sample local mapping: `mock_data/machine_mapping_example.json`.
-Discussion document: `docs/VENDOR_MACHINE_MAPPING_EXAMPLE.md`.
+Discussion document: `docs/reference/VENDOR_MACHINE_MAPPING_EXAMPLE.md`.
 
 | Field | Example |
 |---|---|

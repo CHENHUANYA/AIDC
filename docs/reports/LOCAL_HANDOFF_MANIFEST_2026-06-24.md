@@ -28,16 +28,16 @@ This manifest lists the files, generated evidence, and commands that make the cu
 |---|---|---|
 | Project entry | `README.md` | Quick local startup and validation commands. |
 | Docs entry | `docs/README.md` | Index of demo, acceptance, vendor, and planning docs. |
-| Local status | `docs/LOCAL_ACCEPTANCE_REPORT_2026-06-24.md` | Current local live acceptance and restore-smoke evidence. |
-| UI evidence | `docs/UI_EVIDENCE_SUMMARY_2026-06-24.md` | Browser flow and responsive evidence summary. |
+| Local status | `docs/reports/LOCAL_ACCEPTANCE_REPORT_2026-06-24.md` | Current local live acceptance and restore-smoke evidence. |
+| UI evidence | `docs/reports/UI_EVIDENCE_SUMMARY_2026-06-24.md` | Browser flow and responsive evidence summary. |
 | Local plan | `docs/plans/LOCAL_ONLY_CONTINUATION_PLAN_2026-06-24.md` | Explains what can continue without vendor implementation. |
-| Demo script | `docs/DEMO_SCRIPT.md` | Operator-facing no-vendor demo flow. |
-| Recording script | `docs/DEMO_RECORDING_SCRIPT.md` | Short video and screenshot flow. |
-| Acceptance report | `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md` | Regenerated Week 4 acceptance output. |
-| Vendor checklist | `docs/VENDOR_DATA_FIELD_CHECKLIST.md` | Fields needed when vendor data arrives. |
-| Machine mapping | `docs/VENDOR_MACHINE_MAPPING_EXAMPLE.md` | Local machine mapping template for vendor discussion. |
-| Deployment | `docs/DEPLOYMENT.md` | Docker, secrets, backup, and validation commands. |
-| Risk status | `docs/DELIVERY_RISK_STATUS.md` | External blockers and final handoff gate. |
+| Demo script | `docs/guides/DEMO_SCRIPT.md` | Operator-facing no-vendor demo flow. |
+| Recording script | `docs/guides/DEMO_RECORDING_SCRIPT.md` | Short video and screenshot flow. |
+| Acceptance report | `docs/reports/MVP_WEEK4_ACCEPTANCE_REPORT.md` | Regenerated Week 4 acceptance output. |
+| Vendor checklist | `docs/reference/VENDOR_DATA_FIELD_CHECKLIST.md` | Fields needed when vendor data arrives. |
+| Machine mapping | `docs/reference/VENDOR_MACHINE_MAPPING_EXAMPLE.md` | Local machine mapping template for vendor discussion. |
+| Deployment | `docs/guides/DEPLOYMENT.md` | Docker, secrets, backup, and validation commands. |
+| Risk status | `docs/reports/DELIVERY_RISK_STATUS.md` | External blockers and final handoff gate. |
 | Mock data | `mock_data/` | Demo alarm, work-order, knowledge, workflow, and mapping inputs. |
 | Scripts | `scripts/` | Acceptance, smoke, seed, backup, and maintenance automation. |
 | Tests | `tests/` | Regression and contract checks for the local package. |
@@ -120,8 +120,8 @@ On this Windows setup, Playwright may require permission to start a browser subp
 
 Use these files together:
 
-1. `docs/LOCAL_ACCEPTANCE_REPORT_2026-06-24.md` to show what is already verified locally.
-2. `docs/UI_EVIDENCE_SUMMARY_2026-06-24.md` to show the browser flows and responsive UI evidence.
-3. `docs/VENDOR_DATA_FIELD_CHECKLIST.md` to ask for real fields.
-4. `docs/VENDOR_MACHINE_MAPPING_EXAMPLE.md` to discuss machine IDs, lines, controller manuals, ownership, and alarm-code mapping.
+1. `docs/reports/LOCAL_ACCEPTANCE_REPORT_2026-06-24.md` to show what is already verified locally.
+2. `docs/reports/UI_EVIDENCE_SUMMARY_2026-06-24.md` to show the browser flows and responsive UI evidence.
+3. `docs/reference/VENDOR_DATA_FIELD_CHECKLIST.md` to ask for real fields.
+4. `docs/reference/VENDOR_MACHINE_MAPPING_EXAMPLE.md` to discuss machine IDs, lines, controller manuals, ownership, and alarm-code mapping.
 5. `docs/plans/NEXT_PHASE_PRODUCTIZATION_AND_DEPLOYMENT_PLAN.md` to explain pilot-server and production boundaries.

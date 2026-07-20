@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC = ROOT / "docs" / "UI_EVIDENCE_SUMMARY_2026-06-24.md"
-SCRIPT = ROOT / "docs" / "DEMO_RECORDING_SCRIPT.md"
+DOC = ROOT / "docs" / "reports" / "UI_EVIDENCE_SUMMARY_2026-06-24.md"
+SCRIPT = ROOT / "docs" / "guides" / "DEMO_RECORDING_SCRIPT.md"
 
 
 def test_ui_evidence_summary_references_browser_outputs_and_boundaries():
@@ -41,7 +41,7 @@ def test_recording_script_uses_local_stack_and_references_ui_evidence():
         "/maintenance",
         "/supervisor",
         "/admin",
-        "docs/UI_EVIDENCE_SUMMARY_2026-06-24.md",
+        "docs/reports/UI_EVIDENCE_SUMMARY_2026-06-24.md",
         "tests_tmp/browser_e2e/browser_e2e_report.json",
         "tests_tmp/browser_e2e/screenshots/",
         "scripts/ui_evidence_check.py",

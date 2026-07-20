@@ -12,7 +12,7 @@ Phase A of the PostgreSQL operations hardening plan:
 
 - Base commit before this Phase A documentation change: `a9b90cf`
 - Referenced plan:
-  [plans/POSTGRESQL_OPERATIONS_HARDENING_PLAN_2026-07-08.md](plans/POSTGRESQL_OPERATIONS_HARDENING_PLAN_2026-07-08.md)
+  [plans/POSTGRESQL_OPERATIONS_HARDENING_PLAN_2026-07-08.md](../plans/POSTGRESQL_OPERATIONS_HARDENING_PLAN_2026-07-08.md)
 - Latest inherited validation snapshot from that plan:
   - Tests: `260 passed, 26 subtests passed`
   - Ruff: passed
@@ -28,7 +28,7 @@ Phase A of the PostgreSQL operations hardening plan:
 | Evidence item | Result |
 | --- | --- |
 | Change reference | Working tree after `a9b90cf` |
-| Scope | `docs/POSTGRESQL_OPERATIONS_INDEX.md`, this report, and docs contract tests |
+| Scope | `docs/operations/POSTGRESQL_OPERATIONS_INDEX.md`, this report, and docs contract tests |
 | Test output | `python -m pytest tests\test_postgresql_operations_docs.py` -> `7 passed` |
 | Preflight output | Not rerun for this document-only change; inherited latest snapshot above |
 | Compose config result | Not rerun for this document-only change; inherited latest snapshot above |
@@ -52,7 +52,7 @@ Phase A of the PostgreSQL operations hardening plan:
 
 Implemented Phase B restore-drill groundwork:
 
-- Added [POSTGRESQL_RESTORE_DRILL_RUNBOOK.md](POSTGRESQL_RESTORE_DRILL_RUNBOOK.md).
+- Added [POSTGRESQL_RESTORE_DRILL_RUNBOOK.md](../operations/POSTGRESQL_RESTORE_DRILL_RUNBOOK.md).
 - Added explicit restore targets in `scripts.postgresql_backup`: `RPO_HOURS=24`
   and `RTO_HOURS=2`.
 - Added `CRITICAL_RESTORE_TABLES` for `users`, `sessions`, `alarm_events`,
@@ -79,10 +79,10 @@ drill using the new runbook.
 Implemented Phase C secret-rotation drill documentation and redacted evidence
 structure:
 
-- Added [POSTGRESQL_SECRET_ROTATION_DRILL_RUNBOOK.md](POSTGRESQL_SECRET_ROTATION_DRILL_RUNBOOK.md).
-- Added [POSTGRESQL_SECRET_ROTATION_REDACTED_REPORT_TEMPLATE.json](POSTGRESQL_SECRET_ROTATION_REDACTED_REPORT_TEMPLATE.json).
+- Added [POSTGRESQL_SECRET_ROTATION_DRILL_RUNBOOK.md](../operations/POSTGRESQL_SECRET_ROTATION_DRILL_RUNBOOK.md).
+- Added [POSTGRESQL_SECRET_ROTATION_REDACTED_REPORT_TEMPLATE.json](../operations/POSTGRESQL_SECRET_ROTATION_REDACTED_REPORT_TEMPLATE.json).
 - Linked the drill runbook and redacted report template from
-  [POSTGRESQL_OPERATIONS_INDEX.md](POSTGRESQL_OPERATIONS_INDEX.md).
+  [POSTGRESQL_OPERATIONS_INDEX.md](../operations/POSTGRESQL_OPERATIONS_INDEX.md).
 - Added docs contract tests for the required rotation sequence, redaction
   policy, rollback rehearsal, and report template shape.
 
@@ -131,7 +131,7 @@ step.
 
 Implemented the first Phase E concurrency controls:
 
-- Added [POSTGRESQL_CONCURRENCY_RISK_MATRIX.md](POSTGRESQL_CONCURRENCY_RISK_MATRIX.md).
+- Added [POSTGRESQL_CONCURRENCY_RISK_MATRIX.md](../operations/POSTGRESQL_CONCURRENCY_RISK_MATRIX.md).
 - Added API-level `version` fields for issue and work-order updates.
 - JSON fallback now rejects missing-version or stale issue/work-order PATCH
   requests with a reload and retry message.
@@ -160,10 +160,10 @@ Phase E follow-ups.
 
 Implemented Phase F production-boundary and monitoring groundwork:
 
-- Added [PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md](PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md).
-- Added [POSTGRESQL_MONITORING_CHECKLIST.md](POSTGRESQL_MONITORING_CHECKLIST.md).
+- Added [PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md](../operations/PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md).
+- Added [POSTGRESQL_MONITORING_CHECKLIST.md](../operations/POSTGRESQL_MONITORING_CHECKLIST.md).
 - Added TLS reverse-proxy sample:
-  [../deploy/nginx/alarm-rag-postgresql-tls.conf](../deploy/nginx/alarm-rag-postgresql-tls.conf).
+  [../deploy/nginx/alarm-rag-postgresql-tls.conf](../../deploy/nginx/alarm-rag-postgresql-tls.conf).
 - Added compose contract tests confirming default App, PostgreSQL, Qdrant, and
   n8n host bindings remain loopback-only unless explicitly configured.
 - Extended `scripts.postgresql_health` with `--require-wal-archive` and
@@ -186,7 +186,7 @@ PITR-enabled environment rehearsal.
 ## Acceptance Notes
 
 - A maintainer can now start from
-  [POSTGRESQL_OPERATIONS_INDEX.md](POSTGRESQL_OPERATIONS_INDEX.md) and find
+  [POSTGRESQL_OPERATIONS_INDEX.md](../operations/POSTGRESQL_OPERATIONS_INDEX.md) and find
   backup, restore, PITR, file-secret, rotation, pilot-load, HA, and phase
   migration materials.
 - The index defines the minimum evidence bundle for future PostgreSQL changes.

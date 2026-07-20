@@ -64,7 +64,7 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertEqual("", values.get("SCHOOL_API_KEY"))
 
     def test_deployment_docs_include_secret_rotation_command(self):
-        text = (ROOT / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
+        text = (ROOT / "docs" / "guides" / "DEPLOYMENT.md").read_text(encoding="utf-8")
 
         self.assertIn("## Secret Rotation", text)
         self.assertIn("python scripts/bootstrap_env.py --rotate-secrets", text)

@@ -21,7 +21,7 @@ boundary.
 
 ## TLS Reverse Proxy Sample
 
-Use [../deploy/nginx/alarm-rag-postgresql-tls.conf](../deploy/nginx/alarm-rag-postgresql-tls.conf)
+Use [../deploy/nginx/alarm-rag-postgresql-tls.conf](../../deploy/nginx/alarm-rag-postgresql-tls.conf)
 as the starting point for TLS termination. The sample listens on `443`, proxies
 only to `http://127.0.0.1:8100`, preserves forwarding headers, and includes a
 dedicated `/ready` proxy path for external uptime monitoring.

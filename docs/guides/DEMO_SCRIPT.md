@@ -122,17 +122,17 @@ python scripts/week4_acceptance.py --base-url http://localhost:8100 --manual 808
 Expected result: every row is `PASS`, and the script writes:
 
 ```text
-docs/MVP_WEEK4_ACCEPTANCE_REPORT.md
+docs/reports/MVP_WEEK4_ACCEPTANCE_REPORT.md
 ```
 
 For recording or screenshots, follow:
 
 ```text
-docs/DEMO_RECORDING_SCRIPT.md
+docs/guides/DEMO_RECORDING_SCRIPT.md
 ```
 
 For future vendor data handoff, use:
 
 ```text
-docs/VENDOR_DATA_FIELD_CHECKLIST.md
+docs/reference/VENDOR_DATA_FIELD_CHECKLIST.md
 ```

@@ -1,6 +1,6 @@
 # Alarm RAG Deployment
 
-Delivery closeout status is tracked in `docs/DELIVERY_RISK_STATUS.md`.
+Delivery closeout status is tracked in `docs/reports/DELIVERY_RISK_STATUS.md`.
 
 ## Windows
 
@@ -95,7 +95,7 @@ drift from the base application environment. Both containers receive
 `POSTGRES_PASSWORD_FILE`, not `POSTGRES_PASSWORD`. The rotation script detects
 this mode, updates the staged file atomically, and includes the secrets overlay
 when recreating both services. See
-`docs/POSTGRESQL_FILE_SECRET_RUNBOOK.md` for verification and rollback details.
+`docs/operations/POSTGRESQL_FILE_SECRET_RUNBOOK.md` for verification and rollback details.
 
 ## Updates
 

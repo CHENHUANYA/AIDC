@@ -2,7 +2,7 @@
 
 執行日期：2026-06-30  
 執行結果：**完成，可進入 Phase 1**  
-對應規劃：[PostgreSQL 導入與資料遷移規劃書](plans/POSTGRESQL_MIGRATION_PLAN.md)
+對應規劃：[PostgreSQL 導入與資料遷移規劃書](../plans/POSTGRESQL_MIGRATION_PLAN.md)
 
 ## 1. 本階段完成項目
 
@@ -105,7 +105,7 @@ API inventory 共 67 條 route：
 ```bash
 python scripts/postgresql_phase0_audit.py \
   --json-output exports/postgresql_phase0_baseline_2026-06-30.json \
-  --markdown-output docs/POSTGRESQL_PHASE0_BASELINE_2026-06-30.md \
+  --markdown-output docs/reports/POSTGRESQL_PHASE0_BASELINE_2026-06-30.md \
   --strict
 
 python scripts/data_maintenance.py verify-runtime-backup \

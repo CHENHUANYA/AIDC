@@ -10,8 +10,8 @@
 - [x] Text maintenance notes can be written through `/v1/{collection_name}/ingest-text`.
 - [x] Demo replay data exists at `mock_data/demo_alarm_events.json`.
 - [x] Demo replay script exists at `scripts/replay_demo_alarms.py`.
-- [x] Demo operator script exists at `docs/DEMO_SCRIPT.md`.
-- [x] n8n mock workflow guide exists at `docs/N8N_MOCK_WORKFLOW.md`.
+- [x] Demo operator script exists at `docs/guides/DEMO_SCRIPT.md`.
+- [x] n8n mock workflow guide exists at `docs/guides/N8N_MOCK_WORKFLOW.md`.
 - [x] Smoke test covers first-week API flow.
 - [x] Smoke test covers `/collections`.
 
@@ -95,9 +95,9 @@ Pass criteria:
 - [x] Week-4 acceptance runner exists at `scripts/week4_acceptance.py`.
 - [x] Acceptance runner validates required docs, scripts, mock data counts, and n8n workflow shape.
 - [x] Acceptance runner can execute a live end-to-end mini flow: lookup, trigger, banner queue, close work order, feedback, BI movement.
-- [x] Demo recording and screenshot plan exists at `docs/DEMO_RECORDING_SCRIPT.md`.
-- [x] Future vendor integration field list exists at `docs/VENDOR_DATA_FIELD_CHECKLIST.md`.
-- [x] Acceptance evidence report is generated at `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md`.
+- [x] Demo recording and screenshot plan exists at `docs/guides/DEMO_RECORDING_SCRIPT.md`.
+- [x] Future vendor integration field list exists at `docs/reference/VENDOR_DATA_FIELD_CHECKLIST.md`.
+- [x] Acceptance evidence report is generated at `docs/reports/MVP_WEEK4_ACCEPTANCE_REPORT.md`.
 
 ## Week 4 Acceptance Command
 
@@ -117,4 +117,4 @@ Pass criteria:
 
 - Every row in the terminal report is `PASS`.
 - `live:bi-movement` shows at least four metrics increasing: alarm total, query total, work-order total, and feedback total.
-- `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md` is regenerated and can be attached to the demo handoff.
+- `docs/reports/MVP_WEEK4_ACCEPTANCE_REPORT.md` is regenerated and can be attached to the demo handoff.

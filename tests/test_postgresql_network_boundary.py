@@ -21,8 +21,8 @@ def test_compose_defaults_bind_services_to_loopback():
 
 
 def test_production_boundary_runbook_and_proxy_sample_cover_phase_f():
-    runbook = (ROOT / "docs" / "PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md").read_text(encoding="utf-8")
-    checklist = (ROOT / "docs" / "POSTGRESQL_MONITORING_CHECKLIST.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "operations" / "PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md").read_text(encoding="utf-8")
+    checklist = (ROOT / "docs" / "operations" / "POSTGRESQL_MONITORING_CHECKLIST.md").read_text(encoding="utf-8")
     proxy = (ROOT / "deploy" / "nginx" / "alarm-rag-postgresql-tls.conf").read_text(encoding="utf-8")
 
     required_runbook = [

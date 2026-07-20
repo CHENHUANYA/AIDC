@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INDEX = ROOT / "docs" / "POSTGRESQL_OPERATIONS_INDEX.md"
-REPORT = ROOT / "docs" / "POSTGRESQL_LOCAL_ACCEPTANCE_REPORT_2026-07-08.md"
+INDEX = ROOT / "docs" / "operations" / "POSTGRESQL_OPERATIONS_INDEX.md"
+REPORT = ROOT / "docs" / "reports" / "POSTGRESQL_LOCAL_ACCEPTANCE_REPORT_2026-07-08.md"
 
 
 def test_postgresql_operations_index_links_core_runbooks_and_reports():
@@ -69,7 +69,7 @@ def test_postgresql_local_acceptance_report_records_phase_a_evidence_fields():
 
 
 def test_restore_drill_runbook_documents_phase_b_contract():
-    runbook = ROOT / "docs" / "POSTGRESQL_RESTORE_DRILL_RUNBOOK.md"
+    runbook = ROOT / "docs" / "operations" / "POSTGRESQL_RESTORE_DRILL_RUNBOOK.md"
     text = runbook.read_text(encoding="utf-8")
     required = [
         "RPO",
@@ -100,7 +100,7 @@ def test_postgresql_operations_index_references_restore_drill_runbook():
     assert "POSTGRESQL_RESTORE_DRILL_RUNBOOK.md" in text
 
 def test_secret_rotation_drill_runbook_documents_phase_c_contract():
-    runbook = ROOT / "docs" / "POSTGRESQL_SECRET_ROTATION_DRILL_RUNBOOK.md"
+    runbook = ROOT / "docs" / "operations" / "POSTGRESQL_SECRET_ROTATION_DRILL_RUNBOOK.md"
     text = runbook.read_text(encoding="utf-8")
     required = [
         "Run preflight",
@@ -133,7 +133,7 @@ def test_secret_rotation_drill_runbook_documents_phase_c_contract():
 def test_secret_rotation_redacted_template_is_safe_and_complete():
     import json
 
-    template = ROOT / "docs" / "POSTGRESQL_SECRET_ROTATION_REDACTED_REPORT_TEMPLATE.json"
+    template = ROOT / "docs" / "operations" / "POSTGRESQL_SECRET_ROTATION_REDACTED_REPORT_TEMPLATE.json"
     payload = json.loads(template.read_text(encoding="utf-8"))
 
     required_true = [
@@ -161,7 +161,7 @@ def test_secret_rotation_redacted_template_is_safe_and_complete():
     assert [item for item in forbidden if item in serialized] == []
 
 def test_concurrency_risk_matrix_documents_phase_e_contract():
-    matrix = ROOT / "docs" / "POSTGRESQL_CONCURRENCY_RISK_MATRIX.md"
+    matrix = ROOT / "docs" / "operations" / "POSTGRESQL_CONCURRENCY_RISK_MATRIX.md"
     text = matrix.read_text(encoding="utf-8")
     required = [
         "users",
@@ -180,8 +180,8 @@ def test_concurrency_risk_matrix_documents_phase_e_contract():
     assert missing == []
 
 def test_phase_f_network_boundary_and_monitoring_docs_are_linked():
-    runbook = ROOT / "docs" / "PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md"
-    checklist = ROOT / "docs" / "POSTGRESQL_MONITORING_CHECKLIST.md"
+    runbook = ROOT / "docs" / "operations" / "PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md"
+    checklist = ROOT / "docs" / "operations" / "POSTGRESQL_MONITORING_CHECKLIST.md"
     health_script = ROOT / "scripts" / "postgresql_health.py"
 
     index_text = INDEX.read_text(encoding="utf-8")

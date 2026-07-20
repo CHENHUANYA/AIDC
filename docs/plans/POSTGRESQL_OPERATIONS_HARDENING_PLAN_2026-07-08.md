@@ -75,7 +75,7 @@ operations model: documented, auditable, recoverable, and safe to hand off.
 
 ### Deliverables
 
-- `docs/POSTGRESQL_OPERATIONS_INDEX.md`
+- `docs/operations/POSTGRESQL_OPERATIONS_INDEX.md`
 - `docs/POSTGRESQL_LOCAL_ACCEPTANCE_REPORT_<date>.md`
 
 ### Acceptance criteria
@@ -104,7 +104,7 @@ operations model: documented, auditable, recoverable, and safe to hand off.
 
 ### Deliverables
 
-- `docs/POSTGRESQL_RESTORE_DRILL_RUNBOOK.md`
+- `docs/operations/POSTGRESQL_RESTORE_DRILL_RUNBOOK.md`
 - Restore smoke script or extension to the existing backup tooling
 
 ### Acceptance criteria
@@ -130,7 +130,7 @@ operations model: documented, auditable, recoverable, and safe to hand off.
 
 ### Deliverables
 
-- `docs/POSTGRESQL_SECRET_ROTATION_DRILL_RUNBOOK.md`
+- `docs/operations/POSTGRESQL_SECRET_ROTATION_DRILL_RUNBOOK.md`
 - Redacted rotation report template
 
 ### Acceptance criteria
@@ -209,7 +209,7 @@ operations model: documented, auditable, recoverable, and safe to hand off.
 
 ### Deliverables
 
-- `docs/PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md`
+- `docs/operations/PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md`
 - PostgreSQL monitoring checklist
 
 ### Acceptance criteria
@@ -253,5 +253,5 @@ This plan is complete when:
 
 ## 9. Recommended first task
 
-Start with Phase A: create `docs/POSTGRESQL_OPERATIONS_INDEX.md` as the single
+Start with Phase A: create `docs/operations/POSTGRESQL_OPERATIONS_INDEX.md` as the single
 entry point for all PostgreSQL runbooks, reports, and operational checklists.

@@ -6,12 +6,12 @@
 
 | Check | Status | Detail |
 |---|---|---|
-| `file:docs/DEMO_SCRIPT.md` | PASS | docs/DEMO_SCRIPT.md |
-| `file:docs/MOCK_DATA_SPEC.md` | PASS | docs/MOCK_DATA_SPEC.md |
-| `file:docs/N8N_MOCK_WORKFLOW.md` | PASS | docs/N8N_MOCK_WORKFLOW.md |
-| `file:docs/MVP_ACCEPTANCE_CHECKLIST.md` | PASS | docs/MVP_ACCEPTANCE_CHECKLIST.md |
-| `file:docs/DEMO_RECORDING_SCRIPT.md` | PASS | docs/DEMO_RECORDING_SCRIPT.md |
-| `file:docs/VENDOR_DATA_FIELD_CHECKLIST.md` | PASS | docs/VENDOR_DATA_FIELD_CHECKLIST.md |
+| `file:docs/guides/DEMO_SCRIPT.md` | PASS | docs/guides/DEMO_SCRIPT.md |
+| `file:docs/reference/MOCK_DATA_SPEC.md` | PASS | docs/reference/MOCK_DATA_SPEC.md |
+| `file:docs/guides/N8N_MOCK_WORKFLOW.md` | PASS | docs/guides/N8N_MOCK_WORKFLOW.md |
+| `file:docs/guides/MVP_ACCEPTANCE_CHECKLIST.md` | PASS | docs/guides/MVP_ACCEPTANCE_CHECKLIST.md |
+| `file:docs/guides/DEMO_RECORDING_SCRIPT.md` | PASS | docs/guides/DEMO_RECORDING_SCRIPT.md |
+| `file:docs/reference/VENDOR_DATA_FIELD_CHECKLIST.md` | PASS | docs/reference/VENDOR_DATA_FIELD_CHECKLIST.md |
 | `file:scripts/smoke_test.py` | PASS | scripts/smoke_test.py |
 | `file:scripts/seed_week2_data.py` | PASS | scripts/seed_week2_data.py |
 | `file:scripts/replay_demo_alarms.py` | PASS | scripts/replay_demo_alarms.py |

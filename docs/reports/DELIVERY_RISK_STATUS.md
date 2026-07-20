@@ -33,4 +33,4 @@ Before external handoff, confirm:
 - Re-import or update n8n workflows after token rotation.
 - Run `preflight_check.py`, `standalone_acceptance.py`, `rag_runtime_check.py --check-school-api`, `runtime_soak.py`, `browser_e2e_responsive.py`, and `production_boundary_check.py` against the target environment.
 - Keep runtime directories (`alarm_db/`, `backups/`, `data/`, `hf_cache/`, `n8n_data/`, `qdrant_data/`, `tests_tmp/`) out of Git and Docker build context.
-- For a no-vendor local package, use `docs/LOCAL_HANDOFF_MANIFEST_2026-06-24.md` and do not claim real plant integration until the external blockers above are cleared.
+- For a no-vendor local package, use `docs/reports/LOCAL_HANDOFF_MANIFEST_2026-06-24.md` and do not claim real plant integration until the external blockers above are cleared.

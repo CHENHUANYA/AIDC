@@ -193,10 +193,10 @@ Schedule Trigger
 
 | 文件 | 用途 |
 |---|---|
-| `docs/DEMO_SCRIPT.md` | 展示流程、操作步驟、預期畫面 |
-| `docs/MOCK_DATA_SPEC.md` | 模擬資料格式與案例 |
-| `docs/N8N_MOCK_WORKFLOW.md` | n8n workflow 節點設計 |
-| `docs/MVP_ACCEPTANCE_CHECKLIST.md` | MVP 驗收清單 |
+| `docs/guides/DEMO_SCRIPT.md` | 展示流程、操作步驟、預期畫面 |
+| `docs/reference/MOCK_DATA_SPEC.md` | 模擬資料格式與案例 |
+| `docs/guides/N8N_MOCK_WORKFLOW.md` | n8n workflow 節點設計 |
+| `docs/guides/MVP_ACCEPTANCE_CHECKLIST.md` | MVP 驗收清單 |
 
 ### Smoke test 範圍
 
@@ -225,7 +225,7 @@ Schedule Trigger
 
 - 確認目前後端、前端、RAG、工單 API 可正常啟動。
 - 建立 demo 主線與測試警報案例。
-- 撰寫 `docs/DEMO_SCRIPT.md` 初版。
+- 撰寫 `docs/guides/DEMO_SCRIPT.md` 初版。
 - 補 smoke test 覆蓋主要 API。
 
 ### 第 2 週：補模擬資料與知識庫
@@ -251,7 +251,7 @@ Schedule Trigger
 
 ## 九、目前最優先任務
 
-1. 新增 `docs/DEMO_SCRIPT.md`，確定展示路線。
+1. 新增 `docs/guides/DEMO_SCRIPT.md`，確定展示路線。
 2. 建立模擬工單與技術通報資料。
 3. 將模擬資料匯入 RAG 知識庫。
 4. 建立 n8n mock workflow 文件。

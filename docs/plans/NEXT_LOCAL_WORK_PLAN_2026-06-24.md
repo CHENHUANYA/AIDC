@@ -41,7 +41,7 @@ Goal: make the local demo easy to record, repeat, and explain.
 Tasks:
 
 1. Start from the cleaned runtime state; seed or trigger only the demo records needed for the recording.
-2. Record a 4 to 6 minute local demo using `docs/DEMO_RECORDING_SCRIPT.md`.
+2. Record a 4 to 6 minute local demo using `docs/guides/DEMO_RECORDING_SCRIPT.md`.
 3. Capture or reuse browser E2E screenshots from `tests_tmp/browser_e2e/screenshots/`.
 4. Run `python scripts/local_validation_bundle.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000` before recording and keep the final compact summary visible for evidence.
 5. Prepare a short one-page demo narrative:
@@ -77,7 +77,7 @@ Completed:
    - backup health.
 2. The bundle prints a final compact summary suitable for screenshots.
 3. restore-smoke stays as an explicit opt-in step because it touches backup staging.
-4. Exact commands are documented in `docs/LOCAL_HANDOFF_MANIFEST_2026-06-24.md`.
+4. Exact commands are documented in `docs/reports/LOCAL_HANDOFF_MANIFEST_2026-06-24.md`.
 
 Acceptance:
 
@@ -113,7 +113,7 @@ Completed:
 4. Expanded `mock_data/week2_knowledge_records.json` to 19 SOP, bulletin, maintenance-note, and prior-repair records.
 5. Expanded `mock_data/week2_work_orders.json` to 22 records across completed, verified, in-progress, and assigned states.
 6. Expanded `mock_data/scenario_matrix.json` to 16 rows mapping alarm code, machine, line, likely cause, recommended first action, and escalation owner.
-7. Kept new records explicitly marked as mock data and updated `docs/MOCK_DATA_SPEC.md`.
+7. Kept new records explicitly marked as mock data and updated `docs/reference/MOCK_DATA_SPEC.md`.
 8. Extended `tests/test_machine_mapping_example.py` to assert the new factory scenario groups, knowledge categories, and work-order distribution.
 9. Updated `scripts/seed_week2_data.py` so repeated seeding safely skips existing completed or verified work orders instead of failing on valid terminal states.
 
@@ -164,9 +164,9 @@ Goal: make the eventual vendor conversation concrete instead of abstract.
 
 Tasks:
 
-1. Turn `docs/VENDOR_DATA_FIELD_CHECKLIST.md` into a meeting checklist.
+1. Turn `docs/reference/VENDOR_DATA_FIELD_CHECKLIST.md` into a meeting checklist.
 2. Add a "vendor answer sheet" table with blank columns for actual field names, sample values, owner, and availability.
-3. Keep `docs/VENDOR_MACHINE_MAPPING_EXAMPLE.md` aligned with the mock data and scenario matrix.
+3. Keep `docs/reference/VENDOR_MACHINE_MAPPING_EXAMPLE.md` aligned with the mock data and scenario matrix.
 4. Identify which fields are mandatory for MVP pilot and which are optional for later production.
 5. Add a short section explaining that mock `machine_id` values are placeholders.
 
@@ -184,7 +184,7 @@ Goal: prevent accidental over-claiming when presenting the local system.
 
 Tasks:
 
-1. Keep `docs/DELIVERY_RISK_STATUS.md` current.
+1. Keep `docs/reports/DELIVERY_RISK_STATUS.md` current.
 2. Add a visible "not yet validated" checklist for:
    - PLC / OPC-UA,
    - vendor API,

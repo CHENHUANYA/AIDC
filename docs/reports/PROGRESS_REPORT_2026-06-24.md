@@ -81,7 +81,7 @@
   - 支援 KB health、重建索引、調整系統設定與匯出管理資料。
 - 將前端拆分為多個角色頁面與獨立 CSS / JS，包含 admin、assistant、dashboard、login、maintenance、operations、operator、supervisor。
 - 補齊 Week 4 acceptance runner，檢查文件、腳本、mock data 筆數與 n8n workflow 結構。
-- 產生 `docs/MVP_WEEK4_ACCEPTANCE_REPORT.md`，目前結果為 17 PASS / 0 FAIL。
+- 產生 `docs/reports/MVP_WEEK4_ACCEPTANCE_REPORT.md`，目前結果為 17 PASS / 0 FAIL。
 - 完成 demo recording script、vendor data field checklist、deployment docs 與 delivery risk status。
 - 加入多項測試與驗收腳本，包含 smoke test、regression checks、role console smoke、runtime soak、browser E2E、production boundary check、data maintenance backup / restore check。
 
@@ -134,7 +134,7 @@
 1. 取得或更新 School API key，重新執行 RAG runtime check，確認外部 LLM / School API 成功路徑。
 2. 進行正式 secret rotation，重建 app / n8n container，並重新匯入或更新 n8n workflow token。
 3. 在目標部署環境執行 preflight、standalone acceptance、runtime soak 與 production boundary check。
-4. 補齊正式 demo 錄影與截圖證據，依 `docs/DEMO_RECORDING_SCRIPT.md` 完成展示素材。
+4. 補齊正式 demo 錄影與截圖證據，依 `docs/guides/DEMO_RECORDING_SCRIPT.md` 完成展示素材。
 5. 整理最終提交資料，排除 runtime data、cache、backup、logs 與本機測試產物。
 6. 若要進一步產品化，可接續處理正式設備資料來源、真實維修紀錄欄位對接、權限細節與長期監控。
 

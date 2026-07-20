@@ -86,7 +86,7 @@ local substitute for future vendor equipment master data.
 Related discussion document:
 
 ```text
-docs/VENDOR_MACHINE_MAPPING_EXAMPLE.md
+docs/reference/VENDOR_MACHINE_MAPPING_EXAMPLE.md
 ```
 
 ## Week 2 Historical Work Orders

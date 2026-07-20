@@ -62,7 +62,7 @@ python scripts/standalone_acceptance.py --base-url http://localhost:8100 --manua
 
 建議工作：
 
-- 依 `docs/DEMO_RECORDING_SCRIPT.md` 錄製 3 至 5 分鐘 demo。
+- 依 `docs/guides/DEMO_RECORDING_SCRIPT.md` 錄製 3 至 5 分鐘 demo。
 - 截圖 Operator、Maintenance、Supervisor、Admin、BI 統計頁。
 - 保留 terminal 驗收輸出或 acceptance report。
 - 在進度報告中標註「本 demo 不依賴廠商資料」。

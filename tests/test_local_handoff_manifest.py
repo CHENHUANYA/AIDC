@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = ROOT / "docs" / "LOCAL_HANDOFF_MANIFEST_2026-06-24.md"
+MANIFEST = ROOT / "docs" / "reports" / "LOCAL_HANDOFF_MANIFEST_2026-06-24.md"
 
 
 def test_local_handoff_manifest_references_existing_package_files():
@@ -10,16 +10,16 @@ def test_local_handoff_manifest_references_existing_package_files():
     required_paths = [
         "README.md",
         "docs/README.md",
-        "docs/LOCAL_ACCEPTANCE_REPORT_2026-06-24.md",
-        "docs/UI_EVIDENCE_SUMMARY_2026-06-24.md",
+        "docs/reports/LOCAL_ACCEPTANCE_REPORT_2026-06-24.md",
+        "docs/reports/UI_EVIDENCE_SUMMARY_2026-06-24.md",
         "docs/plans/LOCAL_ONLY_CONTINUATION_PLAN_2026-06-24.md",
-        "docs/DEMO_SCRIPT.md",
-        "docs/DEMO_RECORDING_SCRIPT.md",
-        "docs/MVP_WEEK4_ACCEPTANCE_REPORT.md",
-        "docs/VENDOR_DATA_FIELD_CHECKLIST.md",
-        "docs/VENDOR_MACHINE_MAPPING_EXAMPLE.md",
-        "docs/DEPLOYMENT.md",
-        "docs/DELIVERY_RISK_STATUS.md",
+        "docs/guides/DEMO_SCRIPT.md",
+        "docs/guides/DEMO_RECORDING_SCRIPT.md",
+        "docs/reports/MVP_WEEK4_ACCEPTANCE_REPORT.md",
+        "docs/reference/VENDOR_DATA_FIELD_CHECKLIST.md",
+        "docs/reference/VENDOR_MACHINE_MAPPING_EXAMPLE.md",
+        "docs/guides/DEPLOYMENT.md",
+        "docs/reports/DELIVERY_RISK_STATUS.md",
         "mock_data/",
         "scripts/",
         "scripts/local_validation_bundle.py",

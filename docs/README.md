@@ -1,94 +1,34 @@
-# Alarm RAG 文件入口
+# Alarm RAG 文件導覽
 
-本資料夾整理 Alarm RAG MVP 的展示腳本、資料維護方式、驗收紀錄，以及下一階段角色權限與工作流程規劃。現在的重點是讓廠商能清楚看到三件事：第一，系統如何用 RAG 協助警報查詢與維修判斷；第二，Operator、Maintenance、Supervisor、Admin 各自能看什麼、改什麼、負責什麼；第三，未來要接真實產線、工單、知識庫或身分系統時，需要哪些欄位與決策。
+這裡集中專案的操作說明、規劃與驗證紀錄。日常使用先從下列入口開始，不需要逐一翻找所有歷史文件。
 
-如果只想快速理解目前 demo，請先看「目前狀態」和「角色與權限」。如果要準備展示，請看「展示與驗收」。如果要接廠商資料或討論整合，請看「廠商與資料欄位」。
+## 常用入口
 
-## 目前狀態
+| 需求 | 文件 |
+| --- | --- |
+| 安裝與部署 | [guides/DEPLOYMENT.md](guides/DEPLOYMENT.md) |
+| 基本驗證 | [guides/SMOKE_TEST.md](guides/SMOKE_TEST.md) |
+| 資料備份與還原 | [guides/DATA_MAINTENANCE.md](guides/DATA_MAINTENANCE.md) |
+| Demo 流程 | [guides/DEMO_SCRIPT.md](guides/DEMO_SCRIPT.md) |
+| MVP 驗收 | [guides/MVP_ACCEPTANCE_CHECKLIST.md](guides/MVP_ACCEPTANCE_CHECKLIST.md) |
+| PostgreSQL 維運 | [operations/POSTGRESQL_OPERATIONS_INDEX.md](operations/POSTGRESQL_OPERATIONS_INDEX.md) |
+| 目前交付風險 | [reports/DELIVERY_RISK_STATUS.md](reports/DELIVERY_RISK_STATUS.md) |
 
-| 文件 | 用途 |
-|---|---|
-| `plans/PHASE0_VERSION_CLOSEOUT_PLAN_2026-07-11.md` | 目前版本收口來源：品質閘門、CI runtime、文件基準與提交分組。 |
-| `PR_DELIVERY_SUMMARY_2026-07-10.md` | 目前 PostgreSQL 強化與工作流程一致性變更的交付摘要。 |
-| `PHASE0_EXECUTION_REPORT_2026-07-11.md` | Phase 0 本機品質閘門結果與尚未完成的版本控制工作。 |
-| `plans/PHASE1_EVENT_IDEMPOTENCY_PLAN_2026-07-11.md` | Phase 1 告警重送防重、API 契約與驗收方式。 |
-| `plans/PHASE1_CURSOR_PAGINATION_PLAN_2026-07-11.md` | Phase 1 Issue／Work Order cursor pagination 與前端遷移契約。 |
-| `plans/PHASE1_SINGLE_RECORD_REPOSITORY_PLAN_2026-07-11.md` | Phase 1 單筆 Repository、樂觀鎖與跨實體同步邊界。 |
-| `plans/PHASE1_CONTENT_OPTIMISTIC_LOCK_PLAN_2026-07-11.md` | Phase 1 Settings／Documents 管理員並行更新保護。 |
-| `plans/PHASE1_RAG_QUALITY_EVALUATION_PLAN_2026-07-11.md` | Phase 1 版本化黃金題集、離線檢索指標與品質門檻。 |
-| `plans/PHASE1_MULTILINGUAL_BM25_PLAN_2026-07-11.md` | Phase 1 Unicode tokenizer、中英領域詞彙擴展與舊索引相容策略。 |
-| `plans/PHASE1_BM25_INDEX_UPGRADE_PLAN_2026-07-11.md` | Phase 1 BM25 index dry-run、備份、原子升級與回復程序。 |
-| `plans/PHASE1_LIVE_RAG_GATE_PLAN_2026-07-11.md` | Phase 1 structured retrieval、chat citation 與完整黃金題集 live gate。 |
-| `plans/PHASE1_ANSWER_ID_STREAMING_CITATION_PLAN_2026-07-11.md` | Phase 1 唯一 answer ID、feedback 關聯與 SSE citation 契約。 |
-| `reports/RAG_OFFLINE_BASELINE_2026-07-11.md` | Phase 1 離線 RAG 工程基準結果與逐題狀態。 |
-| `reports/RAG_OFFLINE_BASELINE_ENGINEERING_V1_1_0_2026-07-11.md` | 多語 BM25 修正後的 v1.1 基準與 tokenizer 相容性證據。 |
-| `reports/BM25_INDEX_UPGRADE_2026-07-11.md` | 三個本機 BM25 index 的備份、原子升級與 SHA-256 證據。 |
-| `reports/RAG_OFFLINE_BASELINE_ENGINEERING_V1_1_0_REINDEXED_2026-07-11.md` | 實體 index 升級後的 v1.1 品質回歸報告。 |
-| `reports/RAG_LIVE_RUNTIME_EVALUATION_2026-07-11.md` | Structured retrieval、向量覆蓋、chat citation、Ollama 與 SSE live gate。 |
-| `reports/RAG_LIVE_ANSWER_ID_STREAMING_EVALUATION_2026-07-11.md` | 唯一 answer ID 與 SSE structured citation 的 live 契約證據。 |
-| `reports/RAG_NO_VENDOR_ENGINEERING_IMPLEMENTATION_2026-07-12.md` | Answer repository、UI 關聯、reranker runtime、answer-quality gate、效能與部署 CI 的本機工程實作證據。 |
-| `reports/RAG_NO_VENDOR_ENGINEERING_CONTINUATION_2026-07-13.md` | Answer 關聯完整性、負面品質案例、soak evidence 與 app/Qdrant restart recovery 延伸驗證。 |
-| `reports/RAG_BUGFIX_CODE_QUALITY_REVIEW_2026-07-13.md` | Provider 競態、錯誤 answer 關聯、P95、Qdrant recovery、重複 chat pipeline、engine cache 與設定解析的複查修正。 |
-| `reports/RAG_NATIVE_STREAMING_EVALUATION_2026-07-13.md` | Ollama 原生 NDJSON streaming、逐 chunk SSE、first-content latency 與完成後 answer persistence 證據。 |
-| `MVP_BASELINE_STATUS.md` | 目前 MVP 功能基準與已完成項目。 |
-| `DATA_MAINTENANCE.md` | 本機 demo 資料清理、備份、匯出與歸檔指令。 |
-| `SMOKE_TEST.md` | 基本 smoke test 流程與預期結果。 |
+## 依用途瀏覽
 
-## 角色與權限
+- [`guides/`](guides/)：部署、維護、Demo 與驗收操作。
+- [`operations/`](operations/)：PostgreSQL runbook、檢查表、風險矩陣與維運索引。
+- [`plans/`](plans/)：尚在規劃或分階段執行的工作。
+- [下一階段本機工作計畫](plans/NEXT_LOCAL_WORK_PLAN_2026-06-24.md)
+- [`reference/`](reference/)：模擬資料與廠商整合規格。
+- [`reports/`](reports/)：已執行工作的狀態、交付證據與品質評測紀錄。
 
-| 文件 | 用途 |
-|---|---|
-| `plans/ROLE_BASED_WORKFLOW_AND_FEEDBACK_PLAN.md` | 登入、角色權限、audit、LLM feedback、Supervisor/Admin 獨立頁規劃。 |
-| `plans/OPERATOR_MAINTENANCE_INTERFACE_PLAN.md` | Operator 與 Maintenance 頁面的畫面與互動規劃。 |
-| `plans/LOCAL_ONLY_CONTINUATION_PLAN_2026-06-24.md` | 在尚無廠商資料或現場環境時，本機可繼續推進與應暫緩事項。 |
-| `plans/NEXT_LOCAL_WORK_PLAN_2026-06-24.md` | 下一輪本機可繼續實作的工作流、驗收指令與暫停條件。 |
+## 文件收納規則
 
-## 展示與驗收
+- 可長期沿用的操作文件放在 `docs/guides/` 或 `docs/operations/`。
+- 尚未完成的設計與執行計畫放在 `docs/plans/`。
+- 帶日期的執行結果、品質評測與交付證據放在 `docs/reports/`。
+- 測試產生的 JSON、Markdown、截圖與暫存檔放在 `tests_tmp/`；該目錄可重建且不提交 Git。
+- 新文件應從本頁或對應領域索引連入，避免把大量連結繼續堆到專案根目錄的 README。
 
-| 文件 | 用途 |
-|---|---|
-| `DEMO_SCRIPT.md` | Demo 操作主腳本。 |
-| `DEMO_RECORDING_SCRIPT.md` | 錄影與截圖版展示腳本。 |
-| `MVP_ACCEPTANCE_CHECKLIST.md` | MVP 驗收清單。 |
-| `MVP_WEEK4_ACCEPTANCE_REPORT.md` | Week 4 驗收輸出紀錄，可由 acceptance script 重新產生。 |
-| `LOCAL_ACCEPTANCE_REPORT_2026-06-24.md` | 本機 live acceptance、備份健康與 restore-smoke 驗收紀錄。 |
-| `UI_EVIDENCE_SUMMARY_2026-06-24.md` | 本機瀏覽器 E2E 流程與 responsive 截圖證據摘要。 |
-| `LOCAL_HANDOFF_MANIFEST_2026-06-24.md` | 本機交付包應包含、應排除與可引用證據清單。 |
-
-## 廠商與資料欄位
-
-| 文件 | 用途 |
-|---|---|
-| `VENDOR_DATA_FIELD_CHECKLIST.md` | 廠商資料、使用者、工單、feedback、知識庫整合欄位清單。 |
-| `VENDOR_MACHINE_MAPPING_EXAMPLE.md` | 本機 mock machine_id 到未來設備主檔欄位的對照範例。 |
-| `MOCK_DATA_SPEC.md` | Demo mock alarm/work-order/knowledge data 規格。 |
-| `N8N_MOCK_WORKFLOW.md` | n8n mock workflow 設計與觸發說明。 |
-
-## 歷史規劃
-
-| 文件 | 用途 |
-|---|---|
-| `plans/MVP_NO_VENDOR_PLAN.md` | 不依賴廠商資料的早期 MVP 規劃。仍保留作為決策脈絡。 |
-
-## 清理原則
-
-目前沒有刪除文件，因為既有 acceptance script 和 README 仍引用多數文件。後續若要瘦身，建議先調整腳本引用，再刪除或歸檔：
-
-1. `MVP_WEEK4_ACCEPTANCE_REPORT.md` 可視為可再生的歷史輸出。
-2. `plans/MVP_NO_VENDOR_PLAN.md` 可在角色權限與真實整合規劃穩定後移到 archive。
-3. `DEMO_SCRIPT.md` 與 `DEMO_RECORDING_SCRIPT.md` 內容若合併，需同步更新 acceptance checklist 與 week4 acceptance script。
-
-## PostgreSQL Pilot Readiness
-
-- POSTGRESQL_PHASE6_RUNBOOK.md：Pilot 上線閘門、四小時 soak 與異地備份／PITR／HA 證據契約。
-- POSTGRESQL_PHASE6_BASELINE_2026-07-02.md：Phase 6 readiness gate 的首輪 NOT READY 基準。
-- POSTGRESQL_PITR_RUNBOOK.md：WAL archiving、physical base backup 與隔離 PITR 還原操作手冊。
-- POSTGRESQL_PITR_LOCAL_EXECUTION_REPORT_2026-07-03.md：named restore point 本機實演結果與正式環境邊界。
-- POSTGRESQL_ENCRYPTED_BACKUP_RUNBOOK.md：AES-256-GCM 備份封裝、驗證與安全還原流程。
-- POSTGRESQL_ENCRYPTED_BACKUP_LOCAL_REPORT_2026-07-03.md：本機加密、竄改防護與 scratch restore 實演結果。
-- POSTGRESQL_HA_RUNBOOK.md：Physical streaming replica、受控 promotion 與 cleanup 操作手冊。
-- POSTGRESQL_HA_LOCAL_EXECUTION_REPORT_2026-07-03.md：本機 failover、RPO／RTO 與正式 HA 邊界。
-- POSTGRESQL_PILOT_LOAD_RUNBOOK.md：多 worker、兩倍尖峰、四小時 Pilot load／soak 操作手冊。
-- POSTGRESQL_PILOT_LOAD_LOCAL_REPORT_2026-07-05.md：30 秒本機負載、延遲與資料回復實演結果。
-- POSTGRESQL_SECRET_ROTATION_RUNBOOK.md：PostgreSQL password rotation、回滾與正式 evidence 操作手冊。
-- POSTGRESQL_SECRET_ROTATION_LOCAL_REPORT_2026-07-05.md：舊密碼拒絕、Session 撤銷與服務重建實演結果。
+`docs/` 根目錄只保留本導覽；新增文件請放入對應分類並從本頁或領域索引連入。
