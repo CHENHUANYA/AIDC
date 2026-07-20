@@ -99,6 +99,12 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertIn("docker compose --env-file .env config --quiet", text)
         self.assertIn("docker-compose.postgresql-secrets.yml", text)
 
+    def test_browser_security_headers_are_enabled(self):
+        text = (ROOT / "main.py").read_text(encoding="utf-8")
+
+        self.assertIn("SecurityHeadersMiddleware", text)
+        self.assertIn("app.add_middleware(SecurityHeadersMiddleware)", text)
+
     def test_dependency_update_automation_is_configured(self):
         text = (ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
 

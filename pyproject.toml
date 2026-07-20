@@ -29,6 +29,7 @@ files = [
     "issues.py",
     "main.py",
     "observability.py",
+    "security_headers.py",
     "work_orders.py",
     "bm25_text.py",
     "db/",

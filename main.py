@@ -37,6 +37,7 @@ from routes.ingest_routes import router as ingest_router
 from routes.settings_routes import router as settings_router
 from routes.static_reference_routes import router as static_reference_router
 from routes.stats_routes import router as stats_router
+from security_headers import SecurityHeadersMiddleware
 from work_orders import router as work_order_router
 
 
@@ -59,6 +60,7 @@ app.add_middleware(
     expose_headers=["X-Request-ID"],
 )
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 load_all_engines()
 
