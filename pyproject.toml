@@ -43,6 +43,7 @@ files = [
     "scripts/postgresql_health.py",
     "scripts/postgresql_secret_overlay_check.py",
     "scripts/preflight_check.py",
+    "scripts/production_boundary_check.py",
     "scripts/stage_postgresql_secret.py",
     "scripts/postgresql_pilot_load.py",
     "scripts/postgresql_secret_rotation.py",

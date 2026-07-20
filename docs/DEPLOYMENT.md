@@ -178,6 +178,12 @@ the expected browser origin:
 python scripts/production_boundary_check.py --base-url https://alarm-rag.example.com --origin https://alarm-rag.example.com --require-hsts
 ```
 
+The boundary check requires `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and the restricted
+camera/microphone/geolocation `Permissions-Policy`. With `--require-hsts`, it
+also requires a positive `Strict-Transport-Security` `max-age`. The application
+sets these headers directly; preserve them when configuring the reverse proxy.
+
 For a local compose sanity check of the same script:
 
 ```bash

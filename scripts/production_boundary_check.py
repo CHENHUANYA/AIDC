@@ -23,6 +23,14 @@ class Check:
     detail: str
 
 
+EXPECTED_SECURITY_HEADERS = {
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "deny",
+    "referrer-policy": "no-referrer",
+    "permissions-policy": "camera=(), microphone=(), geolocation=()",
+}
+
+
 class BoundaryClient:
     def __init__(self, base_url: str, timeout: int):
         self.base_url = base_url.rstrip("/")
@@ -89,15 +97,55 @@ def check_scheme(base_url: str, allow_http_local: bool) -> Check:
     return Check("boundary:https", "PASS" if ok else "FAIL", detail)
 
 
+def normalized_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {str(name).strip().lower(): str(value).strip() for name, value in headers.items()}
+
+
+def hsts_max_age(value: str) -> int | None:
+    for directive in value.split(";"):
+        name, separator, raw_value = directive.strip().partition("=")
+        if name.lower() != "max-age" or not separator:
+            continue
+        try:
+            return int(raw_value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def check_security_headers(headers: dict[str, str], require_hsts: bool) -> list[Check]:
+    normalized = normalized_headers(headers)
+    checks = []
+    for name, expected in EXPECTED_SECURITY_HEADERS.items():
+        actual = normalized.get(name, "")
+        matches = actual.lower() == expected
+        checks.append(
+            Check(
+                f"boundary:{name}",
+                "PASS" if matches else "FAIL",
+                f"expected={expected}, actual={actual or '-'}",
+            )
+        )
+
+    hsts = normalized.get("strict-transport-security", "")
+    max_age = hsts_max_age(hsts) if hsts else None
+    if require_hsts or hsts:
+        valid = max_age is not None and max_age > 0
+        checks.append(
+            Check(
+                "boundary:hsts",
+                "PASS" if valid else "FAIL",
+                f"max-age={max_age}" if max_age is not None else ("missing" if not hsts else "invalid"),
+            )
+        )
+    return checks
+
+
 def check_login_config(client: BoundaryClient, require_hsts: bool) -> list[Check]:
     code, data, headers = client.json_request("/auth/login-config")
     ok = code == 200 and isinstance(data, dict) and data.get("status") == "ok"
     checks = [Check("boundary:login-config", "PASS" if ok else "FAIL", f"HTTP {code}")]
-    hsts = headers.get("Strict-Transport-Security", "")
-    if require_hsts:
-        checks.append(Check("boundary:hsts", "PASS" if hsts else "FAIL", "present" if hsts else "missing"))
-    elif hsts:
-        checks.append(Check("boundary:hsts", "PASS", "present"))
+    checks.extend(check_security_headers(headers, require_hsts=require_hsts))
     return checks
 
 

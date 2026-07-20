@@ -21,6 +21,9 @@ class DeploymentDocsTests(unittest.TestCase):
             "python scripts/n8n_workflow_check.py",
             "python scripts/data_maintenance.py backup-runtime",
             "python scripts/data_maintenance.py restore-runtime",
+            "X-Content-Type-Options: nosniff",
+            "X-Frame-Options: DENY",
+            "Permissions-Policy",
         ]
 
         missing = [item for item in required if item not in text]
