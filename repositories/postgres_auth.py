@@ -35,6 +35,13 @@ def iso(value: datetime | None) -> str:
     return value.isoformat() if value else ""
 
 
+def utc_datetime(value: datetime) -> datetime:
+    """Normalize database timestamps, including timezone-naive test/legacy rows."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def same_instant(left: str, right: datetime | None) -> bool:
     if not left or right is None:
         return False
@@ -128,7 +135,7 @@ class PostgresSessionRepository:
             if row is None:
                 return None
             record, user_id, active = row
-            if record.revoked_at is not None or record.expires_at <= now or not active:
+            if record.revoked_at is not None or utc_datetime(record.expires_at) <= now or not active:
                 session.delete(record)
                 return None
             record.last_seen_at = now

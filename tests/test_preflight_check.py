@@ -131,6 +131,29 @@ services:
         self.assertEqual("PASS", statuses["bind:QDRANT_BIND_ADDRESS"])
         self.assertEqual("WARN", statuses["bind:N8N_BIND_ADDRESS"])
 
+    def test_remote_qdrant_http_fails_transport_preflight(self):
+        with patch.dict(
+            os.environ,
+            {"QDRANT_HOST": "qdrant.example.com", "QDRANT_HTTPS": "false"},
+            clear=True,
+        ):
+            results = []
+            preflight_check.check_qdrant_transport(results)
+
+        self.assertEqual("FAIL", results[0].status)
+        self.assertIn("requires QDRANT_HTTPS=true", results[0].detail)
+
+    def test_remote_qdrant_tls_passes_transport_preflight(self):
+        with patch.dict(
+            os.environ,
+            {"QDRANT_HOST": "qdrant.example.com", "QDRANT_HTTPS": "true"},
+            clear=True,
+        ):
+            results = []
+            preflight_check.check_qdrant_transport(results)
+
+        self.assertEqual("PASS", results[0].status)
+
     def test_n8n_workflow_contract_is_reported(self):
         results = []
         preflight_check.check_n8n_workflow(results)

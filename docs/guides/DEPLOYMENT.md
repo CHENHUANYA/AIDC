@@ -240,10 +240,13 @@ ports stay at `8000`, `6333`, and `5678`.
 
 The compose-internal Qdrant connection is plain HTTP and explicitly sets
 `QDRANT_HTTPS=false`; the API key still protects the service and the Docker
-network plus loopback bind provide the transport boundary. Set
-`QDRANT_HTTPS=true` only when `QDRANT_HOST` points to an endpoint that actually
-terminates TLS. Leaving the scheme implicit can make the Qdrant client infer
-HTTPS from the presence of an API key and fail against the local HTTP service.
+network plus loopback bind provide the transport boundary. Authenticated HTTP
+is accepted only for hosts listed in `QDRANT_INSECURE_TRUSTED_HOSTS`, whose
+default is limited to the Compose service name and loopback names/addresses.
+For any cross-host deployment, set `QDRANT_HTTPS=true` and terminate TLS at
+Qdrant or its trusted proxy. A reviewed private-network exception must add the
+exact host to `QDRANT_INSECURE_TRUSTED_HOSTS`; `preflight_check.py` reports that
+exception as a warning rather than silently treating it as secure transport.
 
 ## Upload Limits
 

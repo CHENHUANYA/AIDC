@@ -19,6 +19,18 @@ from app_context import (
     get_engine,
     ingest_log,
 )
+from api_schemas import (
+    API_ERROR_RESPONSES,
+    CollectionsResponse,
+    DocumentDeleteResponse,
+    DocumentsResponse,
+    DuplicateResponse,
+    IngestLogResponse,
+    IngestPdfResponse,
+    IngestTextResponse,
+    RebuildJobResponse,
+    RebuildSyncResponse,
+)
 from auth import actor_id, actor_role, get_actor, is_admin
 from config_values import env_float, env_int
 from repositories.postgres_content import ConcurrentContentUpdateError
@@ -248,7 +260,14 @@ def ingest_pdf_file(collection_name: str, tmp_path: str, safe_filename: str, sou
     }
 
 
-@router.post("/v1/{collection_name}/ingest")
+@router.post(
+    "/v1/{collection_name}/ingest",
+    responses={
+        **API_ERROR_RESPONSES,
+        200: {"model": IngestPdfResponse},
+        409: {"model": DuplicateResponse, "description": "File was already ingested"},
+    },
+)
 async def ingest_pdf(
     collection_name: str,
     file: UploadFile = File(...),
@@ -360,7 +379,10 @@ async def ingest_text_entry(collection_name: str, req: IngestTextRequest) -> dic
     }
 
 
-@router.post("/v1/{collection_name}/ingest-text")
+@router.post(
+    "/v1/{collection_name}/ingest-text",
+    responses={200: {"model": IngestTextResponse}, **API_ERROR_RESPONSES},
+)
 async def ingest_text(collection_name: str, req: IngestTextRequest, actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -373,7 +395,10 @@ async def ingest_text(collection_name: str, req: IngestTextRequest, actor: dict 
         return {"status": "error", "message": str(exc)}
 
 
-@router.get("/v1/{collection_name}/ingest-log")
+@router.get(
+    "/v1/{collection_name}/ingest-log",
+    responses={200: {"model": IngestLogResponse}, **API_ERROR_RESPONSES},
+)
 async def get_ingest_log(collection_name: str, actor: dict = Depends(get_actor)):
     denied = require_admin_or_supervisor(actor)
     if denied:
@@ -386,7 +411,7 @@ async def get_ingest_log(collection_name: str, actor: dict = Depends(get_actor))
     return {"collection": collection_name, "entries": entries[-20:]}
 
 
-@router.get("/ingest-log")
+@router.get("/ingest-log", responses={200: {"model": IngestLogResponse}, **API_ERROR_RESPONSES})
 async def get_all_ingest_log(actor: dict = Depends(get_actor)):
     denied = require_admin_or_supervisor(actor)
     if denied:
@@ -394,7 +419,7 @@ async def get_all_ingest_log(actor: dict = Depends(get_actor)):
     return {"entries": ingest_log[-50:]}
 
 
-@router.get("/collections")
+@router.get("/collections", responses={200: {"model": CollectionsResponse}, **API_ERROR_RESPONSES})
 async def list_collections(actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -412,7 +437,10 @@ async def list_collections(actor: dict = Depends(get_actor)):
     return {"collections": collections}
 
 
-@router.get("/v1/{collection_name}/documents")
+@router.get(
+    "/v1/{collection_name}/documents",
+    responses={200: {"model": DocumentsResponse}, **API_ERROR_RESPONSES},
+)
 async def list_documents(collection_name: str, actor: dict = Depends(get_actor)):
     denied = require_admin_or_supervisor(actor)
     if denied:
@@ -428,7 +456,10 @@ async def list_documents(collection_name: str, actor: dict = Depends(get_actor))
     }
 
 
-@router.delete("/v1/{collection_name}/documents/{doc_id}")
+@router.delete(
+    "/v1/{collection_name}/documents/{doc_id}",
+    responses={200: {"model": DocumentDeleteResponse}, **API_ERROR_RESPONSES},
+)
 async def delete_document(
     collection_name: str,
     doc_id: str,
@@ -484,7 +515,14 @@ async def delete_document(
     return {"status": "ok", "removed_sections": removed, "remaining": len(engine.sections)}
 
 
-@router.post("/v1/{collection_name}/rebuild")
+@router.post(
+    "/v1/{collection_name}/rebuild",
+    responses={
+        200: {"model": RebuildSyncResponse},
+        202: {"model": RebuildJobResponse, "description": "Rebuild job accepted"},
+        **API_ERROR_RESPONSES,
+    },
+)
 async def rebuild_collection(
     collection_name: str,
     sync: bool = False,
@@ -515,7 +553,10 @@ async def rebuild_collection(
     return {"status": "ok", "sections": len(sections)}
 
 
-@router.get("/v1/{collection_name}/rebuild/{job_id}")
+@router.get(
+    "/v1/{collection_name}/rebuild/{job_id}",
+    responses={200: {"model": RebuildJobResponse}, **API_ERROR_RESPONSES},
+)
 async def get_rebuild_job(collection_name: str, job_id: str, actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
@@ -533,7 +574,10 @@ async def get_rebuild_job(collection_name: str, job_id: str, actor: dict = Depen
         return {"status": "ok", **_job_public(job)}
 
 
-@router.delete("/v1/{collection_name}/rebuild/{job_id}")
+@router.delete(
+    "/v1/{collection_name}/rebuild/{job_id}",
+    responses={200: {"model": RebuildJobResponse}, **API_ERROR_RESPONSES},
+)
 async def cancel_rebuild_job(collection_name: str, job_id: str, actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:

@@ -24,6 +24,7 @@ ignore_missing_imports = true
 explicit_package_bases = true
 follow_imports = "skip"
 files = [
+    "api_contracts.py",
     "api_schemas.py",
     "auth.py",
     "issues.py",
@@ -57,6 +58,7 @@ exclude = "(alarm_db|backups|data|exports|hf_cache|n8n_data|qdrant_data|tests_tm
 [tool.coverage.run]
 branch = true
 source = [
+    "api_contracts",
     "app_context",
     "auth",
     "bm25_text",
@@ -77,7 +79,7 @@ source = [
 ]
 
 [tool.coverage.report]
-fail_under = 50
+fail_under = 60
 show_missing = true
 skip_covered = true
 omit = [

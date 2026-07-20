@@ -31,6 +31,9 @@ dedicated `/ready` proxy path for external uptime monitoring.
 - Record the reason for any non-loopback bind address.
 - Keep PostgreSQL private; never expose port `5432` directly to untrusted
   networks.
+- Use `QDRANT_HTTPS=true` whenever Qdrant is on another host. If an approved
+  private-network exception uses HTTP, add only the exact host to
+  `QDRANT_INSECURE_TRUSTED_HOSTS` and retain firewall evidence with the review.
 - Verify `/ready` returns HTTP 200 through the boundary after deployment.
 - Confirm direct loopback checks still work:
   `curl -fsS http://127.0.0.1:8100/ready`.

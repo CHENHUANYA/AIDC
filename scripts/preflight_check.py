@@ -81,6 +81,36 @@ def check_bind_addresses(results: list[Check]) -> None:
             record(results, f"bind:{key}", False, value, warn=True)
 
 
+def check_qdrant_transport(results: list[Check]) -> None:
+    host = env_value("QDRANT_HOST") or "qdrant"
+    https_enabled = (env_value("QDRANT_HTTPS") or "false").lower() in {"1", "true", "yes", "on"}
+    trusted_hosts = {
+        item.strip().lower()
+        for item in (
+            env_value("QDRANT_INSECURE_TRUSTED_HOSTS") or "qdrant,localhost,127.0.0.1,::1"
+        ).split(",")
+        if item.strip()
+    }
+    if https_enabled:
+        record(results, "qdrant:transport", True, f"TLS enabled for {host}")
+    elif host.lower() in trusted_hosts:
+        is_local_default = host.lower() in {"qdrant", "localhost", "127.0.0.1", "::1"}
+        record(
+            results,
+            "qdrant:transport",
+            is_local_default,
+            f"authenticated HTTP restricted to trusted host {host}",
+            warn=not is_local_default,
+        )
+    else:
+        record(
+            results,
+            "qdrant:transport",
+            False,
+            f"remote host {host} requires QDRANT_HTTPS=true or an explicit trusted private-network entry",
+        )
+
+
 def check_paths(results: list[Check]) -> None:
     for name in ["alarm_db", "data", "mock_data", "backups"]:
         path = ROOT / name
@@ -202,6 +232,7 @@ def main() -> int:
     check_env(results)
     check_ports(results)
     check_bind_addresses(results)
+    check_qdrant_transport(results)
     check_paths(results)
     check_compose(results)
     check_n8n_workflow(results)

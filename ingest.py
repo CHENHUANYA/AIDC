@@ -221,6 +221,11 @@ def extract_general_chunks(pdf_path: str, chunk_size: int = 40, overlap: int = 8
     chunk_size=40, overlap=8 gives ~300-500 chars per chunk, good for
     sentence-transformer embedding quality.
     """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than zero")
+    if overlap < 0 or overlap >= chunk_size:
+        raise ValueError("overlap must be between zero and chunk_size - 1")
+
     doc = fitz.open(pdf_path)
     all_lines = []
     for page_num, page in enumerate(doc):

@@ -10,11 +10,18 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api_schemas import (
+    API_ERROR_RESPONSES,
     ApiErrorResponse,
     CurrentUserSuccessResponse,
     LoginConfigResponse,
     LoginSuccessResponse,
+    PasswordResetResponse,
+    SessionsResponse,
+    SessionsRevokedResponse,
     StatusOkResponse,
+    UserCreatedResponse,
+    UserUpdatedResponse,
+    UsersResponse,
 )
 from repositories.postgres_auth import ConcurrentUserUpdateError, PostgresSessionRepository, PostgresUserRepository
 from repositories.runtime import postgres_store_enabled
@@ -293,7 +300,7 @@ async def _api_list_users(actor: dict) -> dict:
     return {"users": list_users(actor)}
 
 
-@router.get("/users")
+@router.get("/users", responses={200: {"model": UsersResponse}, **API_ERROR_RESPONSES})
 async def api_list_users(actor: dict = Depends(get_actor)):
     return await _api_list_users(actor)
 
@@ -316,7 +323,7 @@ async def _api_create_user(req: CreateUserRequest, actor: dict) -> dict:
     return api_ok(user=public_user(saved_user))
 
 
-@router.post("/users")
+@router.post("/users", responses={200: {"model": UserCreatedResponse}, **API_ERROR_RESPONSES})
 async def api_create_user(req: CreateUserRequest, actor: dict = Depends(get_actor)):
     return await _api_create_user(req, actor)
 
@@ -358,7 +365,10 @@ async def _api_update_user(user_id: str, req: UpdateUserRequest, actor: dict) ->
     return api_ok(user=public_user(saved_user), sessions_revoked=revoked)
 
 
-@router.patch("/users/{user_id}")
+@router.patch(
+    "/users/{user_id}",
+    responses={200: {"model": UserUpdatedResponse}, **API_ERROR_RESPONSES},
+)
 async def api_update_user(user_id: str, req: UpdateUserRequest, actor: dict = Depends(get_actor)):
     return await _api_update_user(user_id, req, actor)
 
@@ -388,7 +398,10 @@ async def _api_reset_user_password(user_id: str, req: ResetPasswordRequest, acto
     return api_ok(user=public_user(saved_user), sessions_revoked=True)
 
 
-@router.patch("/users/{user_id}/password")
+@router.patch(
+    "/users/{user_id}/password",
+    responses={200: {"model": PasswordResetResponse}, **API_ERROR_RESPONSES},
+)
 async def api_reset_user_password(
     user_id: str,
     req: ResetPasswordRequest,
@@ -412,12 +425,15 @@ async def _api_revoke_user_sessions(user_id: str, actor: dict) -> dict:
     return api_ok(revoked=revoke_user_sessions(key))
 
 
-@router.delete("/users/{user_id}/sessions")
+@router.delete(
+    "/users/{user_id}/sessions",
+    responses={200: {"model": SessionsRevokedResponse}, **API_ERROR_RESPONSES},
+)
 async def api_revoke_user_sessions(user_id: str, actor: dict = Depends(get_actor)):
     return await _api_revoke_user_sessions(user_id, actor)
 
 
-@router.get("/sessions")
+@router.get("/sessions", responses={200: {"model": SessionsResponse}, **API_ERROR_RESPONSES})
 async def api_list_sessions(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return api_error("Not authenticated")
@@ -442,7 +458,10 @@ async def api_list_sessions(actor: dict = Depends(get_actor)):
     return api_ok(total=len(entries), sessions=entries)
 
 
-@router.delete("/sessions/{token_prefix}")
+@router.delete(
+    "/sessions/{token_prefix}",
+    responses={200: {"model": SessionsRevokedResponse}, **API_ERROR_RESPONSES},
+)
 async def api_revoke_session(token_prefix: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return api_error("Not authenticated")

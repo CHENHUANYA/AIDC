@@ -13,6 +13,7 @@
 | MVP 驗收 | [guides/MVP_ACCEPTANCE_CHECKLIST.md](guides/MVP_ACCEPTANCE_CHECKLIST.md) |
 | PostgreSQL 維運 | [operations/POSTGRESQL_OPERATIONS_INDEX.md](operations/POSTGRESQL_OPERATIONS_INDEX.md) |
 | 目前交付風險 | [reports/DELIVERY_RISK_STATUS.md](reports/DELIVERY_RISK_STATUS.md) |
+| 程式驗收（2026-07-20） | [reports/CODE_ACCEPTANCE_2026-07-20.md](reports/CODE_ACCEPTANCE_2026-07-20.md) |
 
 ## 依用途瀏覽
 

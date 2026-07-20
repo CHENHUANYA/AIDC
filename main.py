@@ -28,6 +28,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app_context import load_all_engines
+from api_contracts import ApiContractMiddleware
+from api_schemas import API_ERROR_RESPONSES
 from auth import router as auth_router
 from issues import router as issue_router
 from observability import RequestLoggingMiddleware, configure_logging
@@ -42,7 +44,7 @@ from work_orders import router as work_order_router
 
 
 configure_logging()
-app = FastAPI(title="Alarm RAG Server - Multi Manual")
+app = FastAPI(title="Alarm RAG Server - Multi Manual", responses=API_ERROR_RESPONSES)
 
 def cors_origins() -> list[str]:
     raw = os.getenv("ALARM_RAG_CORS_ORIGINS", "")
@@ -59,6 +61,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Request-ID"],
 )
+app.add_middleware(ApiContractMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 

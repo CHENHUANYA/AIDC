@@ -3,6 +3,7 @@ vector_store.py - abstraction layer for interchangeable vector backends (Chroma 
 """
 import logging
 import os
+import warnings
 from typing import List, Optional
 
 from secret_values import secret_value
@@ -101,7 +102,33 @@ class QdrantStore(BaseVectorStore):
         api_key = secret_value("QDRANT_API_KEY")
         if not api_key:
             raise RuntimeError("QDRANT_API_KEY or QDRANT_API_KEY_FILE must be configured")
-        self.client = QdrantClient(host=host, port=port, api_key=api_key, https=use_https)
+        if not use_https:
+            trusted_hosts = {
+                item.strip().lower()
+                for item in os.getenv(
+                    "QDRANT_INSECURE_TRUSTED_HOSTS",
+                    "qdrant,localhost,127.0.0.1,::1",
+                ).split(",")
+                if item.strip()
+            }
+            if host.strip().lower() not in trusted_hosts:
+                raise RuntimeError(
+                    "Qdrant API keys require TLS for remote hosts. Set QDRANT_HTTPS=true, "
+                    "or explicitly add a trusted private-network host to QDRANT_INSECURE_TRUSTED_HOSTS."
+                )
+            # qdrant-client warns for every authenticated HTTP connection even
+            # when it is an explicitly trusted loopback/container-network hop.
+            # Keep the dependency warning visible for all other configurations.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Api key is used with an insecure connection.",
+                    category=UserWarning,
+                    module=r"qdrant_client\..*",
+                )
+                self.client = QdrantClient(host=host, port=port, api_key=api_key, https=False)
+        else:
+            self.client = QdrantClient(host=host, port=port, api_key=api_key, https=True)
         self.qm = qm
 
     def ensure_collection(self, collection: str):

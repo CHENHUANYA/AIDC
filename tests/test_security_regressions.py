@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import auth
 from repositories.postgres_auth import ConcurrentUserUpdateError, parse_datetime, same_instant
 from routes import stats_routes
@@ -265,6 +267,39 @@ def test_qdrant_https_is_explicitly_opt_in():
         QdrantStore()
 
     client_class.assert_called_once_with(host="qdrant.example.com", port=443, api_key="secret-key", https=True)
+
+
+def test_qdrant_rejects_api_key_over_untrusted_remote_http():
+    client_module = types.ModuleType("qdrant_client")
+    http_module = types.ModuleType("qdrant_client.http")
+    models_module = types.ModuleType("qdrant_client.http.models")
+    client_class = MagicMock()
+    client_module.QdrantClient = client_class
+    http_module.models = models_module
+    with (
+        patch.dict(
+            sys.modules,
+            {
+                "qdrant_client": client_module,
+                "qdrant_client.http": http_module,
+                "qdrant_client.http.models": models_module,
+            },
+        ),
+        patch.dict(
+            os.environ,
+            {
+                "QDRANT_HOST": "qdrant.example.com",
+                "QDRANT_PORT": "6333",
+                "QDRANT_API_KEY": "secret-key",
+                "QDRANT_HTTPS": "false",
+            },
+            clear=True,
+        ),
+        pytest.raises(RuntimeError, match="require TLS"),
+    ):
+        QdrantStore()
+
+    client_class.assert_not_called()
 
 
 def test_qdrant_and_postgresql_container_boundaries_are_declared():
