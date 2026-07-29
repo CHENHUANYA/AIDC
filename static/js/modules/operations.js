@@ -91,13 +91,13 @@ async function handlePdfUpload(input) {
   progress.classList.add('show');
   result.classList.remove('show');
   status.textContent = `上傳中：${file.name}`;
-  bar.style.width = '30%';
+  app.applySizeClass(bar, 'pct', 30, 100);
 
   const formData = new FormData();
   formData.append('file', file);
 
   try {
-    bar.style.width = '65%';
+    app.applySizeClass(bar, 'pct', 65, 100);
     status.textContent = '正在建立索引...';
     const data = await app.apiJson(`/v1/${app.getState('kbCollection')}/ingest`, {
       method: 'POST',
@@ -108,7 +108,7 @@ async function handlePdfUpload(input) {
       throw new Error(data.message || 'PDF 上傳失敗');
     }
 
-    bar.style.width = '100%';
+    app.applySizeClass(bar, 'pct', 100, 100);
     app.setResultMessage(
       result,
       'upload-result show',
@@ -126,7 +126,7 @@ async function handlePdfUpload(input) {
   } finally {
     window.setTimeout(() => {
       progress.classList.remove('show');
-      bar.style.width = '0%';
+      app.applySizeClass(bar, 'pct', 0, 100);
     }, 1200);
     input.value = '';
   }
@@ -265,14 +265,14 @@ async function loadKBStats() {
       const updatedAt = summary.updated_at ? formatDateTime(summary.updated_at) : '—';
       const note = summary.has_legacy_index ? '舊索引' : `${documents} 份文件`;
       return `
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <span style="font-family:var(--mono);font-weight:700;color:var(--acc);min-width:64px">${app.esc(name.toUpperCase())}</span>
-          <span style="font-family:var(--mono);font-weight:700;font-size:18px">${sections}</span>
-          <span style="color:var(--dim)">片段</span>
-          <span style="font-size:11px;color:var(--dim)">${app.esc(note)}</span>
-          <span style="margin-left:auto;font-size:11px;color:${ready ? 'var(--grn)' : 'var(--red)'}">${ready ? 'READY' : 'NOT READY'}</span>
+        <div class="u-flex-center-gap-10 u-mb-8">
+          <span class="u-kb-name">${app.esc(name.toUpperCase())}</span>
+          <span class="u-kb-count">${sections}</span>
+          <span class="u-text-muted">片段</span>
+          <span class="u-text-xs u-text-muted">${app.esc(note)}</span>
+          <span class="u-ml-auto u-text-xs ${ready ? 'u-text-success' : 'u-text-danger'}">${ready ? 'READY' : 'NOT READY'}</span>
         </div>
-        <div style="font-size:11px;color:var(--dim);margin:-2px 0 10px 74px">最近更新：${app.esc(updatedAt)}</div>
+        <div class="u-kb-updated">最近更新：${app.esc(updatedAt)}</div>
       `;
     }).join('');
   } catch (_) {
@@ -323,7 +323,7 @@ function renderCollectionDocuments() {
     const importedAt = formatDateTime(doc.imported_at);
     const deleteButton = doc.legacy
       ? ''
-      : `<button class="wo-btn danger" onclick="deleteKnowledgeDocument(${app.toJsArg(doc.doc_id)})">刪除</button>`;
+      : `<button class="wo-btn danger" data-on-click="deleteKnowledgeDocument" data-action-args="[${app.toJsArg(doc.doc_id)}]">刪除</button>`;
     return `<div class="kb-doc-item">
       <div class="kb-doc-main">
         <div class="kb-doc-title">${app.esc(doc.filename || doc.doc_id || '未命名文件')}</div>
@@ -551,7 +551,7 @@ function woCard(order) {
   }
 
   const description = order.description ? order.description.slice(0, 90) : '尚無描述';
-  return `<div class="wo-card" onclick="openWoModal(${app.toJsArg(order.id)})">
+  return `<div class="wo-card" data-on-click="openWoModal" data-action-args="[${app.toJsArg(order.id)}]">
     <div class="wo-code">#${app.esc(order.id)} · Alarm ${app.esc(order.alarm_code)}</div>
     <div class="wo-desc">${app.esc(description)}</div>
     <div class="wo-meta">
@@ -733,9 +733,7 @@ async function uploadExcel(input) {
 
   const result = app.$('excelResult');
   app.setResultMessage(result, 'excel-result show', `上傳中：${file.name}`);
-  result.style.background = 'var(--acc-lt)';
-  result.style.color = 'var(--acc)';
-  result.style.border = '1px solid #bfdbfe';
+  result.classList.add('u-progress-info');
 
   const formData = new FormData();
   formData.append('file', file);
@@ -759,16 +757,12 @@ async function uploadExcel(input) {
       message += `錯誤：${data.errors.join(', ')}\n`;
     }
     app.setResultMessage(result, 'excel-result show ok', message);
-    result.style.background = '';
-    result.style.color = '';
-    result.style.border = '';
+    result.classList.remove('u-progress-info');
     loadWorkOrders();
     loadCollectionDocuments();
   } catch (error) {
     app.setResultMessage(result, 'excel-result show err', app.formatError(error, 'Excel 匯入失敗'));
-    result.style.background = '';
-    result.style.color = '';
-    result.style.border = '';
+    result.classList.remove('u-progress-info');
   } finally {
     input.value = '';
   }

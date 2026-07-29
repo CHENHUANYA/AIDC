@@ -1,8 +1,8 @@
 # MVP Week 4 Acceptance Report
 
-- Generated: 2026-06-24T20:17:09
+- Generated: 2026-07-28T19:26:25
 - Base URL: `http://localhost:8100`
-- Result: `17 PASS / 0 FAIL`
+- Result: `25 PASS / 0 FAIL`
 
 | Check | Status | Detail |
 |---|---|---|
@@ -23,6 +23,14 @@
 | `mock:work-orders` | PASS | count=22, required>=10 |
 | `mock:knowledge` | PASS | count=19, required>=5 |
 | `n8n:nodes` | PASS | nodes=6 |
+| `live:health` | PASS | HTTP 200 |
+| `live:auth` | PASS | token=yes |
+| `live:lookup` | PASS | HTTP 200, found=True |
+| `live:trigger` | PASS | HTTP 200, order=415ea979 |
+| `live:banner-queue` | PASS | count=1 |
+| `live:work-order-close` | PASS | HTTP 200, review={'candidate': True, 'review_status': 'pending_review'} |
+| `live:feedback` | PASS | HTTP 200 |
+| `live:bi-movement` | PASS | alarm total:276->277, query total:1383->1384, work-order total:66->67, feedback total:60->61 |
 
 ## Decision
 

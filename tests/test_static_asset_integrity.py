@@ -117,6 +117,14 @@ def page_path_keys() -> set[str]:
     return set(re.findall(r"^\s*([A-Za-z0-9_]+)\s*:", match.group(1), re.MULTILINE)) if match else set()
 
 
+def css_rule_property(source: str, selector: str, property_name: str) -> str:
+    rule = re.search(rf"{re.escape(selector)}\s*\{{([^}}]+)\}}", source)
+    if not rule:
+        return ""
+    declaration = re.search(rf"{re.escape(property_name)}\s*:\s*([^;]+)", rule.group(1))
+    return declaration.group(1).strip() if declaration else ""
+
+
 class StaticAssetIntegrityTests(unittest.TestCase):
     def test_html_static_references_exist(self):
         missing = []
@@ -142,6 +150,17 @@ class StaticAssetIntegrityTests(unittest.TestCase):
                 missing.append(str(js_path.relative_to(ROOT)))
 
         self.assertEqual([], missing)
+
+    def test_admin_and_supervisor_shell_backgrounds_match(self):
+        admin = (ROOT / "static" / "css" / "admin.css").read_text(encoding="utf-8")
+        supervisor = (ROOT / "static" / "css" / "supervisor.css").read_text(encoding="utf-8")
+
+        for selector in ("header", ".tabs"):
+            self.assertEqual(
+                css_rule_property(supervisor, selector, "background"),
+                css_rule_property(admin, selector, "background"),
+                f"{selector} background must match across the admin and supervisor consoles",
+            )
 
     def test_removed_legacy_assets_are_not_referenced(self):
         offenders = []
@@ -260,6 +279,60 @@ class StaticAssetIntegrityTests(unittest.TestCase):
         missing = sorted(handler_calls_from_source(source) - callable_names_from_source(source))
 
         self.assertEqual([], missing)
+
+    def test_event_handlers_are_declarative_and_allowlisted(self):
+        sources = [
+            *(path.read_text(encoding="utf-8") for path in HTML_FILES),
+            *(path.read_text(encoding="utf-8") for path in sorted(ROOT.glob("static/**/*.js"))),
+        ]
+        combined = "\n".join(sources)
+        inline_handlers = re.findall(
+            r"<[^>]+\bon(?:click|change|keydown|input)\s*=",
+            combined,
+            re.IGNORECASE,
+        )
+        declared_actions = set(re.findall(
+            r'data-on-(?:click|change|keydown|input)=["\']([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)',
+            combined,
+        ))
+        alarm_app = (ROOT / "static" / "alarm_app.js").read_text(encoding="utf-8")
+        allowlist_match = re.search(
+            r"const DECLARATIVE_ACTIONS = new Set\(\[([\s\S]*?)\]\);",
+            alarm_app,
+        )
+        allowlisted_actions = (
+            set(re.findall(r"'([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)'", allowlist_match.group(1)))
+            if allowlist_match
+            else set()
+        )
+
+        self.assertEqual([], inline_handlers)
+        self.assertEqual(set(), declared_actions - allowlisted_actions)
+
+    def test_scripts_are_external(self):
+        offenders = []
+        for path in HTML_FILES:
+            source = path.read_text(encoding="utf-8")
+            if re.search(r"<script>([\s\S]*?)</script>", source):
+                offenders.append(path.name)
+
+        self.assertEqual([], offenders)
+
+    def test_styles_are_external(self):
+        sources = [
+            *(path.read_text(encoding="utf-8") for path in HTML_FILES),
+            *(path.read_text(encoding="utf-8") for path in sorted(ROOT.glob("static/**/*.js"))),
+        ]
+        combined = "\n".join(sources)
+        inline_blocks = [
+            path.name
+            for path in HTML_FILES
+            if re.search(r"<style>([\s\S]*?)</style>", path.read_text(encoding="utf-8"))
+        ]
+
+        self.assertIsNone(re.search(r"\bstyle\s*=", combined, re.IGNORECASE))
+        self.assertNotIn(".style.", combined)
+        self.assertEqual([], inline_blocks)
 
 
 if __name__ == "__main__":

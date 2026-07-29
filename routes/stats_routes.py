@@ -1,13 +1,14 @@
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict
 
 import numpy as np
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from starlette.concurrency import run_in_threadpool
 
 from api_schemas import (
     API_ERROR_RESPONSES,
@@ -18,6 +19,7 @@ from api_schemas import (
     QueryStatsResponse,
     ReadyResponse,
     ReadyUnavailableResponse,
+    RuntimeMetricsResponse,
     StatusOkResponse,
 )
 from app_context import (
@@ -26,21 +28,20 @@ from app_context import (
     SCHOOL_API_FALLBACK_TO_OLLAMA,
     FeedbackRequest,
     OLLAMA_MODEL,
-    OLLAMA_URL,
-    SCHOOL_API_BASE_URL,
     SCHOOL_API_MODEL,
     alarm_history,
     engines,
     error_log,
-    query_log,
 )
 from auth import actor_id, actor_role, get_actor
 from db.session import get_engine
+from observability import runtime_metrics
 from rag_engine import model_cache_status
 from repositories.postgres_content import PostgresAlarmRepository, PostgresFeedbackRepository
 from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
-from storage import ALARM_LOG_PATH
+from storage import ALARM_LOG_PATH, QUERY_LOG_PATH, read_jsonl
+from vector_store import get_store
 
 
 router = APIRouter()
@@ -208,34 +209,39 @@ async def query_stats(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
+    return await run_in_threadpool(_query_stats_payload)
+
+
+def _query_stats_payload() -> dict:
+    queries = read_jsonl(QUERY_LOG_PATH)
     today = datetime.now().strftime("%Y-%m-%d")
-    today_queries = [query for query in query_log if query.get("date") == today]
-    times = [query.get("elapsed_ms", 0) for query in query_log if query.get("elapsed_ms", 0) > 0]
+    today_queries = [query for query in queries if query.get("date") == today]
+    times = [query.get("elapsed_ms", 0) for query in queries if query.get("elapsed_ms", 0) > 0]
     avg_ms = round(sum(times) / len(times)) if times else 0
     p95 = np.percentile(times, 95) if times else 0
     p99 = np.percentile(times, 99) if times else 0
 
     code_counts: Dict[str, int] = {}
-    for query in query_log:
+    for query in queries:
         query_text = str(query.get("query") or "")
         for code in re.findall(r"\d{2,6}", query_text):
             code_counts[code] = code_counts.get(code, 0) + 1
     top_codes = sorted(code_counts.items(), key=lambda item: -item[1])[:10]
 
     collection_counts: Dict[str, int] = {}
-    for query in query_log:
+    for query in queries:
         collection = str(query.get("collection") or "unknown")
         collection_counts[collection] = collection_counts.get(collection, 0) + 1
 
     return {
-        "total": len(query_log),
+        "total": len(queries),
         "today": len(today_queries),
         "avg_ms": int(avg_ms),
         "p95_ms": int(p95),
         "p99_ms": int(p99),
         "top_codes": top_codes,
         "by_collection": collection_counts,
-        "recent": query_log[-20:],
+        "recent": queries[-20:],
     }
 
 
@@ -251,6 +257,47 @@ async def error_stats(actor: dict = Depends(get_actor)):
     return {"recent": error_log[-50:], "total": len(error_log)}
 
 
+@router.get(
+    "/metrics/runtime",
+    response_model=RuntimeMetricsResponse,
+    response_model_exclude_none=True,
+    responses=API_ERROR_RESPONSES,
+)
+async def runtime_metrics_snapshot(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return {"status": "error", "message": "Not authenticated"}
+    if actor_role(actor) != "admin":
+        return {"status": "error", "message": "Permission denied"}
+    snapshot = runtime_metrics.snapshot()
+    snapshot["postgres"] = await run_in_threadpool(_postgres_pool_metrics)
+    return {
+        "status": "ok",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        **snapshot,
+    }
+
+
+def _postgres_pool_metrics() -> dict:
+    if not postgres_store_enabled():
+        return {"enabled": False, "status": "not-required"}
+    try:
+        pool = get_engine().pool
+        values = {}
+        for name in ("size", "checkedin", "checkedout", "overflow"):
+            method = getattr(pool, name, None)
+            values[name] = int(method()) if callable(method) else 0
+        return {
+            "enabled": True,
+            "status": "ok",
+            "pool_size": values["size"],
+            "checked_in": values["checkedin"],
+            "checked_out": values["checkedout"],
+            "overflow": values["overflow"],
+        }
+    except Exception:
+        return {"enabled": True, "status": "unavailable"}
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health():
     collections = {
@@ -264,13 +311,11 @@ async def health():
     return {
         "status": "ok",
         "llm_provider": LLM_PROVIDER,
-        "ollama_url": OLLAMA_URL,
         "ollama_model": OLLAMA_MODEL,
-        "school_api_base_url": SCHOOL_API_BASE_URL,
         "school_api_model": SCHOOL_API_MODEL,
         "school_api_fallback_to_ollama": SCHOOL_API_FALLBACK_TO_OLLAMA,
         "last_llm_source": _last_llm_source(),
-        "model_cache": model_cache_status(),
+        "model_cache": _public_model_cache_status(),
         "collections": collections,
     }
 
@@ -281,18 +326,58 @@ async def health():
     responses={503: {"model": ReadyUnavailableResponse, "description": "Required dependency unavailable"}},
 )
 async def ready():
-    if postgres_store_enabled():
-        try:
-            with get_engine().connect() as connection:
-                database_ready = connection.scalar(text("SELECT 1")) == 1
-        except Exception:
-            database_ready = False
-        if not database_ready:
-            return JSONResponse(
-                status_code=503,
-                content={"status": "unavailable", "checks": {"database": "unavailable"}},
-            )
-    return {"status": "ok", "checks": {"database": "ok" if postgres_store_enabled() else "not-required"}}
+    database_status, vector_store_status = await run_in_threadpool(_readiness_statuses)
+    checks = {
+        "database": database_status,
+        "vector_store": vector_store_status,
+    }
+    if "unavailable" in checks.values():
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "checks": checks},
+        )
+    return {"status": "ok", "checks": checks}
+
+
+def _readiness_statuses() -> tuple[str, str]:
+    return _database_readiness_status(), _vector_store_readiness_status()
+
+
+def _database_readiness_status() -> str:
+    if not postgres_store_enabled():
+        return "not-required"
+    try:
+        with get_engine().connect() as connection:
+            return "ok" if connection.scalar(text("SELECT 1")) == 1 else "unavailable"
+    except Exception:
+        return "unavailable"
+
+
+def _vector_store_readiness_status() -> str:
+    if os.getenv("VECTOR_STORE", "chroma").strip().lower() != "qdrant":
+        return "not-required"
+    try:
+        get_store().ping()
+        return "ok"
+    except Exception:
+        return "unavailable"
+
+
+def _public_model_cache_status() -> dict:
+    status = model_cache_status()
+    return {
+        "ready": bool(status.get("ready")),
+        "local_only": bool(status.get("local_only")),
+        "models": [
+            {
+                "role": str(item.get("role") or ""),
+                "name": str(item.get("name") or ""),
+                "available": bool(item.get("available")),
+            }
+            for item in status.get("models", [])
+            if isinstance(item, dict)
+        ],
+    }
 
 
 def _last_llm_source() -> str:

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from math import ceil
 from typing import Dict, List
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from db.models import LoginSession, User
+from db.models import LoginSession, LoginThrottle, User
 from db.session import session_scope
 
 
@@ -19,6 +22,10 @@ class ConcurrentUserUpdateError(RuntimeError):
 
 def token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def throttle_key_digest(rate_key: str) -> str:
+    return hashlib.sha256(rate_key.encode("utf-8")).hexdigest()
 
 
 def parse_datetime(value: str) -> datetime:
@@ -197,3 +204,145 @@ class PostgresSessionRepository:
                 }
                 for record, user_id, role in rows
             ]
+
+
+class PostgresLoginThrottleRepository:
+    @staticmethod
+    def _expired_condition(current: datetime, retention_seconds: int):
+        if retention_seconds <= 0:
+            raise ValueError("retention_seconds must be positive")
+        cutoff = current - timedelta(seconds=retention_seconds)
+        return (
+            LoginThrottle.updated_at < cutoff,
+            or_(LoginThrottle.locked_until.is_(None), LoginThrottle.locked_until <= current),
+        )
+
+    def _get_or_create_locked(self, session, key_hash: str, now: datetime) -> LoginThrottle:
+        values = {
+            "key_hash": key_hash,
+            "failure_count": 0,
+            "window_started_at": now,
+            "updated_at": now,
+        }
+        dialect = session.get_bind().dialect.name
+        if dialect == "postgresql":
+            statement = postgresql_insert(LoginThrottle).values(**values).on_conflict_do_nothing(
+                index_elements=[LoginThrottle.key_hash]
+            )
+        elif dialect == "sqlite":
+            statement = sqlite_insert(LoginThrottle).values(**values).on_conflict_do_nothing(
+                index_elements=[LoginThrottle.key_hash]
+            )
+        else:
+            raise RuntimeError(f"Unsupported login throttle database dialect: {dialect}")
+        session.execute(statement)
+        throttle = session.scalar(
+            select(LoginThrottle)
+            .where(LoginThrottle.key_hash == key_hash)
+            .with_for_update()
+        )
+        if throttle is None:
+            raise RuntimeError("Unable to create login throttle state")
+        return throttle
+
+    def retry_after(self, rate_key: str, window_seconds: int, now: datetime | None = None) -> int:
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        key_hash = throttle_key_digest(rate_key)
+        with session_scope() as session:
+            throttle = session.scalar(
+                select(LoginThrottle)
+                .where(LoginThrottle.key_hash == key_hash)
+                .with_for_update()
+            )
+            if throttle is None:
+                return 0
+            locked_until = utc_datetime(throttle.locked_until) if throttle.locked_until else None
+            if locked_until and locked_until > current:
+                throttle.updated_at = current
+                return max(ceil((locked_until - current).total_seconds()), 1)
+            window_started_at = utc_datetime(throttle.window_started_at)
+            if window_started_at + timedelta(seconds=window_seconds) <= current:
+                session.delete(throttle)
+            else:
+                throttle.locked_until = None
+                throttle.updated_at = current
+            return 0
+
+    def record_failure(
+        self,
+        rate_key: str,
+        limit: int,
+        window_seconds: int,
+        lockout_seconds: int,
+        now: datetime | None = None,
+    ) -> int:
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        retention = timedelta(seconds=max(window_seconds, lockout_seconds))
+        key_hash = throttle_key_digest(rate_key)
+        with session_scope() as session:
+            session.execute(
+                delete(LoginThrottle).where(LoginThrottle.updated_at < current - retention)
+            )
+            throttle = self._get_or_create_locked(session, key_hash, current)
+            window_started_at = utc_datetime(throttle.window_started_at)
+            if window_started_at + timedelta(seconds=window_seconds) <= current:
+                throttle.failure_count = 0
+                throttle.window_started_at = current
+                throttle.locked_until = None
+
+            throttle.failure_count += 1
+            throttle.updated_at = current
+            if throttle.failure_count < limit:
+                return 0
+
+            throttle.failure_count = 0
+            throttle.window_started_at = current
+            throttle.locked_until = current + timedelta(seconds=lockout_seconds)
+            return lockout_seconds
+
+    def clear(self, rate_key: str) -> None:
+        with session_scope() as session:
+            session.execute(
+                delete(LoginThrottle).where(
+                    LoginThrottle.key_hash == throttle_key_digest(rate_key)
+                )
+            )
+
+    def count_expired(self, retention_seconds: int, now: datetime | None = None) -> int:
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        with session_scope() as session:
+            count = session.scalar(
+                select(func.count())
+                .select_from(LoginThrottle)
+                .where(*self._expired_condition(current, retention_seconds))
+            )
+            return int(count or 0)
+
+    def cleanup_expired(
+        self,
+        retention_seconds: int,
+        *,
+        batch_size: int = 1000,
+        now: datetime | None = None,
+    ) -> int:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        with session_scope() as session:
+            expired_keys = list(
+                session.scalars(
+                    select(LoginThrottle.key_hash)
+                    .where(*self._expired_condition(current, retention_seconds))
+                    .order_by(LoginThrottle.updated_at, LoginThrottle.key_hash)
+                    .limit(batch_size)
+                )
+            )
+            if not expired_keys:
+                return 0
+            result = session.execute(
+                delete(LoginThrottle).where(
+                    LoginThrottle.key_hash.in_(expired_keys),
+                    *self._expired_condition(current, retention_seconds),
+                )
+            )
+            return max(int(result.rowcount or 0), 0)

@@ -18,6 +18,12 @@ RUNTIME_IGNORE_ENTRIES = {
     "htmlcov/",
     "tmp*/",
 }
+NON_RUNTIME_IMAGE_ENTRIES = {
+    ".git/",
+    ".github/",
+    "docs/",
+    "tests/",
+}
 SECRET_PLACEHOLDERS = {
     "ADMIN_INITIAL_PASSWORD": "change-me-now",
     "ALARM_RAG_TRIGGER_TOKEN": "replace-with-a-random-trigger-token",
@@ -41,6 +47,11 @@ class RepositoryHygieneTests(unittest.TestCase):
 
         self.assertTrue(RUNTIME_IGNORE_ENTRIES <= gitignore)
         self.assertTrue(RUNTIME_IGNORE_ENTRIES <= dockerignore)
+
+    def test_source_control_and_validation_assets_are_not_packaged(self):
+        dockerignore = ignore_entries(ROOT / ".dockerignore")
+
+        self.assertTrue(NON_RUNTIME_IMAGE_ENTRIES <= dockerignore)
 
     def test_local_env_file_is_not_packaged_or_committed(self):
         gitignore = ignore_entries(ROOT / ".gitignore")

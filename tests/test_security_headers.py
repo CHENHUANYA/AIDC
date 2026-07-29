@@ -5,15 +5,15 @@ import httpx
 from security_headers import SecurityHeadersMiddleware
 
 
-def http_scope() -> dict:
+def http_scope(path: str = "/health") -> dict:
     return {
         "type": "http",
         "asgi": {"version": "3.0"},
         "http_version": "1.1",
         "method": "GET",
         "scheme": "https",
-        "path": "/health",
-        "raw_path": b"/health",
+        "path": path,
+        "raw_path": path.encode("ascii"),
         "query_string": b"",
         "headers": [],
         "client": ("127.0.0.1", 12345),
@@ -25,7 +25,11 @@ async def receive() -> dict:
     return {"type": "http.request", "body": b"", "more_body": False}
 
 
-def run_middleware(production: bool, response_headers: list[tuple[bytes, bytes]] | None = None) -> list[dict]:
+def run_middleware(
+    production: bool,
+    response_headers: list[tuple[bytes, bytes]] | None = None,
+    path: str = "/health",
+) -> list[dict]:
     messages: list[dict] = []
 
     async def app(scope, app_receive, send):
@@ -36,7 +40,7 @@ def run_middleware(production: bool, response_headers: list[tuple[bytes, bytes]]
         messages.append(message)
 
     middleware = SecurityHeadersMiddleware(app, production=production)
-    asyncio.run(middleware(http_scope(), receive, send))
+    asyncio.run(middleware(http_scope(path), receive, send))
     return messages
 
 
@@ -52,6 +56,12 @@ def test_browser_defense_headers_are_added_without_hsts_in_development() -> None
     assert headers[b"x-frame-options"] == b"DENY"
     assert headers[b"referrer-policy"] == b"no-referrer"
     assert headers[b"permissions-policy"] == b"camera=(), microphone=(), geolocation=()"
+    assert b"default-src 'self'" in headers[b"content-security-policy"]
+    assert b"script-src 'self';" in headers[b"content-security-policy"]
+    assert b"style-src 'self' https://fonts.googleapis.com;" in headers[b"content-security-policy"]
+    assert b"unsafe-inline" not in headers[b"content-security-policy"]
+    assert b"sha256-" not in headers[b"content-security-policy"]
+    assert headers[b"cross-origin-opener-policy"] == b"same-origin"
     assert b"strict-transport-security" not in headers
 
 
@@ -70,6 +80,18 @@ def test_production_adds_hsts_and_replaces_downstream_managed_values() -> None:
     assert headers[b"content-type"] == b"application/json"
     assert headers[b"x-frame-options"] == b"DENY"
     assert headers[b"strict-transport-security"] == b"max-age=31536000"
+
+
+def test_sensitive_pages_and_auth_responses_disable_caching() -> None:
+    login_headers = response_header_map(run_middleware(production=True, path="/login"))
+    auth_headers = response_header_map(run_middleware(production=True, path="/auth/login"))
+    metrics_headers = response_header_map(run_middleware(production=True, path="/metrics/runtime"))
+    health_headers = response_header_map(run_middleware(production=True, path="/health"))
+
+    assert login_headers[b"cache-control"] == b"no-store"
+    assert auth_headers[b"cache-control"] == b"no-store"
+    assert metrics_headers[b"cache-control"] == b"no-store"
+    assert b"cache-control" not in health_headers
 
 
 def test_non_http_scopes_pass_through_unchanged() -> None:

@@ -20,6 +20,7 @@ RTO_HOURS = 2
 TABLES = (
     "users",
     "sessions",
+    "login_throttles",
     "alarm_events",
     "issues",
     "issue_notes",

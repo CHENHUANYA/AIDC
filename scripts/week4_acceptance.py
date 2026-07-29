@@ -170,6 +170,13 @@ def live_checks(base_url: str, manual: str, alarm_code: str, timeout: int) -> li
             "repair_action": "Verified metadata, reset the simulated condition, and closed the work order.",
             "notes": "Week 4 acceptance completion path.",
         }
+        order_version = order.get("version") if isinstance(order, dict) else None
+        if not isinstance(order_version, int):
+            _, current = request_json(base_url, f"/work-orders/{order_id}", timeout=timeout, token=token)
+            current_order = current.get("order") if isinstance(current, dict) else None
+            order_version = current_order.get("version") if isinstance(current_order, dict) else None
+        if isinstance(order_version, int):
+            patch_payload["version"] = order_version
         code, updated = request_json(base_url, f"/work-orders/{order_id}", "PATCH", patch_payload, timeout, token)
         review = updated.get("knowledge_review") if isinstance(updated, dict) else None
         review_pending = isinstance(review, dict) and review.get("review_status") == "pending_review"

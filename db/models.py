@@ -66,6 +66,26 @@ class LoginSession(Base):
     __table_args__ = (Index("ix_sessions_user_expires", "user_id", "expires_at"),)
 
 
+class LoginThrottle(Base):
+    __tablename__ = "login_throttles"
+    __table_args__ = (
+        CheckConstraint("failure_count >= 0", name="non_negative_failure_count"),
+        Index("ix_login_throttles_updated_at", "updated_at"),
+        Index("ix_login_throttles_locked_until", "locked_until"),
+    )
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class AlarmEvent(Base):
     __tablename__ = "alarm_events"
     __table_args__ = (

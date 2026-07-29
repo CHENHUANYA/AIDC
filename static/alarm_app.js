@@ -20,7 +20,7 @@ const LOOKUP_SECTIONS = 'Parameters|Explanation|Reaction|Remedy|Program continua
 const EMPTY_CHAT_HTML = `
   <div class="chat-empty" id="chatEmpty">
     <div class="chat-empty-icon">🤖</div>
-    <div class="chat-empty-text">歡迎使用智慧對話系統<br>可以用自然語言提問<br><span style="font-size:11px;color:var(--dim)">支援多輪對話與知識庫查詢</span></div>
+    <div class="chat-empty-text">歡迎使用智慧對話系統<br>可以用自然語言提問<br><span class="u-text-xs u-text-muted">支援多輪對話與知識庫查詢</span></div>
   </div>`;
 const WO_STATUS_LABEL = {
   pending: '待處理',
@@ -65,6 +65,169 @@ const PAGE_PATHS = {
   operations: '/operations',
   supervisor: '/supervisor',
 };
+const DECLARATIVE_ACTIONS = new Set([
+  'AlarmApp.logout',
+  'AnswerTrace.open',
+  'acceptWorkOrder',
+  'addOperatorIssueNote',
+  'askInChat',
+  'autoResize',
+  'bannerLookup',
+  'bulkUpdateSupervisorOrders',
+  'chatKeydown',
+  'chatSuggest',
+  'clearChat',
+  'clearLog',
+  'closeMaintenanceModal',
+  'closeOperatorIssueModal',
+  'closeWoModal',
+  'completeWorkOrder',
+  'copyAlarmCode',
+  'createAdminUser',
+  'createOperatorIssue',
+  'createWorkOrder',
+  'createWorkOrderFromIssue',
+  'deleteAdminKbDocument',
+  'deleteKnowledgeDocument',
+  'deleteMaintenanceWorkOrder',
+  'deleteWorkOrder',
+  'dismissBanner',
+  'doSearch',
+  'escalateOperatorIssue',
+  'exportAdminAuditCsv',
+  'exportAdminKbCsv',
+  'exportAdminQualityCsv',
+  'exportAdminUsersCsv',
+  'exportSupervisorCsv',
+  'filterRefTable',
+  'handlePdfUpload',
+  'handleTextIngest',
+  'ingestAdminText',
+  'loadAdminConsole',
+  'loadAdminKb',
+  'loadAdminSessions',
+  'loadAdminSettings',
+  'loadBI',
+  'loadCollectionDocuments',
+  'loadHist',
+  'loadMaintenanceData',
+  'loadOperatorIssues',
+  'loadSupervisorConsole',
+  'loadSystemSettings',
+  'loadWorkOrders',
+  'lookupAlarm',
+  'lookupOperatorSuggestion',
+  'openMaintenanceModal',
+  'openOperatorIssueModal',
+  'openWoModal',
+  'rebuildAdminKb',
+  'rebuildAllAdminKb',
+  'rebuildKnowledgeBase',
+  'reopenOperatorIssue',
+  'requestSupervisorRework',
+  'resetAdminPassword',
+  'reviewAdminKnowledge',
+  'revokeAdminSession',
+  'revokeAdminUserSessions',
+  'saveAdminSettings',
+  'saveAdminUser',
+  'saveMaintenanceWorkOrder',
+  'saveMsgToKB',
+  'saveOperatorIssueEdit',
+  'saveSystemSettings',
+  'saveWorkOrder',
+  'selectAdminSection',
+  'selectChatManual',
+  'selectKB',
+  'selectManual',
+  'sendChat',
+  'sendFeedback',
+  'sendOperatorSuggestionFeedback',
+  'startWorkOrder',
+  'switchTab',
+  'testTrigger',
+  'toggleAdminUser',
+  'toggleTestTools',
+  'updateSupervisorOrder',
+  'uploadAdminExcel',
+  'uploadAdminPdf',
+  'uploadExcel',
+  'verifyOperatorIssue',
+  'verifySupervisorOrder',
+]);
+const DECLARATIVE_EVENTS = ['click', 'change', 'input', 'keydown'];
+
+function resolveDeclarativeAction(name) {
+  if (!DECLARATIVE_ACTIONS.has(name)) {
+    return null;
+  }
+  return name.split('.').reduce((value, key) => value?.[key], window);
+}
+
+function declarativeActionArgs(element, eventType) {
+  const encoded = element.getAttribute(`data-${eventType}-args`) || element.dataset.actionArgs;
+  if (!encoded) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(encoded);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function handleDeclarativeEvent(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target) {
+    return;
+  }
+  const eventAttribute = `data-on-${event.type}`;
+  const selector = event.type === 'click'
+    ? `[${eventAttribute}], [data-nav], [data-role-home], [data-file-trigger]`
+    : `[${eventAttribute}]`;
+  const element = target.closest(selector);
+  if (!element) {
+    return;
+  }
+
+  if (event.type === 'click' && element.dataset.nav) {
+    window.location.href = element.dataset.nav;
+    return;
+  }
+  if (event.type === 'click' && element.hasAttribute('data-role-home')) {
+    window.location.href = coreApi.roleHome?.(coreApi.readAuthUser?.()?.role) || '/login';
+    return;
+  }
+  if (event.type === 'click' && element.dataset.fileTrigger) {
+    document.getElementById(element.dataset.fileTrigger)?.click();
+    return;
+  }
+
+  const action = resolveDeclarativeAction(element.getAttribute(eventAttribute) || '');
+  if (typeof action !== 'function') {
+    console.error(`Blocked or unavailable declarative action: ${element.getAttribute(eventAttribute) || ''}`);
+    return;
+  }
+  if (element.hasAttribute('data-action-stop')) {
+    event.stopPropagation();
+  }
+  if (element.hasAttribute('data-action-prevent')) {
+    event.preventDefault();
+  }
+  const args = declarativeActionArgs(element, event.type);
+  if (element.hasAttribute(`data-${event.type}-target`) || element.hasAttribute('data-action-target')) {
+    args.push(element);
+  }
+  if (element.hasAttribute(`data-${event.type}-event`) || element.hasAttribute('data-action-event')) {
+    args.push(event);
+  }
+  action(...args);
+}
+
+DECLARATIVE_EVENTS.forEach((eventName) => {
+  document.addEventListener(eventName, handleDeclarativeEvent);
+});
 
 function getState(key) {
   if (!key) {
@@ -256,6 +419,25 @@ function formatDuration(ms) {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
+function sizeClass(kind, value, maxValue = 120, step = 5) {
+  const numeric = Number(value);
+  const safeValue = Number.isFinite(numeric) ? numeric : 0;
+  const bounded = Math.min(Math.max(safeValue, 0), maxValue);
+  const rounded = Math.round(bounded / step) * step;
+  return `u-${kind}-${rounded}`;
+}
+
+function applySizeClass(element, kind, value, maxValue = 120, step = 5) {
+  if (!element) {
+    return;
+  }
+  const prefix = `u-${kind}-`;
+  [...element.classList]
+    .filter((className) => className.startsWith(prefix))
+    .forEach((className) => element.classList.remove(className));
+  element.classList.add(sizeClass(kind, value, maxValue, step));
+}
+
 function setTimerClass(el, ms) {
   el.classList.remove('fast', 'slow');
   if (ms < 2000) {
@@ -388,15 +570,13 @@ async function loadBI() {
   if (accuracy === null) {
     accEl.textContent = '—';
     accEl.className = 'bi-big';
-    barEl.style.width = '0%';
-    barEl.className = 'accuracy-bar-fill';
+    barEl.className = 'accuracy-bar-fill u-pct-0';
     $('biAccuracySub').textContent = '尚無回饋資料';
   } else {
     const stateClass = accuracy >= 80 ? 'grn' : accuracy >= 60 ? 'org' : 'red';
     accEl.textContent = `${accuracy}%`;
     accEl.className = `bi-big ${stateClass}`;
-    barEl.style.width = `${accuracy}%`;
-    barEl.className = `accuracy-bar-fill${accuracy >= 80 ? '' : accuracy >= 60 ? ' mid' : ' low'}`;
+    barEl.className = `accuracy-bar-fill ${sizeClass('pct', accuracy, 100)}${accuracy >= 80 ? '' : accuracy >= 60 ? ' mid' : ' low'}`;
     $('biAccuracySub').textContent = `基於 ${total} 筆回饋 · ${feedbackSource === 'server' ? '後端統計' : '本地暫存'}`;
   }
 
@@ -417,8 +597,8 @@ async function loadBI() {
   const maxTiming = Math.max(...recentTimings.map((item) => item.total), 1);
   $('biSparkline').innerHTML = appendBars(recentTimings, maxTiming, (item, maxValue) => {
     const height = Math.max(4, Math.round((item.total / maxValue) * 34));
-    const color = item.total < 2000 ? 'var(--grn)' : item.total > 6000 ? 'var(--red)' : 'var(--acc)';
-    return `<div class="spark-bar" style="height:${height}px;background:${color};flex:1" title="${item.total}ms"></div>`;
+    const colorClass = item.total < 2000 ? 'u-spark-fast' : item.total > 6000 ? 'u-spark-slow' : 'u-spark-normal';
+    return `<div class="spark-bar u-flex-1 ${sizeClass('h', height)} ${colorClass}" title="${item.total}ms"></div>`;
   });
 
   const today = getTodayString();
@@ -436,7 +616,7 @@ async function loadBI() {
     const height = Math.max(3, Math.round((item.cnt / maxValue) * 55));
     const isToday = item.label === `${new Date().getMonth() + 1}/${new Date().getDate()}`;
     return `<div class="bar-col">
-      <div class="bar-fill ${isToday ? 'org' : ''}" style="height:${height}px;width:100%"></div>
+      <div class="bar-fill u-full-width ${sizeClass('h', height)} ${isToday ? 'org' : ''}"></div>
       <div class="bar-lbl">${item.label}</div>
     </div>`;
   });
@@ -452,10 +632,10 @@ async function loadBI() {
     const count = appState.alarmLog.filter((item) => item.manual === manual.key).length;
     const pct = Math.round((count / totalLogs) * 100);
     return `<tr>
-      <td><strong style="font-family:var(--mono)">${manual.label}</strong></td>
+      <td><strong class="u-mono">${manual.label}</strong></td>
       <td>${count}</td>
       <td>${pct}%</td>
-      <td><span class="mini-bar" style="width:${Math.max(4, pct * 1.2)}px"></span></td>
+      <td><span class="mini-bar ${sizeClass('w', Math.max(4, pct * 1.2))}"></span></td>
     </tr>`;
   }).join('');
 
@@ -472,9 +652,9 @@ async function loadBI() {
   $('biFeedbackChart').innerHTML = appendBars(dailyFeedback, maxFeedback, (item, maxValue) => {
     const goodHeight = Math.max(0, Math.round((item.good / maxValue) * 70));
     const badHeight = Math.max(0, Math.round((item.bad / maxValue) * 70));
-    return `<div class="bar-col" style="gap:1px">
-      <div class="bar-fill grn" style="height:${goodHeight}px;width:100%"></div>
-      <div class="bar-fill red" style="height:${badHeight}px;width:100%;border-radius:0 0 4px 4px"></div>
+    return `<div class="bar-col u-gap-1">
+      <div class="bar-fill grn u-full-width ${sizeClass('h', goodHeight)}"></div>
+      <div class="bar-fill red u-full-width u-rounded-bottom ${sizeClass('h', badHeight)}"></div>
       <div class="bar-lbl">${item.label}</div>
     </div>`;
   });
@@ -708,6 +888,8 @@ window.AlarmApp = {
   setResultMessage,
   appendBars,
   formatDuration,
+  sizeClass,
+  applySizeClass,
   setTimerClass,
   resetLookupPanels,
   buildLookupFieldBlocks,

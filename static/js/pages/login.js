@@ -44,7 +44,7 @@
       api.saveAuth(token, user);
       return;
     }
-    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.removeItem(TOKEN_KEY);
     localStorage.setItem(USER_KEY, JSON.stringify(user));
   }
 

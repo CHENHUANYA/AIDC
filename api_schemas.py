@@ -444,6 +444,65 @@ class ErrorStatsResponse(BaseModel):
     total: int
 
 
+class RuntimeRouteMetricsResponse(BaseModel):
+    method: str
+    route: str
+    count: int
+    errors: int
+    avg_ms: float
+    max_ms: float
+
+
+class RuntimeHttpMetricsResponse(BaseModel):
+    requests: int
+    errors: int
+    server_errors: int
+    timeouts: int
+    slow_requests: int
+    slow_request_ms: int
+    avg_ms: float
+    max_ms: float
+    duration_buckets: dict[str, int]
+    routes: list[RuntimeRouteMetricsResponse]
+
+
+class RuntimeAuthMetricsResponse(BaseModel):
+    login_attempts: int
+    login_successes: int
+    login_failures: int
+    throttle_triggers: int
+
+
+class RuntimeRagMetricsResponse(BaseModel):
+    requests: int
+    errors: int
+    streaming_requests: int
+    avg_retrieval_ms: float
+    avg_model_ms: float
+    avg_total_ms: float
+    max_total_ms: float
+    providers: dict[str, int]
+    outcomes: dict[str, int]
+
+
+class RuntimePostgresMetricsResponse(BaseModel):
+    enabled: bool
+    status: Literal["ok", "not-required", "unavailable"]
+    pool_size: int | None = None
+    checked_in: int | None = None
+    checked_out: int | None = None
+    overflow: int | None = None
+
+
+class RuntimeMetricsResponse(StatusOkResponse):
+    generated_at: str
+    uptime_seconds: float
+    http: RuntimeHttpMetricsResponse
+    auth: RuntimeAuthMetricsResponse
+    rag: RuntimeRagMetricsResponse
+    postgres: RuntimePostgresMetricsResponse
+
+
 class SystemSettingsResponse(BaseModel):
     default_manual: str
     session_hours: int
@@ -613,9 +672,7 @@ class CollectionHealthResponse(BaseModel):
 
 class HealthResponse(StatusOkResponse):
     llm_provider: str
-    ollama_url: str
     ollama_model: str
-    school_api_base_url: str
     school_api_model: str
     school_api_fallback_to_ollama: bool
     last_llm_source: str
@@ -625,6 +682,7 @@ class HealthResponse(StatusOkResponse):
 
 class ReadyChecksResponse(BaseModel):
     database: Literal["ok", "not-required"]
+    vector_store: Literal["ok", "not-required"]
 
 
 class ReadyResponse(StatusOkResponse):
@@ -632,7 +690,8 @@ class ReadyResponse(StatusOkResponse):
 
 
 class ReadyUnavailableChecksResponse(BaseModel):
-    database: Literal["unavailable"]
+    database: Literal["ok", "not-required", "unavailable"]
+    vector_store: Literal["ok", "not-required", "unavailable"]
 
 
 class ReadyUnavailableResponse(BaseModel):

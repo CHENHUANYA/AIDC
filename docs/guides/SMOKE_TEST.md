@@ -106,6 +106,22 @@ Role console and login checks:
 python scripts/role_console_smoke.py --base-url http://localhost:8100
 ```
 
+Browser E2E and responsive checks:
+
+```bash
+python scripts/browser_e2e_responsive.py
+```
+
+This runner starts its own FastAPI process on a free loopback port and uses an
+isolated data directory. It does not restart or write to the service on port
+8100. The suite covers login/logout, login throttling, multi-turn Assistant
+history, Dashboard charts and tools, role redirects, CSP console/runtime
+errors, issue/work-order lifecycle flows, answer trace modals, responsive
+layouts, and screenshots. Results are written to:
+
+- `tests_tmp/browser_e2e/browser_e2e_report.json`
+- `tests_tmp/browser_e2e/screenshots/`
+
 ## Notes
 
 - The runner exits non-zero if any test fails.

@@ -40,10 +40,10 @@ function renderResultActions(code, manual) {
   var app = getApp();
   if (!app) return '';
   return '<div class="result-actions" id="resultActions">' +
-    '<button class="result-action-btn purple" onclick="askInChat(' + app.toJsArg(code) + ')">' +
+    '<button class="result-action-btn purple" data-on-click="askInChat" data-action-args="[' + app.toJsArg(code) + ']">' +
       '📨 在 Chat 中提問' +
     '</button>' +
-    '<button class="result-action-btn" onclick="copyAlarmCode(' + app.toJsArg(code) + ')">' +
+    '<button class="result-action-btn" data-on-click="copyAlarmCode" data-action-args="[' + app.toJsArg(code) + ']">' +
       '📋 複製警報碼' +
     '</button>' +
   '</div>';
@@ -376,13 +376,13 @@ function renderHistory() {
     return;
   }
   if (!history.length) {
-    section.style.display = 'none';
+    section.classList.add('u-hidden');
     return;
   }
 
-  section.style.display = 'block';
+  section.classList.remove('u-hidden');
   grid.innerHTML = history.map((item) => `
-    <div class="hist-item" onclick="loadHist(${app.toJsArg(item.code)}, ${app.toJsArg(item.manual)})">
+    <div class="hist-item" data-on-click="loadHist" data-action-args="[${app.toJsArg(item.code)}, ${app.toJsArg(item.manual)}]">
       <span class="hist-code">${app.esc(item.code)}</span>
       <span class="hist-title">${app.esc(item.title)}</span>
       <span class="hist-manual">${app.esc(item.manual.toUpperCase())}</span>

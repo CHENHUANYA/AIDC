@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -49,6 +50,7 @@ from app_context import (
     retrieval_citations,
 )
 from auth import actor_id, get_actor
+from observability import runtime_metrics
 from repositories.rag_answers import RagAnswerRepository
 from storage import ERROR_LOG_PATH, append_jsonl
 
@@ -286,7 +288,9 @@ async def stream_chat_events(
     created_by: str,
     tokenizer_version: str,
     start_ts: float,
+    retrieval_ms: float,
 ) -> AsyncIterator[str]:
+    model_started = time.monotonic()
     parts: list[str] = []
     first_event = True
     provider = "unavailable"
@@ -317,6 +321,16 @@ async def stream_chat_events(
             provider = request_llm_source.get()
             yield make_sse_chunk(content, rag=rag_metadata, response_id=response_id)
             first_event = False
+    except asyncio.CancelledError:
+        runtime_metrics.record_rag(
+            retrieval_ms=retrieval_ms,
+            model_ms=max((time.monotonic() - model_started) * 1000, 0.0),
+            total_ms=max((time.time() - start_ts) * 1000, 0.0),
+            provider=request_llm_source.get(),
+            outcome="interrupted",
+            streaming=True,
+        )
+        raise
     except Exception as exc:
         record_chat_error(collection_name, user_query, docs, exc)
         if parts and request_llm_source.get() in {"ollama", "school"}:
@@ -353,11 +367,21 @@ async def stream_chat_events(
         tokenizer_version=tokenizer_version,
         answer_state=answer_state,
     )
+    total_ms = max((time.time() - start_ts) * 1000, 0.0)
+    runtime_metrics.record_rag(
+        retrieval_ms=retrieval_ms,
+        model_ms=max((time.monotonic() - model_started) * 1000, 0.0),
+        total_ms=total_ms,
+        provider=provider,
+        outcome=answer_state,
+        streaming=True,
+    )
     yield make_sse_chunk("", finish=True, response_id=response_id)
     yield "data: [DONE]\n\n"
 
 
 async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None = None):
+    request_started = time.monotonic()
     actor = actor or {}
     engine = get_existing_engine(collection_name)
     user_query = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
@@ -379,6 +403,14 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
             tokenizer_version=getattr(engine, "tokenizer_version", "none"),
             answer_state="unavailable",
         )
+        runtime_metrics.record_rag(
+            retrieval_ms=0,
+            model_ms=0,
+            total_ms=(time.monotonic() - request_started) * 1000,
+            provider="unavailable",
+            outcome="unavailable",
+            streaming=req.stream,
+        )
         if req.stream:
             async def s():
                 yield make_sse_chunk(msg, rag=rag_metadata, response_id=response_id)
@@ -388,7 +420,9 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
         return make_openai_response(msg, rag=rag_metadata, response_id=response_id)
 
     start_ts = time.time()
+    retrieval_started = time.monotonic()
     augmented, docs = build_augmented_messages(req.messages, engine)
+    retrieval_ms = (time.monotonic() - retrieval_started) * 1000
     rag_metadata = build_rag_metadata(collection_name, user_query, docs)
     response_id = new_answer_id()
     temperature = req.temperature if req.temperature is not None else 0.1
@@ -407,10 +441,12 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
                 created_by=actor_id(actor),
                 tokenizer_version=getattr(engine, "tokenizer_version", "legacy-whitespace-v0"),
                 start_ts=start_ts,
+                retrieval_ms=retrieval_ms,
             ),
             media_type="text/event-stream",
             headers=SSE_HEADERS,
         )
+    model_started = time.monotonic()
     try:
         content = await call_llm(
             messages=augmented,
@@ -430,6 +466,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
         record_chat_error(collection_name, user_query, docs, exc)
 
     elapsed_ms = int((time.time() - start_ts) * 1000)
+    answer_state = classify_answer_state(provider)
     log_query(collection_name, user_query, source="api", elapsed_ms=elapsed_ms)
 
     model = SCHOOL_API_MODEL if provider == "school" else OLLAMA_MODEL if provider == "ollama" else ""
@@ -444,7 +481,15 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
         elapsed_ms=elapsed_ms,
         created_by=actor_id(actor),
         tokenizer_version=getattr(engine, "tokenizer_version", "legacy-whitespace-v0"),
-        answer_state=classify_answer_state(provider),
+        answer_state=answer_state,
+    )
+    runtime_metrics.record_rag(
+        retrieval_ms=retrieval_ms,
+        model_ms=(time.monotonic() - model_started) * 1000,
+        total_ms=(time.monotonic() - request_started) * 1000,
+        provider=provider,
+        outcome=answer_state,
+        streaming=False,
     )
 
     return make_openai_response(content, rag=rag_metadata, response_id=response_id)

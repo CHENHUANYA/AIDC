@@ -23,6 +23,9 @@ def _looks_like_missing_collection(exc: Exception) -> bool:
 
 
 class BaseVectorStore:
+    def ping(self) -> None:
+        raise NotImplementedError
+
     def add(self, collection: str, texts: List[str], embeddings: List[list], metadatas: List[dict], ids: List[str]):
         raise NotImplementedError
 
@@ -58,6 +61,9 @@ class ChromaStore(BaseVectorStore):
     def __init__(self):
         import chromadb
         self.client = chromadb.PersistentClient(path=os.getenv("DB_PATH", "./alarm_db"))
+
+    def ping(self) -> None:
+        self.client.heartbeat()
 
     def ensure_collection(self, collection: str):
         try:
@@ -130,6 +136,9 @@ class QdrantStore(BaseVectorStore):
         else:
             self.client = QdrantClient(host=host, port=port, api_key=api_key, https=True)
         self.qm = qm
+
+    def ping(self) -> None:
+        self.client.get_collections()
 
     def ensure_collection(self, collection: str):
         size = env_int("QDRANT_VECTOR_SIZE", 1024, minimum=1)

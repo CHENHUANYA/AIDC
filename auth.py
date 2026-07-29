@@ -2,10 +2,14 @@ import hashlib
 import json
 import os
 import secrets
+import threading
+import time
+from collections import deque
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Cookie, Depends, Header, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -23,7 +27,14 @@ from api_schemas import (
     UserUpdatedResponse,
     UsersResponse,
 )
-from repositories.postgres_auth import ConcurrentUserUpdateError, PostgresSessionRepository, PostgresUserRepository
+from config_values import env_int
+from observability import runtime_metrics
+from repositories.postgres_auth import (
+    ConcurrentUserUpdateError,
+    PostgresLoginThrottleRepository,
+    PostgresSessionRepository,
+    PostgresUserRepository,
+)
 from repositories.runtime import postgres_store_enabled
 from secret_values import secret_value
 
@@ -77,9 +88,21 @@ FULL_ACCESS_ROLES = {"supervisor", "admin"}
 VERIFY_ROLES = {"operator", "supervisor"}
 SUPERVISOR_VISIBLE_ROLES = {"maintenance", "supervisor"}
 SESSION_TOKEN_PREFIX_LENGTH = 10
+SESSION_COOKIE_NAME = "alarm_rag_session"
+LOGIN_FAILURE_LIMIT = env_int("LOGIN_FAILURE_LIMIT", 5, minimum=1, maximum=100)
+LOGIN_FAILURE_WINDOW_SECONDS = env_int("LOGIN_FAILURE_WINDOW_SECONDS", 300, minimum=1, maximum=86_400)
+LOGIN_LOCKOUT_SECONDS = env_int("LOGIN_LOCKOUT_SECONDS", 300, minimum=1, maximum=86_400)
+LOGIN_RATE_MAX_KEYS = env_int("LOGIN_RATE_MAX_KEYS", 10_000, minimum=100, maximum=1_000_000)
+LOGIN_RATE_PRUNE_INTERVAL_SECONDS = 60
 router = APIRouter()
 postgres_users = PostgresUserRepository()
 postgres_sessions = PostgresSessionRepository()
+postgres_login_throttles = PostgresLoginThrottleRepository()
+_login_failures: dict[str, deque[float]] = {}
+_login_lockouts: dict[str, float] = {}
+_login_last_seen: dict[str, float] = {}
+_login_last_pruned_at = 0.0
+_login_rate_lock = threading.Lock()
 
 
 class LoginRequest(BaseModel):
@@ -126,8 +149,11 @@ def bootstrap_user_summaries() -> List[dict]:
     ]
 
 
-def get_actor(authorization: Optional[str] = Header(default=None, alias="Authorization")) -> dict:
-    actor = actor_from_token(authorization)
+def get_actor(
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    session_cookie: Optional[str] = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+) -> dict:
+    actor = actor_from_credentials(authorization, session_cookie)
     if actor:
         return actor
     return {"user_id": "", "name": "Unauthenticated", "role": "", "line_scope": [], "team": ""}
@@ -276,6 +302,152 @@ def authentication_error(message: str) -> JSONResponse:
         content=api_error(message),
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def login_rate_limit_error(retry_after: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content=api_error("Too many login attempts; try again later"),
+        headers={"Retry-After": str(max(retry_after, 1))},
+    )
+
+
+def _login_rate_key(username: str) -> str:
+    return username.strip().casefold() or "<empty>"
+
+
+def _discard_login_rate_key(key: str) -> None:
+    _login_failures.pop(key, None)
+    _login_lockouts.pop(key, None)
+    _login_last_seen.pop(key, None)
+
+
+def _prune_login_rate_state(current: float, *, incoming_key: str | None = None) -> None:
+    global _login_last_pruned_at
+
+    known_keys = set(_login_failures) | set(_login_lockouts)
+    should_prune = (
+        current - _login_last_pruned_at >= LOGIN_RATE_PRUNE_INTERVAL_SECONDS
+        or (incoming_key not in known_keys and len(known_keys) >= LOGIN_RATE_MAX_KEYS)
+    )
+    if not should_prune:
+        return
+
+    cutoff = current - LOGIN_FAILURE_WINDOW_SECONDS
+    for key, failures in list(_login_failures.items()):
+        while failures and failures[0] <= cutoff:
+            failures.popleft()
+        if not failures:
+            _login_failures.pop(key, None)
+    for key, locked_until in list(_login_lockouts.items()):
+        if locked_until <= current:
+            _login_lockouts.pop(key, None)
+
+    active_keys = set(_login_failures) | set(_login_lockouts)
+    for key in list(_login_last_seen):
+        if key not in active_keys:
+            _login_last_seen.pop(key, None)
+
+    if incoming_key not in active_keys and len(active_keys) >= LOGIN_RATE_MAX_KEYS:
+        oldest_key = min(active_keys, key=lambda key: _login_last_seen.get(key, 0.0))
+        _discard_login_rate_key(oldest_key)
+    _login_last_pruned_at = current
+
+
+def login_retry_after(username: str, *, now: float | None = None) -> int:
+    key = _login_rate_key(username)
+    if postgres_store_enabled() and now is None:
+        return postgres_login_throttles.retry_after(key, LOGIN_FAILURE_WINDOW_SECONDS)
+    current = time.monotonic() if now is None else now
+    with _login_rate_lock:
+        _prune_login_rate_state(current)
+        locked_until = _login_lockouts.get(key, 0.0)
+        if locked_until > current:
+            _login_last_seen[key] = current
+            return max(ceil(locked_until - current), 1)
+        _login_lockouts.pop(key, None)
+        failures = _login_failures.get(key)
+        if failures is None:
+            _login_last_seen.pop(key, None)
+            return 0
+        cutoff = current - LOGIN_FAILURE_WINDOW_SECONDS
+        while failures and failures[0] <= cutoff:
+            failures.popleft()
+        if not failures:
+            _discard_login_rate_key(key)
+        else:
+            _login_last_seen[key] = current
+        return 0
+
+
+def record_login_failure(username: str, *, now: float | None = None) -> int:
+    key = _login_rate_key(username)
+    if postgres_store_enabled() and now is None:
+        return postgres_login_throttles.record_failure(
+            key,
+            LOGIN_FAILURE_LIMIT,
+            LOGIN_FAILURE_WINDOW_SECONDS,
+            LOGIN_LOCKOUT_SECONDS,
+        )
+    current = time.monotonic() if now is None else now
+    with _login_rate_lock:
+        _prune_login_rate_state(current, incoming_key=key)
+        failures = _login_failures.setdefault(key, deque())
+        _login_last_seen[key] = current
+        cutoff = current - LOGIN_FAILURE_WINDOW_SECONDS
+        while failures and failures[0] <= cutoff:
+            failures.popleft()
+        failures.append(current)
+        if len(failures) < LOGIN_FAILURE_LIMIT:
+            return 0
+        locked_until = current + LOGIN_LOCKOUT_SECONDS
+        _login_lockouts[key] = locked_until
+        failures.clear()
+        return LOGIN_LOCKOUT_SECONDS
+
+
+def clear_login_failures(username: str) -> None:
+    key = _login_rate_key(username)
+    if postgres_store_enabled():
+        postgres_login_throttles.clear(key)
+        return
+    with _login_rate_lock:
+        _discard_login_rate_key(key)
+
+
+def session_cookie_secure(request: Request) -> bool:
+    configured = os.getenv("SESSION_COOKIE_SECURE", "auto").strip().lower()
+    if configured in {"1", "true", "yes", "on"}:
+        return True
+    if configured in {"0", "false", "no", "off"}:
+        return False
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    return request.url.scheme == "https" or forwarded_proto == "https"
+
+
+def set_session_cookie(response: Response, request: Request, token: str, expires_at: datetime) -> None:
+    max_age = max(int((expires_at - datetime.now(timezone.utc)).total_seconds()), 1)
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=max_age,
+        expires=expires_at,
+        path="/",
+        secure=session_cookie_secure(request),
+        httponly=True,
+        samesite="strict",
+    )
+    response.headers["Cache-Control"] = "no-store"
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="strict",
+    )
+    response.headers["Cache-Control"] = "no-store"
 
 
 def concurrency_error() -> dict:
@@ -488,26 +660,52 @@ async def api_revoke_session(token_prefix: str, actor: dict = Depends(get_actor)
 @router.post(
     "/auth/login",
     response_model=LoginSuccessResponse,
-    responses={401: {"model": ApiErrorResponse, "description": "Invalid credentials"}},
+    responses={
+        401: {"model": ApiErrorResponse, "description": "Invalid credentials"},
+        429: {"model": ApiErrorResponse, "description": "Too many login attempts"},
+    },
 )
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request, response: Response):
+    retry_after = login_retry_after(req.username)
+    if retry_after:
+        runtime_metrics.record_auth("throttled")
+        return login_rate_limit_error(retry_after)
+
     users = load_users()
     user = users.get(req.username.strip())
     if not user or not user.get("active", True):
+        retry_after = record_login_failure(req.username)
+        if retry_after:
+            runtime_metrics.record_auth("throttled")
+            return login_rate_limit_error(retry_after)
+        runtime_metrics.record_auth("failure")
         return authentication_error("Invalid username or password")
     if not verify_password(req.password, str(user.get("password_hash") or "")):
+        retry_after = record_login_failure(req.username)
+        if retry_after:
+            runtime_metrics.record_auth("throttled")
+            return login_rate_limit_error(retry_after)
+        runtime_metrics.record_auth("failure")
         return authentication_error("Invalid username or password")
 
+    clear_login_failures(req.username)
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     created_at = now.isoformat()
-    expires_at = (now + timedelta(hours=session_hours())).isoformat()
+    expires_at_value = now + timedelta(hours=session_hours())
+    expires_at = expires_at_value.isoformat()
     sessions = prune_expired_sessions(load_sessions())
-    sessions[token] = {"user_id": user["user_id"], "created_at": created_at, "expires_at": expires_at}
+    sessions[session_token_digest(token)] = {
+        "user_id": user["user_id"],
+        "created_at": created_at,
+        "expires_at": expires_at,
+    }
     if postgres_store_enabled():
         postgres_sessions.create(token, user["user_id"], created_at, expires_at)
     else:
         save_sessions(sessions)
+    set_session_cookie(response, request, token, expires_at_value)
+    runtime_metrics.record_auth("success")
     return {"status": "ok", "token": token, "expires_at": expires_at, "user": public_user(user)}
 
 
@@ -526,16 +724,24 @@ async def login_config():
     response_model=CurrentUserSuccessResponse,
     responses={401: {"model": ApiErrorResponse, "description": "Missing, expired, or invalid session"}},
 )
-async def me(authorization: Optional[str] = Header(default=None, alias="Authorization")):
-    current = actor_from_token(authorization)
+async def me(actor: dict = Depends(get_actor)):
+    current = actor
     if not current:
+        return authentication_error("Not authenticated")
+    if not actor_id(current):
         return authentication_error("Not authenticated")
     return {"status": "ok", "user": current}
 
 
 @router.post("/auth/logout", response_model=StatusOkResponse)
-async def logout(req: LogoutRequest, authorization: Optional[str] = Header(default=None, alias="Authorization")):
-    token = req.token or bearer_token(authorization)
+async def logout(
+    response: Response,
+    req: Optional[LogoutRequest] = None,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    session_cookie: Optional[str] = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+):
+    token = (req.token if req else None) or bearer_token(authorization) or (session_cookie or "")
+    clear_session_cookie(response)
     if not token:
         return {"status": "ok"}
     if postgres_store_enabled():
@@ -543,6 +749,7 @@ async def logout(req: LogoutRequest, authorization: Optional[str] = Header(defau
         return {"status": "ok"}
     sessions = load_sessions()
     sessions.pop(token, None)
+    sessions.pop(session_token_digest(token), None)
     save_sessions(sessions)
     return {"status": "ok"}
 
@@ -621,7 +828,20 @@ def load_sessions() -> Dict[str, dict]:
             payload = json.load(file)
     except (json.JSONDecodeError, OSError):
         return {}
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    normalized: Dict[str, dict] = {}
+    migrated = False
+    for stored_token, session in payload.items():
+        key = str(stored_token)
+        if len(key) != 64 or any(character not in "0123456789abcdef" for character in key.lower()):
+            key = session_token_digest(key)
+            migrated = True
+        if isinstance(session, dict):
+            normalized[key] = session
+    if migrated:
+        save_sessions(normalized)
+    return normalized
 
 
 def save_sessions(sessions: Dict[str, dict]) -> None:
@@ -715,8 +935,22 @@ def bearer_token(authorization: Optional[str]) -> str:
     return value[7:].strip()
 
 
+def session_token_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def actor_from_credentials(authorization: Optional[str], session_cookie: Optional[str]) -> Optional[dict]:
+    header_token = bearer_token(authorization)
+    token = header_token or (session_cookie or "").strip()
+    return actor_from_session_token(token)
+
+
 def actor_from_token(authorization: Optional[str]) -> Optional[dict]:
     token = bearer_token(authorization)
+    return actor_from_session_token(token)
+
+
+def actor_from_session_token(token: str) -> Optional[dict]:
     if not token:
         return None
     if postgres_store_enabled():
@@ -726,17 +960,19 @@ def actor_from_token(authorization: Optional[str]) -> Optional[dict]:
         actor = resolve_user(str(session.get("user_id") or ""))
         return actor if actor.get("user_id") and actor.get("active", True) else None
     sessions = load_sessions()
-    session = sessions.get(token)
+    session_key = session_token_digest(token)
+    stored_key = session_key if session_key in sessions else token
+    session = sessions.get(stored_key)
     if not session:
         return None
     expires_at = _parse_session_expiry(session)
     if expires_at < datetime.now(timezone.utc):
-        sessions.pop(token, None)
+        sessions.pop(stored_key, None)
         save_sessions(sessions)
         return None
     actor = resolve_user(str(session.get("user_id") or ""))
     if not actor.get("user_id") or not actor.get("active", True):
-        sessions.pop(token, None)
+        sessions.pop(stored_key, None)
         save_sessions(sessions)
         return None
     return actor

@@ -107,6 +107,52 @@ docker compose up -d
 
 Run smoke checks after each update.
 
+### Staging release gate
+
+Deploy to staging before changing production traffic. Use the same Compose
+overlays, secrets mechanism, and PostgreSQL major version intended for
+production.
+
+```bash
+docker compose --env-file .env.staging --env-file .env.postgresql \
+  -f docker-compose.yml \
+  -f docker-compose.postgresql.yml \
+  -f docker-compose.postgresql-secrets.yml config --quiet
+docker compose --env-file .env.staging --env-file .env.postgresql \
+  -f docker-compose.yml \
+  -f docker-compose.postgresql.yml \
+  -f docker-compose.postgresql-secrets.yml build alarm_rag
+docker compose --env-file .env.staging --env-file .env.postgresql \
+  -f docker-compose.yml \
+  -f docker-compose.postgresql.yml \
+  -f docker-compose.postgresql-secrets.yml up -d
+```
+
+After the application container reports healthy, verify the migration and run
+the release gates against the staging URL:
+
+```bash
+docker compose --env-file .env.staging --env-file .env.postgresql \
+  -f docker-compose.yml \
+  -f docker-compose.postgresql.yml \
+  -f docker-compose.postgresql-secrets.yml exec -T alarm_rag alembic current
+python scripts/production_boundary_check.py \
+  --base-url https://staging.example.com \
+  --origin https://staging.example.com \
+  --require-hsts
+python scripts/smoke_test.py \
+  --base-url https://staging.example.com \
+  --manual 808d \
+  --alarm-code 3000
+```
+
+Confirm that `alembic current` reports the expected head revision, including
+the login-throttle migration, before smoke testing multiple replicas. Do not
+run the isolated `browser_e2e_responsive.py` against staging: it intentionally
+starts a disposable local service. Use the boundary and API smoke runners for
+the deployed environment, then perform the approved browser check against the
+staging URL.
+
 For a full standalone acceptance pass:
 
 ```bash

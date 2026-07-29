@@ -32,6 +32,7 @@ reports, and change-review checklists for the Alarm RAG local PostgreSQL stack.
 | Concurrency risk matrix | [POSTGRESQL_CONCURRENCY_RISK_MATRIX.md](POSTGRESQL_CONCURRENCY_RISK_MATRIX.md) |
 | Production network boundary | [PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md](PRODUCTION_NETWORK_BOUNDARY_RUNBOOK.md) |
 | PostgreSQL monitoring checklist | [POSTGRESQL_MONITORING_CHECKLIST.md](POSTGRESQL_MONITORING_CHECKLIST.md) |
+| Database maintenance | [POSTGRESQL_MAINTENANCE_RUNBOOK.md](POSTGRESQL_MAINTENANCE_RUNBOOK.md) |
 | Encrypted backup | [POSTGRESQL_ENCRYPTED_BACKUP_RUNBOOK.md](POSTGRESQL_ENCRYPTED_BACKUP_RUNBOOK.md) |
 | PITR | [POSTGRESQL_PITR_RUNBOOK.md](POSTGRESQL_PITR_RUNBOOK.md) |
 | HA rehearsal | [POSTGRESQL_HA_RUNBOOK.md](POSTGRESQL_HA_RUNBOOK.md) |
@@ -59,6 +60,12 @@ reports, and change-review checklists for the Alarm RAG local PostgreSQL stack.
 
 - Backup, verification, and restore drill:
   `python -m scripts.postgresql_backup backup|verify|restore-drill`
+- Revision, table, and required-index validation:
+  `python -m scripts.database_check`
+- Bounded login throttle cleanup:
+  `python -m scripts.postgresql_maintenance cleanup-login-throttles [--apply]`
+- Isolated Alembic upgrade/downgrade rehearsal:
+  `python -m scripts.postgresql_migration_drill [--apply]`
 - Secret staging:
   `python scripts/stage_postgresql_secret.py`
 - Secret rotation rehearsal:

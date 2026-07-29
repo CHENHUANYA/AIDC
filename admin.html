@@ -6,6 +6,7 @@
   <title>Alarm RAG 管理後台</title>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/admin.css">
+  <link rel="stylesheet" href="/static/css/utilities.css?v=csp-1">
   <link rel="stylesheet" href="/static/css/answer-trace.css">
 </head>
 <body data-page="admin">
@@ -37,9 +38,9 @@
   <div class="container role-console">
 
     <div class="admin-toolbar">
-      <div class="wo-actions" style="margin:0">
-        <button class="wo-btn alt" type="button" onclick="exportAdminAuditCsv()" style="margin:0;padding:7px 14px;font-size:12px">匯出稽核</button>
-        <button class="wo-btn alt" type="button" onclick="loadAdminConsole()" style="margin:0;padding:7px 14px;font-size:12px">🔄 重新整理</button>
+      <div class="wo-actions u-m-0">
+        <button class="wo-btn alt u-btn-compact" type="button" data-on-click="exportAdminAuditCsv">匯出稽核</button>
+        <button class="wo-btn alt u-btn-compact" type="button" data-on-click="loadAdminConsole">🔄 重新整理</button>
       </div>
     </div>
 
@@ -69,7 +70,7 @@
             <option value="inactive">停用</option>
           </select>
           <input class="wo-input" id="adminUserSearch" placeholder="搜尋使用者、姓名、團隊、scope">
-          <button class="wo-btn alt" type="button" onclick="exportAdminUsersCsv()" style="margin:0">匯出</button>
+          <button class="wo-btn alt u-m-0" type="button" data-on-click="exportAdminUsersCsv">匯出</button>
         </div>
         <div class="admin-control-row">
           <input class="wo-input" id="adminNewUserId" placeholder="user_id">
@@ -83,7 +84,7 @@
           </select>
           <input class="wo-input" id="adminNewUserScope" placeholder="scope：LINE-A, LINE-B, *">
           <input class="wo-input" id="adminNewUserPassword" type="password" placeholder="密碼（預設 demo1234）">
-          <button class="wo-btn" type="button" onclick="createAdminUser()" style="margin:0">建立使用者</button>
+          <button class="wo-btn u-m-0" type="button" data-on-click="createAdminUser">建立使用者</button>
         </div>
         <div id="adminUserList" class="role-list"><div class="wo-empty">載入中...</div></div>
       </div>
@@ -92,12 +93,12 @@
     <section class="admin-section-panel" data-admin-section="data">
       <div class="admin-card accent-green">
         <div class="section-label">📥 資料匯入</div>
-        <div class="admin-upload-zone" onclick="document.getElementById('adminExcelFile').click()">
+        <div class="admin-upload-zone" data-file-trigger="adminExcelFile">
           <div class="uz-icon xlsx">XLSX</div>
           <div class="uz-title">上傳 Excel 工單資料</div>
           <div class="uz-sub">匯入後會更新 Work Order 與 BI 統計</div>
         </div>
-        <input type="file" id="adminExcelFile" accept=".xlsx,.xls" style="display:none" onchange="uploadAdminExcel(this)">
+        <input class="u-hidden" type="file" id="adminExcelFile" accept=".xlsx,.xls" data-on-change="uploadAdminExcel" data-action-target>
         <div class="excel-result" id="adminExcelResult"></div>
         <div id="adminImportLog" class="role-list role-list-spaced"></div>
       </div>
@@ -107,7 +108,7 @@
       <div class="admin-card accent-blue">
         <div class="section-label">Session 監控</div>
         <div class="admin-control-row">
-          <button class="wo-btn alt" type="button" onclick="loadAdminSessions()" style="margin:0">重新整理 Session</button>
+          <button class="wo-btn alt u-m-0" type="button" data-on-click="loadAdminSessions">重新整理 Session</button>
         </div>
         <div id="adminSessionList" class="role-list"><div class="wo-empty">載入中...</div></div>
       </div>
@@ -123,34 +124,34 @@
             <option value="840dsl">840D sl</option>
             <option value="furnace_b85t">FURNACE B85T</option>
           </select>
-          <button class="wo-btn alt" type="button" onclick="loadAdminKb()">🔄 重整 KB</button>
-          <button class="wo-btn alt" type="button" onclick="rebuildAdminKb()">⚡ 重建索引</button>
-          <button class="wo-btn alt" type="button" onclick="rebuildAllAdminKb()">全部重建</button>
-          <button class="wo-btn alt" type="button" onclick="exportAdminKbCsv()">匯出文件</button>
+          <button class="wo-btn alt" type="button" data-on-click="loadAdminKb">🔄 重整 KB</button>
+          <button class="wo-btn alt" type="button" data-on-click="rebuildAdminKb">⚡ 重建索引</button>
+          <button class="wo-btn alt" type="button" data-on-click="rebuildAllAdminKb">全部重建</button>
+          <button class="wo-btn alt" type="button" data-on-click="exportAdminKbCsv">匯出文件</button>
         </div>
-        <div class="admin-upload-zone" onclick="document.getElementById('adminPdfFile').click()" style="margin-bottom:16px">
+        <div class="admin-upload-zone u-mb-16" data-file-trigger="adminPdfFile">
           <div class="uz-icon pdf">PDF</div>
           <div class="uz-title">上傳 PDF 手冊或維修文件至目前知識庫</div>
           <div class="uz-sub">支援技術手冊、維修 SOP、故障排除文件</div>
         </div>
-        <input type="file" id="adminPdfFile" accept=".pdf" style="display:none" onchange="uploadAdminPdf(this)">
+        <input class="u-hidden" type="file" id="adminPdfFile" accept=".pdf" data-on-change="uploadAdminPdf" data-action-target>
         <div id="adminKbHealth" class="admin-health-grid">
           <div class="wo-empty">載入中...</div>
         </div>
         <div class="role-kpi-grid compact" id="adminKbSummary"></div>
         <div class="admin-ingest-form">
-          <div class="section-label" style="margin-bottom:10px">✏️ 文字寫入</div>
+          <div class="section-label u-mb-10">✏️ 文字寫入</div>
           <div class="ingest-inputs">
             <input type="text" id="adminIngestCode" placeholder="Alarm code（選填）">
             <input type="text" id="adminIngestTitle" placeholder="標題（選填）">
           </div>
           <textarea id="adminIngestText" placeholder="新增 SOP、公告或已驗證維修紀錄"></textarea>
-          <div class="wo-actions" style="margin-top:0">
-            <button class="wo-btn" id="adminIngestBtn" type="button" onclick="ingestAdminText()">📝 寫入知識庫</button>
+          <div class="wo-actions u-mt-0">
+            <button class="wo-btn" id="adminIngestBtn" type="button" data-on-click="ingestAdminText">📝 寫入知識庫</button>
           </div>
         </div>
         <div class="upload-result" id="adminKbResult"></div>
-        <div id="adminKbDocs" class="kb-doc-list" style="margin-top:16px"><div class="log-empty">載入中...</div></div>
+        <div id="adminKbDocs" class="kb-doc-list u-mt-16"><div class="log-empty">載入中...</div></div>
       </div>
     </section>
 
@@ -165,7 +166,7 @@
             <option value="all">全部</option>
           </select>
           <input class="wo-input" id="adminQualitySearch" placeholder="搜尋 alarm code、manual、工單、缺漏說明">
-          <button class="wo-btn alt" type="button" onclick="exportAdminQualityCsv()" style="margin:0">匯出品質清單</button>
+          <button class="wo-btn alt u-m-0" type="button" data-on-click="exportAdminQualityCsv">匯出品質清單</button>
         </div>
         <div class="role-kpi-grid compact" id="adminQualitySummary">
           <div class="wo-empty">載入中...</div>
@@ -208,8 +209,8 @@
           </label>
         </div>
         <div class="wo-actions">
-          <button class="wo-btn" type="button" onclick="saveAdminSettings()">💾 儲存設定</button>
-          <button class="wo-btn alt" type="button" onclick="loadAdminSettings()">🔄 重新載入</button>
+          <button class="wo-btn" type="button" data-on-click="saveAdminSettings">💾 儲存設定</button>
+          <button class="wo-btn alt" type="button" data-on-click="loadAdminSettings">🔄 重新載入</button>
         </div>
         <div class="upload-result" id="adminSettingsResult"></div>
       </div>

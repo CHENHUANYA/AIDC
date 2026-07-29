@@ -31,7 +31,7 @@ function showBanner(code, manual, title, preview = '') {
   app.$('bannerCode').textContent = `ALARM ${code}`;
   if (app.$('bannerPreview')) {
     app.$('bannerPreview').textContent = preview || '';
-    app.$('bannerPreview').style.display = preview ? 'block' : 'none';
+    app.$('bannerPreview').classList.toggle('u-hidden', !preview);
   }
   app.$('bannerTitle').textContent = title || '機台警報觸發';
   app.$('alarmBanner').classList.add('show');
@@ -45,7 +45,7 @@ function dismissBanner() {
   }
   if (app.$('bannerPreview')) {
     app.$('bannerPreview').textContent = '';
-    app.$('bannerPreview').style.display = 'none';
+    app.$('bannerPreview').classList.add('u-hidden');
   }
   app.$('alarmBanner').classList.remove('show');
 }
@@ -235,7 +235,7 @@ async function pollAlarms() {
       showBanner(alarm.alarm_code, alarm.manual, `${alarm.machine_id || 'Machine'} · ${alarm.source || 'API'}`);
       if (alarm.rag_preview && app.$('bannerPreview')) {
         app.$('bannerPreview').textContent = alarm.rag_preview;
-        app.$('bannerPreview').style.display = 'block';
+        app.$('bannerPreview').classList.remove('u-hidden');
       }
       return normalizeAlarmEntry(alarm);
     });
@@ -272,15 +272,13 @@ async function loadBI() {
   if (accuracy === null) {
     accEl.textContent = '--';
     accEl.className = 'bi-big';
-    barEl.style.width = '0%';
-    barEl.className = 'accuracy-bar-fill';
+    barEl.className = 'accuracy-bar-fill u-pct-0';
     app.$('biAccuracySub').textContent = '尚無回饋資料';
   } else {
     const stateClass = accuracy >= 80 ? 'grn' : accuracy >= 60 ? 'org' : 'red';
     accEl.textContent = `${accuracy}%`;
     accEl.className = `bi-big ${stateClass}`;
-    barEl.style.width = `${accuracy}%`;
-    barEl.className = `accuracy-bar-fill${accuracy >= 80 ? '' : accuracy >= 60 ? ' mid' : ' low'}`;
+    barEl.className = `accuracy-bar-fill ${app.sizeClass('pct', accuracy, 100)}${accuracy >= 80 ? '' : accuracy >= 60 ? ' mid' : ' low'}`;
     app.$('biAccuracySub').textContent = `共 ${total} 筆回饋`;
   }
 
@@ -300,8 +298,8 @@ async function loadBI() {
   app.$('biSparkline').innerHTML = app.appendBars(recentTimings, maxTiming, (item, maxValue) => {
     const elapsed = item.elapsed_ms || 0;
     const height = Math.max(4, Math.round((elapsed / maxValue) * 34));
-    const color = elapsed < 2000 ? 'var(--grn)' : elapsed > 6000 ? 'var(--red)' : 'var(--acc)';
-    return `<div class="spark-bar" style="height:${height}px;background:${color};flex:1" title="${elapsed}ms"></div>`;
+    const colorClass = elapsed < 2000 ? 'u-spark-fast' : elapsed > 6000 ? 'u-spark-slow' : 'u-spark-normal';
+    return `<div class="spark-bar u-flex-1 ${app.sizeClass('h', height)} ${colorClass}" title="${elapsed}ms"></div>`;
   });
 
   const todayCount = alarmStats?.today ?? 0;
@@ -322,7 +320,7 @@ async function loadBI() {
     const height = Math.max(3, Math.round((item.cnt / maxValue) * 55));
     const isToday = item.label === `${new Date().getMonth() + 1}/${new Date().getDate()}`;
     return `<div class="bar-col">
-      <div class="bar-fill ${isToday ? 'org' : ''}" style="height:${height}px;width:100%"></div>
+      <div class="bar-fill u-full-width ${app.sizeClass('h', height)} ${isToday ? 'org' : ''}"></div>
       <div class="bar-lbl">${item.label}</div>
     </div>`;
   });
@@ -338,10 +336,10 @@ async function loadBI() {
     const count = alarmStats?.by_manual?.[manual.key] || 0;
     const pct = Math.round((count / totalLogs) * 100);
     return `<tr>
-      <td><strong style="font-family:var(--mono)">${manual.label}</strong></td>
+      <td><strong class="u-mono">${manual.label}</strong></td>
       <td>${count}</td>
       <td>${pct}%</td>
-      <td><span class="mini-bar" style="width:${Math.max(4, pct * 1.2)}px"></span></td>
+      <td><span class="mini-bar ${app.sizeClass('w', Math.max(4, pct * 1.2))}"></span></td>
     </tr>`;
   }).join('');
 
@@ -361,9 +359,9 @@ async function loadBI() {
   app.$('biFeedbackChart').innerHTML = app.appendBars(dailyFeedback, maxFeedback, (item, maxValue) => {
     const goodHeight = Math.max(0, Math.round((item.good / maxValue) * 70));
     const badHeight = Math.max(0, Math.round((item.bad / maxValue) * 70));
-    return `<div class="bar-col" style="gap:1px">
-      <div class="bar-fill grn" style="height:${goodHeight}px;width:100%"></div>
-      <div class="bar-fill red" style="height:${badHeight}px;width:100%;border-radius:0 0 4px 4px"></div>
+    return `<div class="bar-col u-gap-1">
+      <div class="bar-fill grn u-full-width ${app.sizeClass('h', goodHeight)}"></div>
+      <div class="bar-fill red u-full-width u-rounded-bottom ${app.sizeClass('h', badHeight)}"></div>
       <div class="bar-lbl">${item.label}</div>
     </div>`;
   });
@@ -411,7 +409,7 @@ async function loadBI() {
               ? ''
               : 'red';
       return `<div class="bar-col">
-        <div class="bar-fill ${colorClass}" style="height:${height}px;width:100%" title="${item.count}"></div>
+        <div class="bar-fill u-full-width ${app.sizeClass('h', height)} ${colorClass}" title="${item.count}"></div>
         <div class="bar-lbl">${item.label}</div>
       </div>`;
     });
@@ -422,13 +420,13 @@ async function loadBI() {
       ? topMachines.map((item) => {
         const pct = Math.round((item.count / totalMachineOrders) * 100);
         return `<tr>
-          <td><strong style="font-family:var(--mono)">${app.esc(item.machine_id)}</strong></td>
+          <td><strong class="u-mono">${app.esc(item.machine_id)}</strong></td>
           <td>${item.count}</td>
           <td>${pct}%</td>
-          <td><span class="mini-bar" style="width:${Math.max(4, pct * 1.2)}px"></span></td>
+          <td><span class="mini-bar ${app.sizeClass('w', Math.max(4, pct * 1.2))}"></span></td>
         </tr>`;
       }).join('')
-      : '<tr><td colspan="4" style="text-align:center;color:var(--dim);padding:20px">尚無工單資料</td></tr>';
+      : '<tr><td class="u-table-placeholder" colspan="4">尚無工單資料</td></tr>';
   }
 }
 

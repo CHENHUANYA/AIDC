@@ -156,7 +156,7 @@ async function lookupOperatorSuggestion() {
   app.setState('operatorLastQuestion', question);
   app.setState('operatorLastSuggestion', '');
   app.setState('operatorLastAnswerId', '');
-  app.$('operatorSuggestionFeedback').style.display = 'none';
+  app.$('operatorSuggestionFeedback').classList.add('u-hidden');
 
   try {
     const alarmCode = app.$('issueAlarmCode').value.trim();
@@ -166,7 +166,7 @@ async function lookupOperatorSuggestion() {
         const suggestion = [`Alarm ${lookup.code}`, lookup.title || '', lookup.text || ''].filter(Boolean).join('\n\n');
         app.setState('operatorLastSuggestion', suggestion);
         setOperatorSuggestion(renderLookupSuggestion(lookup), false, true);
-        app.$('operatorSuggestionFeedback').style.display = 'flex';
+        app.$('operatorSuggestionFeedback').classList.remove('u-hidden');
         return;
       }
       if (!app.$('issueDescription').value.trim()) {
@@ -190,7 +190,7 @@ async function lookupOperatorSuggestion() {
     app.setState('operatorLastSuggestion', suggestion);
     app.setState('operatorLastAnswerId', data?.rag?.answer_id || data?.id || '');
     setOperatorSuggestion(renderChatSuggestion(suggestion), false, true);
-    app.$('operatorSuggestionFeedback').style.display = 'flex';
+    app.$('operatorSuggestionFeedback').classList.remove('u-hidden');
   } catch (error) {
     setOperatorSuggestion(app.formatError(error, '查詢建議失敗'), true);
   }
@@ -498,16 +498,16 @@ function renderOperatorIssueFields(issue, isEditing) {
 function renderOperatorIssueActions(issue, isEditing) {
   const app = operatorApp();
   if (isEditing) {
-    return `<button class="wo-btn" onclick="saveOperatorIssueEdit(${app.toJsArg(issue.issue_id)})">儲存修改</button>
-      <button class="wo-btn alt" onclick="openOperatorIssueModal(${app.toJsArg(issue.issue_id)})">取消</button>`;
+    return `<button class="wo-btn" data-on-click="saveOperatorIssueEdit" data-action-args="[${app.toJsArg(issue.issue_id)}]">儲存修改</button>
+      <button class="wo-btn alt" data-on-click="openOperatorIssueModal" data-action-args="[${app.toJsArg(issue.issue_id)}]">取消</button>`;
   }
 
   return [
-    canEditOperatorCore(issue) ? `<button class="wo-btn" onclick="openOperatorIssueModal(${app.toJsArg(issue.issue_id)}, 'edit')">編輯</button>` : '',
-    canEscalateOperatorIssue(issue) ? `<button class="wo-btn alt" onclick="escalateOperatorIssue(${app.toJsArg(issue.issue_id)})">通知維修</button>` : '',
-    canAddOperatorNote(issue) ? `<button class="wo-btn alt" onclick="addOperatorIssueNote(${app.toJsArg(issue.issue_id)})">新增補充</button>` : '',
-    issue.status === 'completed' ? `<button class="wo-btn" onclick="verifyOperatorIssue(${app.toJsArg(issue.issue_id)})">確認已解決</button>` : '',
-    issue.status === 'completed' ? `<button class="wo-btn alt" onclick="reopenOperatorIssue(${app.toJsArg(issue.issue_id)})">重新開啟</button>` : '',
+    canEditOperatorCore(issue) ? `<button class="wo-btn" data-on-click="openOperatorIssueModal" data-action-args="[${app.toJsArg(issue.issue_id)}, &quot;edit&quot;]">編輯</button>` : '',
+    canEscalateOperatorIssue(issue) ? `<button class="wo-btn alt" data-on-click="escalateOperatorIssue" data-action-args="[${app.toJsArg(issue.issue_id)}]">通知維修</button>` : '',
+    canAddOperatorNote(issue) ? `<button class="wo-btn alt" data-on-click="addOperatorIssueNote" data-action-args="[${app.toJsArg(issue.issue_id)}]">新增補充</button>` : '',
+    issue.status === 'completed' ? `<button class="wo-btn" data-on-click="verifyOperatorIssue" data-action-args="[${app.toJsArg(issue.issue_id)}]">確認已解決</button>` : '',
+    issue.status === 'completed' ? `<button class="wo-btn alt" data-on-click="reopenOperatorIssue" data-action-args="[${app.toJsArg(issue.issue_id)}]">重新開啟</button>` : '',
   ].filter(Boolean).join('');
 }
 
@@ -657,7 +657,7 @@ function renderOperatorResolvedItem(item) {
       <span class="wo-badge">機台 ${app.esc(item.machine)}</span>
       <span class="wo-badge">產線 ${app.esc(item.line)}</span>
       ${item.workOrderId ? `<span class="wo-badge">工單 #${app.esc(item.workOrderId)}</span>` : ''}
-      <button class="wo-btn alt" onclick="openOperatorIssueModal(${app.toJsArg(item.id)})">查看</button>
+      <button class="wo-btn alt" data-on-click="openOperatorIssueModal" data-action-args="[${app.toJsArg(item.id)}]">查看</button>
     </div>
   </div>`;
 }

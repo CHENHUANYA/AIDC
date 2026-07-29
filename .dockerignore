@@ -1,3 +1,7 @@
+.git/
+.github/
+docs/
+tests/
 hf_cache/
 alarm_db/
 qdrant_data/

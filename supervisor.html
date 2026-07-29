@@ -6,6 +6,7 @@
   <title>Alarm RAG 主管工作台</title>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/supervisor.css">
+  <link rel="stylesheet" href="/static/css/utilities.css?v=csp-1">
   <link rel="stylesheet" href="/static/css/answer-trace.css">
 </head>
 <body data-page="supervisor">
@@ -24,7 +25,7 @@
 </header>
 
 <div class="tabs" aria-label="主管工作台分頁">
-  <button class="tab-btn" type="button" onclick="window.location.href='/dashboard'"><span class="tab-icon">BI</span> 儀表板</button>
+  <button class="tab-btn" type="button" data-nav="/dashboard"><span class="tab-icon">BI</span> 儀表板</button>
   <button class="tab-btn active" type="button" data-supervisor-section-target="overview" aria-current="page"><span class="tab-icon">📊</span> 總覽</button>
   <button class="tab-btn" type="button" data-supervisor-section-target="verification"><span class="tab-icon">⏳</span> 待驗證</button>
   <button class="tab-btn" type="button" data-supervisor-section-target="responsibility"><span class="tab-icon">👤</span> 責任追蹤</button>
@@ -36,9 +37,9 @@
   <div class="container role-console">
 
     <div class="sv-toolbar">
-      <div class="wo-actions" style="margin:0">
-        <button class="wo-btn alt" type="button" onclick="exportSupervisorCsv()" style="margin:0;padding:7px 14px;font-size:12px">匯出 CSV</button>
-        <button class="wo-btn alt" type="button" onclick="loadSupervisorConsole()" style="margin:0;padding:7px 14px;font-size:12px">🔄 重新整理</button>
+      <div class="wo-actions u-m-0">
+        <button class="wo-btn alt u-btn-compact" type="button" data-on-click="exportSupervisorCsv">匯出 CSV</button>
+        <button class="wo-btn alt u-btn-compact" type="button" data-on-click="loadSupervisorConsole">🔄 重新整理</button>
       </div>
     </div>
 
@@ -113,7 +114,7 @@
             <option value="low">低</option>
           </select>
           <input class="wo-input" id="svTextFilter" placeholder="搜尋機台、工單、負責人">
-          <label class="settings-toggle" style="padding:9px 12px">
+          <label class="settings-toggle u-toggle-pad">
             <input id="svRiskOnly" type="checkbox">
             <span>只看風險</span>
           </label>
@@ -133,7 +134,7 @@
             <option value="assigned">已指派</option>
             <option value="in_progress">處理中</option>
           </select>
-          <button class="wo-btn alt" type="button" onclick="bulkUpdateSupervisorOrders()">批次更新目前清單</button>
+          <button class="wo-btn alt" type="button" data-on-click="bulkUpdateSupervisorOrders">批次更新目前清單</button>
         </div>
         <div id="svResponsibilityList" class="role-list">
           <div class="wo-empty">載入中...</div>

@@ -90,7 +90,7 @@ body {
 /*  HEADER                                 */
 /* ═══════════════════════════════════════ */
 header {
-  background: rgba(255,255,255,0.82);
+  background: rgba(247,245,242,0.82);
   backdrop-filter: var(--glass);
   -webkit-backdrop-filter: var(--glass);
   border-bottom: 1px solid var(--border);
@@ -182,7 +182,7 @@ body[data-page="admin"] .logo-icon {
 /*  TABS                                   */
 /* ═══════════════════════════════════════ */
 .tabs {
-  background: rgba(255,255,255,0.7);
+  background: rgba(247,245,242,0.7);
   backdrop-filter: saturate(120%) blur(8px);
   -webkit-backdrop-filter: saturate(120%) blur(8px);
   border-bottom: 1px solid var(--border);

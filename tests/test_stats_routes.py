@@ -13,13 +13,26 @@ class StatsRouteRobustnessTests(unittest.IsolatedAsyncioTestCase):
             {"query": None, "collection": ""},
         ]
 
-        with patch.object(stats_routes, "query_log", logs):
+        with patch.object(stats_routes, "read_jsonl", return_value=logs):
             result = await stats_routes.query_stats(actor=actor)
 
         self.assertEqual(3, result["total"])
         self.assertEqual([("3000", 1)], result["top_codes"])
         self.assertEqual(1, result["by_collection"]["808d"])
         self.assertEqual(2, result["by_collection"]["unknown"])
+
+    async def test_query_stats_total_uses_full_persisted_history(self):
+        actor = {"user_id": "supervisor01", "role": "supervisor", "line_scope": ["*"], "team": "supervisor"}
+        persisted_logs = [
+            {"query": f"alarm {index}", "collection": "808d", "elapsed_ms": 1, "date": "2026-07-28"}
+            for index in range(501)
+        ]
+
+        with patch.object(stats_routes, "read_jsonl", return_value=persisted_logs):
+            result = await stats_routes.query_stats(actor=actor)
+
+        self.assertEqual(501, result["total"])
+        self.assertEqual(20, len(result["recent"]))
 
     async def test_supervisor_can_clear_alarm_stats(self):
         actor = {"user_id": "supervisor01", "role": "supervisor", "line_scope": ["*"], "team": "supervisor"}

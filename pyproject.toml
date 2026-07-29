@@ -41,6 +41,8 @@ files = [
     "repositories/postgres_workflow.py",
     "routes/",
     "scripts/postgresql_backup.py",
+    "scripts/postgresql_maintenance.py",
+    "scripts/postgresql_migration_drill.py",
     "scripts/postgresql_health.py",
     "scripts/postgresql_secret_overlay_check.py",
     "scripts/preflight_check.py",

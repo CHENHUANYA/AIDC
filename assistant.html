@@ -6,6 +6,7 @@
   <title>SINUMERIK 智慧助理</title>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/assistant.css?v=quality-2">
+  <link rel="stylesheet" href="/static/css/utilities.css?v=csp-1">
 </head>
 <body data-page="assistant">
 
@@ -14,13 +15,13 @@
     <div class="banner-pulse"></div>
     <div>
       <div class="banner-code" id="bannerCode">ALARM 3000</div>
-      <div class="banner-preview" id="bannerPreview" style="display:none"></div>
+      <div class="banner-preview u-hidden" id="bannerPreview"></div>
       <div class="banner-title" id="bannerTitle">機台警報觸發</div>
     </div>
   </div>
   <div class="banner-btns">
-    <button class="banner-lookup" onclick="bannerLookup()">🔍 立即查詢解決方案</button>
-    <button class="banner-dismiss" onclick="dismissBanner()">✕ 關閉</button>
+    <button class="banner-lookup" data-on-click="bannerLookup">🔍 立即查詢解決方案</button>
+    <button class="banner-dismiss" data-on-click="dismissBanner">✕ 關閉</button>
   </div>
 </div>
 
@@ -39,32 +40,32 @@
 </header>
 
 <div class="tabs">
-  <button class="tab-btn" onclick="window.location.href=AlarmCoreApi.roleHome(AlarmCoreApi.readAuthUser()?.role)">我的工作台</button>
-  <button class="tab-btn" onclick="window.location.href='/dashboard'">儀表板</button>
-  <button class="tab-btn active" onclick="window.location.href='/assistant'">智慧助理</button>
-  <button class="tab-btn" onclick="window.location.href='/operations'">維運管理</button>
+  <button class="tab-btn" data-role-home>我的工作台</button>
+  <button class="tab-btn" data-nav="/dashboard">儀表板</button>
+  <button class="tab-btn active" data-nav="/assistant">智慧助理</button>
+  <button class="tab-btn" data-nav="/operations">維運管理</button>
 </div>
 
 <div class="tabs">
-  <button class="tab-btn active" data-tab="lookup" onclick="switchTab('lookup', this)">查詢</button>
-  <button class="tab-btn" data-tab="chat" onclick="switchTab('chat', this)">對話</button>
-  <button class="tab-btn" data-tab="reference" onclick="switchTab('reference', this)">參考資料</button>
+  <button class="tab-btn active" data-tab="lookup" data-on-click="switchTab" data-action-args='["lookup"]' data-action-target>查詢</button>
+  <button class="tab-btn" data-tab="chat" data-on-click="switchTab" data-action-args='["chat"]' data-action-target>對話</button>
+  <button class="tab-btn" data-tab="reference" data-on-click="switchTab" data-action-args='["reference"]' data-action-target>參考資料</button>
 </div>
 
 <div class="panel active" id="panel-lookup">
   <div class="container">
     <div class="section-label">📚 選擇手冊</div>
     <div class="manual-grid">
-      <button class="manual-btn active" data-name="808d" onclick="selectManual(this)">
+      <button class="manual-btn active" data-name="808d" data-on-click="selectManual" data-action-target>
         <div class="mb-code">808D</div>
       </button>
-      <button class="manual-btn" data-name="840d" onclick="selectManual(this)">
+      <button class="manual-btn" data-name="840d" data-on-click="selectManual" data-action-target>
         <div class="mb-code">840D / 840Di / 810D</div>
       </button>
-      <button class="manual-btn" data-name="840dsl" onclick="selectManual(this)">
+      <button class="manual-btn" data-name="840dsl" data-on-click="selectManual" data-action-target>
         <div class="mb-code">840D sl</div>
       </button>
-      <button class="manual-btn" data-name="furnace_b85t" onclick="selectManual(this)">
+      <button class="manual-btn" data-name="furnace_b85t" data-on-click="selectManual" data-action-target>
         <div class="mb-code">FURNACE B85T</div>
       </button>
     </div>
@@ -72,7 +73,7 @@
     <div class="section-label">輸入警報代碼或關鍵字</div>
     <div class="search-wrap">
       <input class="search-box" id="searchInput" type="text" placeholder="例如：3000 或 emergency stop" autocomplete="off" spellcheck="false">
-      <button class="search-btn" id="searchBtn" onclick="doSearch()">🔍 查詢</button>
+      <button class="search-btn" id="searchBtn" data-on-click="doSearch">🔍 查詢</button>
     </div>
 
     <div class="timer-row" id="timerRow">
@@ -106,14 +107,14 @@
       <div class="feedback-row">
         <span class="feedback-label">此解決方案是否有幫助？</span>
         <div class="feedback-btns">
-          <button class="fb-btn good" onclick="sendFeedback('good')">👍 有幫助</button>
-          <button class="fb-btn bad" onclick="sendFeedback('bad')">👎 需改善</button>
+          <button class="fb-btn good" data-on-click="sendFeedback" data-action-args='["good"]'>👍 有幫助</button>
+          <button class="fb-btn bad" data-on-click="sendFeedback" data-action-args='["bad"]'>👎 需改善</button>
         </div>
         <span class="fb-thanks" id="fbThanks">感謝您的回饋！</span>
       </div>
     </div>
 
-    <div class="history-section" id="histSection" style="display:none">
+    <div class="history-section u-hidden" id="histSection">
       <div class="section-label">查詢紀錄</div>
       <div id="histGrid"></div>
     </div>
@@ -121,20 +122,20 @@
 </div>
 
 <div class="panel" id="panel-chat">
-  <div class="container" style="max-width:820px">
+  <div class="container u-max-w-820">
     <div class="chat-manual-bar">
-      <button class="chat-manual-btn active" data-col="808d" onclick="selectChatManual(this)">808D</button>
-      <button class="chat-manual-btn" data-col="840d" onclick="selectChatManual(this)">840D / 840Di / 810D</button>
-      <button class="chat-manual-btn" data-col="840dsl" onclick="selectChatManual(this)">840D sl</button>
-      <button class="chat-manual-btn" data-col="furnace_b85t" onclick="selectChatManual(this)">FURNACE B85T</button>
+      <button class="chat-manual-btn active" data-col="808d" data-on-click="selectChatManual" data-action-target>808D</button>
+      <button class="chat-manual-btn" data-col="840d" data-on-click="selectChatManual" data-action-target>840D / 840Di / 810D</button>
+      <button class="chat-manual-btn" data-col="840dsl" data-on-click="selectChatManual" data-action-target>840D sl</button>
+      <button class="chat-manual-btn" data-col="furnace_b85t" data-on-click="selectChatManual" data-action-target>FURNACE B85T</button>
       <span class="chat-mode-badge">⚡ RAG + LLM</span>
     </div>
 
     <div class="chat-suggestions" id="chatSuggestions">
       <span class="ex-label">快速範例</span>
-      <button class="chat-sug" onclick="chatSuggest('機台警報出現時該怎麼辦？')">機台警報出現時該怎麼辦？</button>
-      <button class="chat-sug" onclick="chatSuggest('請解釋警報代碼 3000')">請解釋警報代碼 3000</button>
-      <button class="chat-sug" onclick="chatSuggest('如何進行機台故障排除？')">如何進行機台故障排除？</button>
+      <button class="chat-sug" data-on-click="chatSuggest" data-action-args='["機台警報出現時該怎麼辦？"]'>機台警報出現時該怎麼辦？</button>
+      <button class="chat-sug" data-on-click="chatSuggest" data-action-args='["請解釋警報代碼 3000"]'>請解釋警報代碼 3000</button>
+      <button class="chat-sug" data-on-click="chatSuggest" data-action-args='["如何進行機台故障排除？"]'>如何進行機台故障排除？</button>
     </div>
 
     <div class="chat-layout">
@@ -145,9 +146,9 @@
         </div>
       </div>
       <div class="chat-input-area">
-        <textarea class="chat-input" id="chatInput" rows="1" placeholder="輸入問題，例如：請解釋警報 5000 的原因及解決方案" oninput="autoResize(this)" onkeydown="chatKeydown(event)"></textarea>
-        <button class="chat-clear-btn" onclick="clearChat()" title="清除對話">🗑️</button>
-        <button class="chat-send-btn" id="chatSendBtn" onclick="sendChat()" title="傳送">➤</button>
+        <textarea class="chat-input" id="chatInput" rows="1" placeholder="輸入問題，例如：請解釋警報 5000 的原因及解決方案" data-on-input="autoResize" data-input-target data-on-keydown="chatKeydown" data-keydown-event></textarea>
+        <button class="chat-clear-btn" data-on-click="clearChat" title="清除對話">🗑️</button>
+        <button class="chat-send-btn" id="chatSendBtn" data-on-click="sendChat" title="傳送">➤</button>
       </div>
     </div>
   </div>
@@ -157,9 +158,9 @@
   <div class="container">
     <div class="section-label">📋 System Reactions 系統反應對照表</div>
     <div class="card">
-      <input class="ref-search" id="refSearch" type="text" placeholder="搜尋反應名稱或說明..." oninput="filterRefTable()">
+      <input class="ref-search" id="refSearch" type="text" placeholder="搜尋反應名稱或說明..." data-on-input="filterRefTable">
       <div class="ref-count" id="refCount">共 16 筆</div>
-      <div style="overflow-x:auto">
+      <div class="u-overflow-x">
         <table class="ref-table" id="refTable">
           <thead>
             <tr>
@@ -192,7 +193,7 @@
       </div>
     </div>
 
-    <div class="card" style="margin-top:20px">
+    <div class="card u-mt-20">
       <div class="section-label">🏷️ 警報號碼範圍速查</div>
       <table class="ref-table">
         <thead><tr><th>範圍</th><th>類型</th><th>涵蓋手冊</th><th>說明</th></tr></thead>
@@ -207,20 +208,20 @@
       </table>
     </div>
 
-    <div class="card" style="margin-top:20px">
+    <div class="card u-mt-20">
       <div class="section-label">⚡ SINAMICS Fault vs Alarm 區別</div>
       <table class="ref-table">
         <thead><tr><th>類型</th><th>圖示</th><th>影響</th><th>復歸方式</th><th>說明</th></tr></thead>
         <tbody>
           <tr>
-            <td><span style="font-weight:700;color:var(--red)">Fault (F)</span></td>
+            <td><span class="u-text-strong u-text-danger">Fault (F)</span></td>
             <td>⛔</td>
             <td>驅動器立即停機</td>
             <td>排除原因後按 Drive RESET</td>
             <td>必須排除才能恢復運作，如過溫、過電流、編碼器斷線</td>
           </tr>
           <tr>
-            <td><span style="font-weight:700;color:var(--org)">Alarm (A)</span></td>
+            <td><span class="u-text-strong u-text-warning">Alarm (A)</span></td>
             <td>⚠️</td>
             <td>不影響運行或僅降速</td>
             <td>自動消失或 Delete 鍵</td>
@@ -239,82 +240,5 @@
 <script src="/static/js/modules/chat.js"></script>
 <script src="/static/js/modules/lookup.js"></script>
 <script src="/static/js/pages/assistant.js"></script>
-
-
-<script>
-window.filterRefTable = function filterRefTableFixed() {
-  const input = document.getElementById('refSearch');
-  const filter = (input?.value || '').toLowerCase();
-  const rows = document.querySelectorAll('#refTable tbody tr');
-  let visible = 0;
-  rows.forEach((row) => {
-    const text = row.textContent.toLowerCase();
-    const show = !filter || text.indexOf(filter) >= 0;
-    row.classList.toggle('ref-hidden', !show);
-    if (show) visible += 1;
-  });
-  const countEl = document.getElementById('refCount');
-  if (countEl) {
-    countEl.textContent = `顯示 ${visible} / ${rows.length} 筆`;
-  }
-};
-
-async function loadPhase2Reference() {
-  const panel = document.getElementById('panel-reference');
-  if (!panel) return;
-  const collection = (window.AlarmApp?.getState?.('lookupManual') || '808d');
-  let host = document.getElementById('phase2ReferenceHost');
-  if (!host) {
-    host = document.createElement('div');
-    host.id = 'phase2ReferenceHost';
-    host.className = 'card';
-    host.style.marginTop = '20px';
-    panel.querySelector('.container')?.appendChild(host);
-  }
-  host.innerHTML = '<div class="section-label">參考資料（Phase 2）</div><div class="log-empty">載入中...</div>';
-  try {
-    const [actionsRes, errorsRes] = await Promise.all([
-      fetch(`/v1/${encodeURIComponent(collection)}/reference/action-numbers`),
-      fetch(`/v1/${encodeURIComponent(collection)}/reference/error-codes`),
-    ]);
-    const actions = await actionsRes.json();
-    const errors = await errorsRes.json();
-    const actionRows = (actions.entries || []).map((item) =>
-      `<tr><td class="ref-code">${item.action_number || ''}</td><td>${item.reaction || ''}</td><td>${item.effect || ''}</td><td>${item.recovery || ''}</td></tr>`
-    ).join('');
-    const errorRows = (errors.entries || []).map((item) =>
-      `<tr><td class="ref-code">${item.hex || ''}</td><td>${item.code || ''}</td><td>${item.meaning || ''}</td><td>${item.remedy || ''}</td></tr>`
-    ).join('');
-    host.innerHTML = `
-      <div class="section-label">參考資料（Phase 2）</div>
-      <details open>
-        <summary style="cursor:pointer;font-weight:700;margin-bottom:10px">840D Action Numbers（${(actions.entries || []).length}）</summary>
-        <div style="overflow-x:auto">
-          <table class="ref-table">
-            <thead><tr><th>Action</th><th>Reaction</th><th>影響</th><th>復原方式</th></tr></thead>
-            <tbody>${actionRows || '<tr><td colspan="4">沒有資料</td></tr>'}</tbody>
-          </table>
-        </div>
-      </details>
-      <details style="margin-top:12px">
-        <summary style="cursor:pointer;font-weight:700;margin-bottom:10px">Error Codes（300500，${(errors.entries || []).length}）</summary>
-        <div style="overflow-x:auto">
-          <table class="ref-table">
-            <thead><tr><th>HEX</th><th>Code</th><th>意義</th><th>處置方式</th></tr></thead>
-            <tbody>${errorRows || '<tr><td colspan="4">沒有資料</td></tr>'}</tbody>
-          </table>
-        </div>
-      </details>
-    `;
-  } catch (error) {
-    host.innerHTML = `<div class="section-label">參考資料（Phase 2）</div><div class="log-empty">${String(error.message || error)}</div>`;
-  }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  const refTab = document.querySelector('.tab-btn[data-tab="reference"]');
-  refTab?.addEventListener('click', () => setTimeout(loadPhase2Reference, 50));
-});
-</script>
 </body>
 </html>

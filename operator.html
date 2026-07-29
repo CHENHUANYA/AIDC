@@ -6,6 +6,7 @@
   <title>產線問題看板</title>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/operator.css?v=quality-2">
+  <link rel="stylesheet" href="/static/css/utilities.css?v=csp-1">
 </head>
 <body data-page="operator">
 
@@ -20,13 +21,13 @@
   <div class="status-pill">
     <div class="status-dot"></div>
     <span id="operatorUserLabel">operator01</span>
-    <button class="auth-logout" onclick="AlarmApp.logout()">登出</button>
+    <button class="auth-logout" data-on-click="AlarmApp.logout">登出</button>
   </div>
 </header>
 
 <div class="tabs">
-  <button class="tab-btn active" data-tab="operator-board" onclick="switchTab('operator-board', this)">問題看板</button>
-  <button class="tab-btn" data-tab="operator-resolved" onclick="switchTab('operator-resolved', this)">已解決日曆</button>
+  <button class="tab-btn active" data-tab="operator-board" data-on-click="switchTab" data-action-args='["operator-board"]' data-action-target>問題看板</button>
+  <button class="tab-btn" data-tab="operator-resolved" data-on-click="switchTab" data-action-args='["operator-resolved"]' data-action-target>已解決日曆</button>
 </div>
 
 <div class="panel active" id="panel-operator-board">
@@ -51,10 +52,10 @@
         <div class="wo-field wo-field-full"><label class="wo-field-label">問題描述 *</label><textarea class="wo-text" id="issueDescription" placeholder="描述看到的異常、機台狀態、正在執行的作業"></textarea></div>
       </div>
       <div class="wo-actions">
-        <button class="wo-btn alt" onclick="lookupOperatorSuggestion()">查詢初步建議</button>
-        <button class="wo-btn" onclick="createOperatorIssue(false)">送出問題</button>
-        <button class="wo-btn alt" onclick="createOperatorIssue(true)">送出並通知維修</button>
-        <button class="wo-btn alt" onclick="loadOperatorIssues()">重新整理</button>
+        <button class="wo-btn alt" data-on-click="lookupOperatorSuggestion">查詢初步建議</button>
+        <button class="wo-btn" data-on-click="createOperatorIssue" data-action-args='[false]'>送出問題</button>
+        <button class="wo-btn alt" data-on-click="createOperatorIssue" data-action-args='[true]'>送出並通知維修</button>
+        <button class="wo-btn alt" data-on-click="loadOperatorIssues">重新整理</button>
       </div>
       <div class="upload-result" id="issueResult"></div>
     </div>
@@ -62,9 +63,9 @@
     <div class="card">
       <div class="section-label">LLM 初步建議</div>
       <div id="operatorSuggestionBox" class="wo-empty">輸入警報代碼或問題描述後，可先查詢初步處理建議。</div>
-      <div class="wo-actions" id="operatorSuggestionFeedback" style="display:none">
-        <button class="wo-btn alt" onclick="sendOperatorSuggestionFeedback('good')">有幫助</button>
-        <button class="wo-btn alt" onclick="sendOperatorSuggestionFeedback('bad')">沒幫助</button>
+      <div class="wo-actions u-hidden" id="operatorSuggestionFeedback">
+        <button class="wo-btn alt" data-on-click="sendOperatorSuggestionFeedback" data-action-args='["good"]'>有幫助</button>
+        <button class="wo-btn alt" data-on-click="sendOperatorSuggestionFeedback" data-action-args='["bad"]'>沒幫助</button>
       </div>
     </div>
 
@@ -78,9 +79,9 @@
 <div class="panel" id="panel-operator-resolved">
   <div class="container">
     <div class="card">
-      <div class="section-label" style="justify-content:space-between;display:flex;align-items:center">
+      <div class="section-label u-flex-between">
         <span>已解決問題日曆</span>
-        <button class="wo-btn alt" onclick="loadOperatorIssues()">重新整理</button>
+        <button class="wo-btn alt" data-on-click="loadOperatorIssues">重新整理</button>
       </div>
       <div id="operatorResolvedCalendar"></div>
       <div id="operatorResolvedList"></div>
@@ -95,7 +96,7 @@
         <div class="wo-modal-title" id="operatorModalTitle">問題詳細</div>
         <div class="operator-modal-sub" id="operatorModalSub"></div>
       </div>
-      <button class="close-x" onclick="closeOperatorIssueModal()">×</button>
+      <button class="close-x" data-on-click="closeOperatorIssueModal">×</button>
     </div>
     <div id="operatorIssueDetail"></div>
   </div>

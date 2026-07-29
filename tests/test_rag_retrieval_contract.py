@@ -117,6 +117,7 @@ def test_non_streaming_chat_includes_structured_rag_metadata():
         patch.object(chat_lookup_routes, "call_llm", new=AsyncMock(return_value="Check the coolant pump.")),
         patch.object(chat_lookup_routes, "save_rag_answer"),
         patch.object(chat_lookup_routes, "log_query"),
+        patch.object(chat_lookup_routes.runtime_metrics, "record_rag") as record_rag,
     ):
         response = asyncio.run(chat_lookup_routes.handle_chat(request, "808d"))
 
@@ -124,6 +125,9 @@ def test_non_streaming_chat_includes_structured_rag_metadata():
     assert response["rag"]["collection"] == "808d"
     assert response["rag"]["query"] == "coolant pressure"
     assert response["rag"]["citations"][0]["code"] == "340100"
+    assert record_rag.call_args.kwargs["streaming"] is False
+    assert record_rag.call_args.kwargs["retrieval_ms"] >= 0
+    assert record_rag.call_args.kwargs["model_ms"] >= 0
 
 
 def test_streaming_chat_emits_incremental_chunks_and_persists_combined_answer():
@@ -139,6 +143,7 @@ def test_streaming_chat_emits_incremental_chunks_and_persists_combined_answer():
         patch.object(chat_lookup_routes, "stream_ollama", new=stream_parts),
         patch.object(chat_lookup_routes, "save_rag_answer") as save,
         patch.object(chat_lookup_routes, "log_query"),
+        patch.object(chat_lookup_routes.runtime_metrics, "record_rag") as record_rag,
     ):
         response = asyncio.run(chat_lookup_routes.handle_chat(request, "808d", AUTHENTICATED_ACTOR))
 
@@ -163,6 +168,9 @@ def test_streaming_chat_emits_incremental_chunks_and_persists_combined_answer():
     assert saved["answer"].endswith("Check the coolant pump.")
     assert saved["provider"] == "ollama"
     assert saved["answer_id"] == events[0]["id"]
+    assert record_rag.call_args.kwargs["provider"] == "ollama"
+    assert record_rag.call_args.kwargs["outcome"] == "complete"
+    assert record_rag.call_args.kwargs["streaming"] is True
 
 
 def test_interrupted_stream_does_not_persist_partial_answer():
@@ -178,6 +186,7 @@ def test_interrupted_stream_does_not_persist_partial_answer():
         patch.object(chat_lookup_routes, "stream_ollama", new=interrupted_stream),
         patch.object(chat_lookup_routes, "save_rag_answer") as save,
         patch.object(chat_lookup_routes, "log_query"),
+        patch.object(chat_lookup_routes.runtime_metrics, "record_rag") as record_rag,
     ):
         response = asyncio.run(chat_lookup_routes.handle_chat(request, "808d", AUTHENTICATED_ACTOR))
 
@@ -188,3 +197,6 @@ def test_interrupted_stream_does_not_persist_partial_answer():
             asyncio.run(consume())
 
     save.assert_not_called()
+    assert record_rag.call_args.kwargs["provider"] == "ollama"
+    assert record_rag.call_args.kwargs["outcome"] == "interrupted"
+    assert record_rag.call_args.kwargs["streaming"] is True

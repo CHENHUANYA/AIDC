@@ -31,7 +31,9 @@
   }
 
   function saveAuth(token, user) {
-    localStorage.setItem(TOKEN_KEY, token);
+    // Browser sessions authenticate with the HttpOnly cookie set by /auth/login.
+    // Remove any legacy bearer token so scripts cannot read a fresh session secret.
+    localStorage.removeItem(TOKEN_KEY);
     localStorage.setItem(USER_KEY, JSON.stringify(user));
   }
 
@@ -45,7 +47,7 @@
     if (page === 'login') {
       return;
     }
-    if (!readAuthToken()) {
+    if (!readAuthUser()) {
       window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
   }
@@ -72,6 +74,10 @@
   }
 
   function linkPathFromButton(button) {
+    const declarativePath = button.dataset.nav || '';
+    if (declarativePath) {
+      return declarativePath;
+    }
     const onclick = button.getAttribute('onclick') || '';
     const match = onclick.match(/window\.location\.href=['"]([^'"]+)['"]/);
     return match?.[1] || '';
@@ -99,6 +105,10 @@
   async function parseJsonResponse(response) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
+      if (response.status === 401 && data.message === 'Not authenticated') {
+        clearAuth();
+        requireAuth();
+      }
       throw new Error(data.message || `Server error: ${response.status}`);
     }
     if (data?.status === 'error') {
@@ -114,6 +124,7 @@
   async function apiJson(path, options = {}) {
     const response = await fetch(`${DEFAULT_BASE_URL}${path}`, {
       ...options,
+      credentials: 'same-origin',
       headers: authHeaders(options.headers || {}),
     });
     const data = await parseJsonResponse(response);

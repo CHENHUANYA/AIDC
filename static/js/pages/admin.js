@@ -214,11 +214,11 @@ function renderAdminUser(app, user) {
           ${renderAdminRoleOptions(user.role)}
         </select>
         <input class="wo-input" id="adminScope_${safeId}" value="${adminAttr(lineScope)}" placeholder="LINE-A, LINE-B 或 *">
-        <div class="wo-actions" style="margin-top:0">
-          <button class="wo-btn alt" type="button" onclick="resetAdminPassword(${adminJsArg(userId)})">重設密碼</button>
-          <button class="wo-btn alt" type="button" onclick="revokeAdminUserSessions(${adminJsArg(userId)})">撤銷 Session</button>
-          <button class="wo-btn alt" type="button" onclick="saveAdminUser(${adminJsArg(userId)})">儲存</button>
-          <button class="wo-btn ${active ? 'danger' : 'alt'}" type="button" onclick="toggleAdminUser(${adminJsArg(userId)}, ${active ? 'false' : 'true'})">${active ? '停用' : '啟用'}</button>
+        <div class="wo-actions u-mt-0">
+          <button class="wo-btn alt" type="button" data-on-click="resetAdminPassword" data-action-args="[${adminJsArg(userId)}]">重設密碼</button>
+          <button class="wo-btn alt" type="button" data-on-click="revokeAdminUserSessions" data-action-args="[${adminJsArg(userId)}]">撤銷 Session</button>
+          <button class="wo-btn alt" type="button" data-on-click="saveAdminUser" data-action-args="[${adminJsArg(userId)}]">儲存</button>
+          <button class="wo-btn ${active ? 'danger' : 'alt'}" type="button" data-on-click="toggleAdminUser" data-action-args="[${adminJsArg(userId)}, ${active ? 'false' : 'true'}]">${active ? '停用' : '啟用'}</button>
         </div>
       </div>
     </div>
@@ -280,7 +280,7 @@ function renderAdminKbDocument(app, doc) {
   const docId = String(doc.doc_id || '');
   const deleteButton = doc.legacy
     ? ''
-    : `<button class="wo-btn danger" type="button" onclick="deleteAdminKbDocument(${adminJsArg(docId)})">刪除</button>`;
+    : `<button class="wo-btn danger" type="button" data-on-click="deleteAdminKbDocument" data-action-args="[${adminJsArg(docId)}]">刪除</button>`;
   return `<div class="kb-doc-item">
     <div class="kb-doc-main">
       <div class="kb-doc-title">${app.esc(doc.filename || doc.title || docId || 'document')}</div>
@@ -498,7 +498,7 @@ function qualityLabel(value, fallback = '未評估') {
 function renderAdminQualityItem(app, item) {
   const riskClass = item.has_gap ? 'quality-risk' : item.kb_candidate ? 'quality-candidate' : '';
   const answerAction = item.answer_id
-    ? `<button class="wo-btn alt" type="button" onclick="AnswerTrace.open(${adminJsArg(item.answer_id)})">查看原回答</button>`
+    ? `<button class="wo-btn alt" type="button" data-on-click="AnswerTrace.open" data-action-args="[${adminJsArg(item.answer_id)}]">查看原回答</button>`
     : '';
   const titleParts = [
     item.alarm_code ? `Alarm ${item.alarm_code}` : item.type,
@@ -508,13 +508,13 @@ function renderAdminQualityItem(app, item) {
   const detail = item.missing_info || item.expected_fix || item.query || '沒有詳細內容';
   const reviewActions = item.type === 'work_order' &&
     ['pending_review', 'needs_revision', 'validation_failed'].includes(item.kb_review_status)
-    ? `<button class="wo-btn" type="button" onclick="reviewAdminKnowledge(${adminJsArg(item.work_order_id)}, 'approve')">核准寫入</button>
-       <button class="wo-btn alt" type="button" onclick="reviewAdminKnowledge(${adminJsArg(item.work_order_id)}, 'needs_revision')">退回補充</button>
-       <button class="wo-btn danger" type="button" onclick="reviewAdminKnowledge(${adminJsArg(item.work_order_id)}, 'reject')">不採用</button>`
+    ? `<button class="wo-btn" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;approve&quot;]">核准寫入</button>
+       <button class="wo-btn alt" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;needs_revision&quot;]">退回補充</button>
+       <button class="wo-btn danger" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;reject&quot;]">不採用</button>`
     : '';
   const action = reviewActions || (item.work_order_id
-    ? `<button class="wo-btn alt" type="button" onclick="selectAdminSection('data')">查看工單</button>`
-    : `<button class="wo-btn alt" type="button" onclick="selectAdminSection('knowledge')">補知識庫</button>`);
+    ? `<button class="wo-btn alt" type="button" data-on-click="selectAdminSection" data-action-args="[&quot;data&quot;]">查看工單</button>`
+    : `<button class="wo-btn alt" type="button" data-on-click="selectAdminSection" data-action-args="[&quot;knowledge&quot;]">補知識庫</button>`);
   return `<div class="role-row quality-row ${riskClass}">
     <div>
       <div class="wo-code">${app.esc(titleParts.join(' | ') || 'RAG 回饋')}</div>
@@ -727,7 +727,7 @@ function renderAdminSessions(sessions) {
       </div>
     </div>
     <div class="role-row-actions">
-      <button class="wo-btn danger" type="button" onclick="revokeAdminSession(${adminJsArg(session.token_prefix)})">撤銷</button>
+      <button class="wo-btn danger" type="button" data-on-click="revokeAdminSession" data-action-args="[${adminJsArg(session.token_prefix)}]">撤銷</button>
     </div>
   </div>`).join('');
 }

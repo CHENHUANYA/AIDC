@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TABLES = {
     "users",
     "sessions",
+    "login_throttles",
     "alarm_events",
     "issues",
     "issue_notes",

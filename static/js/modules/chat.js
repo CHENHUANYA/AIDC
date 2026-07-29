@@ -24,8 +24,12 @@ function chatSuggest(text) {
 }
 
 function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  const app = getApp();
+  if (!app) {
+    return;
+  }
+  el.classList.remove('u-h-auto');
+  app.applySizeClass(el, 'h', Math.min(el.scrollHeight, 120));
 }
 
 function chatKeydown(event) {
@@ -46,7 +50,7 @@ function clearChat() {
     app.$('chatMessages').innerHTML = app.EMPTY_CHAT_HTML;
   }
   if (app.$('chatSuggestions')) {
-    app.$('chatSuggestions').style.display = 'flex';
+    app.$('chatSuggestions').classList.remove('u-hidden');
   }
 }
 
@@ -88,7 +92,7 @@ function appendMessage(role, content) {
 
   const container = app.$('chatMessages');
   app.$('chatEmpty')?.remove();
-  app.$('chatSuggestions').style.display = 'none';
+  app.$('chatSuggestions').classList.add('u-hidden');
 
   const div = document.createElement('div');
   div.className = `msg ${role}`;
@@ -123,7 +127,7 @@ function appendMessage(role, content) {
     if (canSaveAssistantMessage(content)) {
       const msgIdx = container.querySelectorAll('.msg.assistant').length;
       bubble.innerHTML += `<div class="msg-actions">
-        <button class="msg-act-btn" onclick="saveMsgToKB(this, ${msgIdx})" title="儲存此回覆為維修記錄">💾 儲存到知識庫</button>
+        <button class="msg-act-btn" data-on-click="saveMsgToKB" data-action-args="[${msgIdx}]" data-action-target title="儲存此回覆為維修記錄">💾 儲存到知識庫</button>
       </div>`;
     }
   } else {
@@ -177,7 +181,10 @@ async function sendChat() {
 
   sendBtn.disabled = true;
   input.value = '';
-  input.style.height = 'auto';
+  [...input.classList]
+    .filter((className) => className.startsWith('u-h-'))
+    .forEach((className) => input.classList.remove(className));
+  input.classList.add('u-h-auto');
 
   appendMessage('user', text);
   const requestHistory = [...app.getState('chatHistory'), { role: 'user', content: text }];
@@ -209,7 +216,7 @@ async function sendChat() {
   }
 }
 
-async function saveMsgToKB(btn, msgIdx) {
+async function saveMsgToKB(msgIdx, btn) {
   const app = getApp();
   if (!app) return;
 
@@ -242,7 +249,8 @@ async function saveMsgToKB(btn, msgIdx) {
     });
     btn.className = 'msg-act-btn saved';
     btn.textContent = '✅ 已儲存';
-    btn.onclick = null;
+    btn.removeAttribute('data-on-click');
+    btn.removeAttribute('data-action-args');
   } catch (error) {
     btn.textContent = '❌ 儲存失敗';
     btn.disabled = false;

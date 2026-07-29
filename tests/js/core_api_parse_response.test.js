@@ -37,17 +37,17 @@ function loadCoreApi(fetchImpl = async () => ({ ok: true, json: async () => ({})
   return { api: context.window.AlarmCoreApi, window: context.window, storage };
 }
 
-test('authentication state, role homes, and headers remain consistent', () => {
+test('browser authentication stores only public user state', () => {
   const { api, storage } = loadCoreApi();
 
   api.saveAuth('session-token', { user_id: 'supervisor01', role: 'supervisor' });
-  assert.equal(api.readAuthToken(), 'session-token');
+  assert.equal(api.readAuthToken(), '');
   assert.equal(api.readAuthUser().role, 'supervisor');
   assert.equal(api.roleHome('supervisor'), '/supervisor');
   assert.equal(api.roleHome('unknown'), '/assistant');
   assert.deepEqual(
     { ...api.authHeaders({ Accept: 'application/json' }) },
-    { Accept: 'application/json', Authorization: 'Bearer session-token' },
+    { Accept: 'application/json' },
   );
 
   api.clearAuth();
@@ -66,10 +66,11 @@ test('API error payloads reject and expired authentication redirects to login', 
     { message: 'Permission denied' },
   );
 
-  storage.set(api.TOKEN_KEY, 'token');
+  storage.set(api.USER_KEY, JSON.stringify({ role: 'operator' }));
   await assert.rejects(
     api.parseJsonResponse({
-      ok: true,
+      ok: false,
+      status: 401,
       json: async () => ({ status: 'error', message: 'Not authenticated' }),
     }),
     { message: 'Not authenticated' },
@@ -91,7 +92,7 @@ test('HTTP failures use server messages and a status fallback', async () => {
   );
 });
 
-test('apiJson sends auth headers and resolves against the application origin', async () => {
+test('apiJson uses same-origin cookies and resolves against the application origin', async () => {
   const calls = [];
   const { api } = loadCoreApi(async (url, options) => {
     calls.push({ url, options });
@@ -103,8 +104,19 @@ test('apiJson sends auth headers and resolves against the application origin', a
 
   assert.equal(result.value, 42);
   assert.equal(calls[0].url, 'http://localhost:8100/health');
-  assert.equal(calls[0].options.headers.Authorization, 'Bearer token-123');
+  assert.equal(calls[0].options.headers.Authorization, undefined);
   assert.equal(calls[0].options.headers.Accept, 'application/json');
+  assert.equal(calls[0].options.credentials, 'same-origin');
+});
+
+test('legacy bearer tokens remain supported during migration', () => {
+  const { api, storage } = loadCoreApi();
+  storage.set(api.TOKEN_KEY, 'legacy-token');
+
+  assert.deepEqual(
+    { ...api.authHeaders({ Accept: 'application/json' }) },
+    { Accept: 'application/json', Authorization: 'Bearer legacy-token' },
+  );
 });
 
 test('apiPaged accumulates cursor pages and preserves existing query parameters', async () => {

@@ -8,6 +8,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from starlette.requests import Request
+from starlette.responses import Response
 
 import auth
 from repositories.postgres_auth import ConcurrentUserUpdateError, parse_datetime, same_instant
@@ -157,10 +159,33 @@ def test_login_emits_utc_session_timestamps():
         patch.object(auth, "load_sessions", return_value={}),
         patch.object(auth, "save_sessions"),
     ):
-        result = asyncio.run(auth.login(auth.LoginRequest(username="operator01", password="secret")))
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "scheme": "https",
+                "path": "/auth/login",
+                "raw_path": b"/auth/login",
+                "query_string": b"",
+                "headers": [],
+                "client": ("127.0.0.1", 12345),
+                "server": ("testserver", 443),
+            }
+        )
+        response = Response()
+        result = asyncio.run(
+            auth.login(
+                auth.LoginRequest(username="operator01", password="secret"),
+                request,
+                response,
+            )
+        )
 
     created = datetime.fromisoformat(result["expires_at"])
     assert created.utcoffset() == timedelta(0)
+    assert "HttpOnly" in response.headers["set-cookie"]
+    assert "Secure" in response.headers["set-cookie"]
+    assert "SameSite=strict" in response.headers["set-cookie"]
 
 
 def test_datetime_parser_normalizes_explicit_offset_to_utc():
@@ -188,11 +213,15 @@ def test_readiness_returns_503_when_postgresql_is_unavailable():
     with (
         patch.object(stats_routes, "postgres_store_enabled", return_value=True),
         patch.object(stats_routes, "get_engine", side_effect=RuntimeError("db down")),
+        patch.object(stats_routes, "_vector_store_readiness_status", return_value="not-required"),
     ):
         response = asyncio.run(stats_routes.ready())
 
     assert response.status_code == 503
-    assert json.loads(response.body)["checks"]["database"] == "unavailable"
+    assert json.loads(response.body)["checks"] == {
+        "database": "unavailable",
+        "vector_store": "not-required",
+    }
 
 
 def test_readiness_checks_postgresql_connection():
@@ -203,11 +232,98 @@ def test_readiness_checks_postgresql_connection():
     with (
         patch.object(stats_routes, "postgres_store_enabled", return_value=True),
         patch.object(stats_routes, "get_engine", return_value=engine),
+        patch.object(stats_routes, "_vector_store_readiness_status", return_value="not-required"),
     ):
         response = asyncio.run(stats_routes.ready())
 
-    assert response == {"status": "ok", "checks": {"database": "ok"}}
+    assert response == {
+        "status": "ok",
+        "checks": {
+            "database": "ok",
+            "vector_store": "not-required",
+        },
+    }
     connection.scalar.assert_called_once()
+
+
+def test_readiness_returns_503_when_required_vector_store_is_unavailable():
+    with (
+        patch.object(stats_routes, "postgres_store_enabled", return_value=False),
+        patch.object(stats_routes, "_vector_store_readiness_status", return_value="unavailable"),
+    ):
+        response = asyncio.run(stats_routes.ready())
+
+    assert response.status_code == 503
+    assert json.loads(response.body)["checks"] == {
+        "database": "not-required",
+        "vector_store": "unavailable",
+    }
+
+
+def test_vector_store_readiness_pings_qdrant_only_when_configured():
+    store = MagicMock()
+    with (
+        patch.dict("os.environ", {"VECTOR_STORE": "qdrant"}),
+        patch.object(stats_routes, "get_store", return_value=store),
+    ):
+        assert stats_routes._vector_store_readiness_status() == "ok"
+    store.ping.assert_called_once_with()
+
+    with (
+        patch.dict("os.environ", {"VECTOR_STORE": "chroma"}),
+        patch.object(stats_routes, "get_store", side_effect=AssertionError("must not initialize embedded store")),
+    ):
+        assert stats_routes._vector_store_readiness_status() == "not-required"
+
+
+def test_vector_store_readiness_hides_connection_error_details():
+    store = MagicMock()
+    store.ping.side_effect = RuntimeError("connection refused at secret internal host")
+    with (
+        patch.dict("os.environ", {"VECTOR_STORE": "qdrant"}),
+        patch.object(stats_routes, "get_store", return_value=store),
+    ):
+        assert stats_routes._vector_store_readiness_status() == "unavailable"
+
+
+def test_health_does_not_disclose_upstream_service_urls():
+    with (
+        patch.object(stats_routes, "engines", {}),
+        patch.object(
+            stats_routes,
+            "model_cache_status",
+            return_value={
+                "ready": True,
+                "local_only": True,
+                "hf_home": "/private/cache",
+                "models": [
+                    {
+                        "role": "embedding",
+                        "name": "example/model",
+                        "cache_dir": "/private/cache/model",
+                        "snapshot_path": "/private/cache/model/snapshot",
+                        "available": True,
+                    },
+                ],
+            },
+        ),
+        patch.object(stats_routes, "_last_llm_source", return_value="none"),
+    ):
+        response = asyncio.run(stats_routes.health())
+
+    assert "ollama_url" not in response
+    assert "school_api_base_url" not in response
+    assert response["model_cache"] == {
+        "ready": True,
+        "local_only": True,
+        "models": [
+            {
+                "role": "embedding",
+                "name": "example/model",
+                "available": True,
+            },
+        ],
+    }
 
 
 def test_qdrant_client_receives_required_api_key():

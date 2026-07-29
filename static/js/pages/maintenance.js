@@ -148,12 +148,12 @@ function workOrderCard(order) {
   const app = maintenanceApp();
   const description = order.description ? order.description.slice(0, 90) : '無描述';
   const quickAction = {
-    pending: `<button class="wo-btn alt" onclick="event.stopPropagation(); acceptWorkOrder(${app.toJsArg(order.id)})">接手</button>`,
-    assigned: `<button class="wo-btn alt" onclick="event.stopPropagation(); startWorkOrder(${app.toJsArg(order.id)})">開始</button>`,
-    in_progress: `<button class="wo-btn alt" onclick="event.stopPropagation(); completeWorkOrder(${app.toJsArg(order.id)})">完成</button>`,
+    pending: `<button class="wo-btn alt" data-on-click="acceptWorkOrder" data-action-args="[${app.toJsArg(order.id)}]" data-action-stop>接手</button>`,
+    assigned: `<button class="wo-btn alt" data-on-click="startWorkOrder" data-action-args="[${app.toJsArg(order.id)}]" data-action-stop>開始</button>`,
+    in_progress: `<button class="wo-btn alt" data-on-click="completeWorkOrder" data-action-args="[${app.toJsArg(order.id)}]" data-action-stop>完成</button>`,
   }[order.status] || '';
 
-  return `<div class="wo-card" onclick="openMaintenanceModal(${app.toJsArg(order.id)})">
+  return `<div class="wo-card" data-on-click="openMaintenanceModal" data-action-args="[${app.toJsArg(order.id)}]">
     <div class="wo-code">#${app.esc(order.id)} | ${app.esc(order.alarm_code || 'SYMPTOM')}</div>
     <div class="wo-desc">${app.esc(description)}</div>
     <div class="wo-meta">
@@ -258,8 +258,8 @@ function renderMaintenanceIssues(issues) {
   list.innerHTML = issues.map((issue) => {
     const action = issue.work_order_id
       ? `<span class="wo-badge">工單 #${app.esc(issue.work_order_id)}</span>`
-      : `<button class="wo-btn alt" onclick="createWorkOrderFromIssue(${app.toJsArg(issue.issue_id)})">建立工單</button>`;
-    return `<div class="wo-card" style="cursor:default">
+      : `<button class="wo-btn alt" data-on-click="createWorkOrderFromIssue" data-action-args="[${app.toJsArg(issue.issue_id)}]">建立工單</button>`;
+    return `<div class="wo-card u-cursor-default">
       <div class="wo-code">${app.esc(issue.issue_id)} ${issue.alarm_code ? `| Alarm ${app.esc(issue.alarm_code)}` : ''}</div>
       <div class="wo-desc">${app.esc(issue.description || '')}</div>
       <div class="wo-meta">
@@ -289,11 +289,10 @@ async function loadMaintenanceData() {
   if (!app) return;
 
   try {
-    const [issuesData, ordersData, archiveData, feedbackStats] = await Promise.all([
+    const [issuesData, ordersData, archiveData] = await Promise.all([
       app.apiPaged('/issues/page', 'issues'),
       app.apiPaged('/work-orders/page', 'orders'),
       app.apiJson('/work-orders/archive').catch(() => ({ orders: [], archives: [] })),
-      app.apiJson('/feedback/stats').catch(() => ({ technician_feedback: 0 })),
     ]);
     const issues = issuesData.issues || [];
     const openIssues = issues.filter((issue) => !['completed', 'verified', 'cancelled'].includes(issue.status));
@@ -308,7 +307,10 @@ async function loadMaintenanceData() {
     renderMaintenanceIssues(filterMaintenanceIssues(openIssues));
     renderWorkOrders(filterWorkOrders(orders));
     renderMaintenanceResolvedCalendar();
-    updateMaintenanceStats(openIssues, orders, feedbackStats);
+    const technicianFeedback = orders.filter(
+      (order) => order.llm_correctness || order.llm_coverage,
+    ).length;
+    updateMaintenanceStats(openIssues, orders, { technician_feedback: technicianFeedback });
   } catch (error) {
     const list = app.$('maintenanceIssueList');
     if (list) {
@@ -398,7 +400,7 @@ function renderMaintenanceResolvedItem(item) {
   const app = maintenanceApp();
   const action = item.archiveFile
     ? `<span class="wo-badge">封存 ${app.esc(item.archiveFile)}</span>`
-    : `<button class="wo-btn alt" onclick="openMaintenanceModal(${app.toJsArg(item.id)})">查看</button>`;
+    : `<button class="wo-btn alt" data-on-click="openMaintenanceModal" data-action-args="[${app.toJsArg(item.id)}]">查看</button>`;
   return `<div class="resolved-item">
     <div class="wo-code">${app.esc(item.title)}</div>
     <div class="wo-desc">${app.esc(item.description.slice(0, 140) || '無描述')}</div>
@@ -554,7 +556,7 @@ function openMaintenanceModal(orderId) {
   const reviewBox = app.$('mtKnowledgeReview');
   const reviewStatus = order.kb_review_status || 'not_ready';
   if (reviewBox) {
-    reviewBox.style.display = reviewStatus === 'not_ready' ? 'none' : 'block';
+    reviewBox.classList.toggle('u-hidden', reviewStatus === 'not_ready');
     reviewBox.textContent = `${MAINTENANCE_KB_REVIEW_LABELS[reviewStatus] || reviewStatus}` +
       `${order.kb_review_note ? `：${order.kb_review_note}` : ''}`;
   }

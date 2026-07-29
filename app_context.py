@@ -115,52 +115,52 @@ Be concise and practical."""
 
 
 class Message(BaseModel):
-    role: str
-    content: str
+    role: str = Field(min_length=1, max_length=32)
+    content: str = Field(min_length=1, max_length=20_000)
 
 
 class ChatRequest(BaseModel):
-    model: Optional[str] = OLLAMA_MODEL
-    messages: List[Message]
+    model: Optional[str] = Field(default=OLLAMA_MODEL, max_length=255)
+    messages: List[Message] = Field(min_length=1, max_length=24)
     stream: Optional[bool] = False
-    temperature: Optional[float] = 0.1
-    max_tokens: Optional[int] = 1024
+    temperature: Optional[float] = Field(default=0.1, ge=0, le=2)
+    max_tokens: Optional[int] = Field(default=1024, ge=1, le=8192)
 
 
 class AlarmTrigger(BaseModel):
-    alarm_code: str
-    manual: Optional[str] = "808d"
-    machine_id: Optional[str] = None
-    source: Optional[str] = "API"
+    alarm_code: str = Field(min_length=1, max_length=128)
+    manual: Optional[str] = Field(default="808d", max_length=64)
+    machine_id: Optional[str] = Field(default=None, max_length=255)
+    source: Optional[str] = Field(default="API", max_length=128)
     external_event_id: Optional[str] = Field(default=None, max_length=255)
-    severity: Optional[str] = None
-    description: Optional[str] = None
+    severity: Optional[str] = Field(default=None, max_length=32)
+    description: Optional[str] = Field(default=None, max_length=10_000)
     rag_answer_id: Optional[str] = Field(default="", max_length=255)
 
 
 class FeedbackRequest(BaseModel):
-    query: str
-    collection: str
-    feedback: str
-    alarm_code: Optional[str] = None
-    answer_id: Optional[str] = None
-    issue_id: Optional[str] = None
-    work_order_id: Optional[str] = None
-    user_id: Optional[str] = None
-    role: Optional[str] = None
-    correctness: Optional[str] = None
-    coverage: Optional[str] = None
-    missing_info: Optional[str] = None
-    expected_fix: Optional[str] = None
+    query: str = Field(min_length=1, max_length=20_000)
+    collection: str = Field(min_length=1, max_length=128)
+    feedback: str = Field(min_length=1, max_length=32)
+    alarm_code: Optional[str] = Field(default=None, max_length=128)
+    answer_id: Optional[str] = Field(default=None, max_length=255)
+    issue_id: Optional[str] = Field(default=None, max_length=128)
+    work_order_id: Optional[str] = Field(default=None, max_length=128)
+    user_id: Optional[str] = Field(default=None, max_length=128)
+    role: Optional[str] = Field(default=None, max_length=32)
+    correctness: Optional[str] = Field(default=None, max_length=64)
+    coverage: Optional[str] = Field(default=None, max_length=64)
+    missing_info: Optional[str] = Field(default=None, max_length=20_000)
+    expected_fix: Optional[str] = Field(default=None, max_length=20_000)
     kb_candidate: Optional[bool] = None
 
 
 class IngestTextRequest(BaseModel):
-    text: str
-    code: Optional[str] = ""
-    title: Optional[str] = ""
-    page: Optional[int] = 0
-    source: Optional[str] = "api"
+    text: str = Field(min_length=1, max_length=200_000)
+    code: Optional[str] = Field(default="", max_length=128)
+    title: Optional[str] = Field(default="", max_length=500)
+    page: Optional[int] = Field(default=0, ge=0, le=1_000_000)
+    source: Optional[str] = Field(default="api", max_length=128)
 
 
 engines: Dict[str, AlarmRAGEngine] = {}

@@ -100,6 +100,7 @@ def start_server(port: int, preserve_db: bool) -> subprocess.Popen[str]:
     if not preserve_db:
         shutil.rmtree(db_dir, ignore_errors=True)
     db_dir.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(SCREENSHOT_DIR, ignore_errors=True)
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     if not preserve_db:
         (db_dir / "rag_answers.jsonl").write_text(
@@ -111,6 +112,7 @@ def start_server(port: int, preserve_db: bool) -> subprocess.Popen[str]:
     env.update(
         {
             "ALARM_RAG_ENV": "development",
+            "ALARM_RAG_LOG_LEVEL": "WARNING",
             "ADMIN_INITIAL_PASSWORD": TEST_PASSWORD,
             "DB_PATH": str(db_dir),
             "ALARM_RAG_CORS_ORIGINS": f"http://127.0.0.1:{port},http://localhost:{port}",
@@ -118,6 +120,9 @@ def start_server(port: int, preserve_db: bool) -> subprocess.Popen[str]:
             "VECTOR_STORE": "none",
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
+            "LOGIN_FAILURE_LIMIT": "3",
+            "LOGIN_FAILURE_WINDOW_SECONDS": "300",
+            "LOGIN_LOCKOUT_SECONDS": "30",
         }
     )
     return subprocess.Popen(
@@ -218,6 +223,14 @@ def launch_browser(playwright):
         raise bundled_error
 
 
+def block_external_fonts(context) -> None:
+    context.route(
+        "https://fonts.googleapis.com/**",
+        lambda route: route.fulfill(status=200, content_type="text/css", body=""),
+    )
+    context.route("https://fonts.gstatic.com/**", lambda route: route.abort())
+
+
 def assert_no_browser_errors(report: dict[str, Any], context: str) -> None:
     errors = report["browser_errors"] + report["http_errors"]
     if errors:
@@ -228,8 +241,14 @@ def login(page, base_url: str, username: str, report: dict[str, Any]) -> None:
     page.goto(f"{base_url}/login", wait_until="domcontentloaded")
     page.fill("#loginUsername", username)
     page.fill("#loginPassword", TEST_PASSWORD)
-    page.click("#loginSubmit")
-    page.wait_for_url(f"**{ROLES[username]}", timeout=10000)
+    page.click("#loginSubmit", no_wait_after=True)
+    page.wait_for_function(
+        "(expectedPath) => window.location.pathname === expectedPath",
+        arg=ROLES[username],
+        timeout=15000,
+    )
+    page.evaluate("() => window.stop()")
+    page.goto(f"{base_url}{ROLES[username]}", wait_until="domcontentloaded")
     report["flows"].append({"name": f"login:{username}", "status": "ok", "url": page.url})
 
 
@@ -242,7 +261,6 @@ def create_operator_issue(
     description: str,
     answer_id: str = "",
 ) -> str:
-    existing_ids = set(page.locator("[data-issue-id]").evaluate_all("(nodes) => nodes.map((node) => node.dataset.issueId)"))
     page.evaluate(
         """([answerId, suggestion]) => {
           window.AlarmApp?.setState('operatorLastAnswerId', answerId);
@@ -253,30 +271,70 @@ def create_operator_issue(
     page.fill("#issueMachine", machine)
     page.fill("#issueAlarmCode", alarm)
     page.fill("#issueDescription", description)
-    button = 'button[onclick="createOperatorIssue(true)"]' if create_work_order else 'button[onclick="createOperatorIssue(false)"]'
+    action_args = "[true]" if create_work_order else "[false]"
+    button = f'button[data-on-click="createOperatorIssue"][data-action-args="{action_args}"]'
+    previous_result = page.locator("#issueResult").text_content() or ""
     page.click(button)
     page.wait_for_function(
-        """(knownIds) => [...document.querySelectorAll('[data-issue-id]')]
-          .some((node) => !knownIds.includes(node.dataset.issueId))""",
-        arg=list(existing_ids),
+        """(previous) => {
+          const text = document.querySelector('#issueResult')?.textContent || '';
+          return text !== previous && /已建立問題 ISS-[A-Za-z0-9-]+/.test(text);
+        }""",
+        arg=previous_result,
         timeout=10000,
     )
-    current_ids = page.locator("[data-issue-id]").evaluate_all("(nodes) => nodes.map((node) => node.dataset.issueId)")
-    return next((issue_id for issue_id in current_ids if issue_id not in existing_ids), "")
+    issue_id = page.evaluate(
+        """() => {
+          const text = document.querySelector('#issueResult')?.textContent || '';
+          return text.match(/已建立問題 (ISS-[A-Za-z0-9-]+)/)?.[1] || '';
+        }"""
+    )
+    if not issue_id:
+        raise AssertionError("created issue id was not present in the success result")
+    page.wait_for_selector(f'[data-issue-id="{issue_id}"]', timeout=10000)
+    return str(issue_id)
 
 
-def complete_first_maintenance_order(page) -> None:
-    page.wait_for_selector("#maintenanceWorkBoard .wo-card", timeout=10000)
-    action = page.locator('[onclick^="event.stopPropagation(); acceptWorkOrder"]')
+def linked_work_order_id(page, issue_id: str) -> str:
+    work_order_id = page.evaluate(
+        """(issueId) => {
+          const issues = window.AlarmApp?.getState('operatorIssues') || [];
+          return issues.find((issue) => issue.issue_id === issueId)?.work_order_id || '';
+        }""",
+        issue_id,
+    )
+    if not work_order_id:
+        raise AssertionError(f"linked work order was not found for issue {issue_id}")
+    return str(work_order_id)
+
+
+def complete_maintenance_order(page, order_id: str) -> None:
+    page.wait_for_selector(
+        f'#maintenanceWorkBoard .wo-card[data-action-args*="{order_id}"]',
+        timeout=10000,
+    )
+    action = page.locator(
+        f'[data-on-click="acceptWorkOrder"][data-action-args*="{order_id}"]'
+    )
     if action.count():
         action.first.click()
         page.wait_for_timeout(600)
-    page.locator('[onclick^="event.stopPropagation(); completeWorkOrder"]').first.click()
+    start_action = page.locator(
+        f'[data-on-click="startWorkOrder"][data-action-args*="{order_id}"]'
+    )
+    if start_action.count():
+        start_action.first.click()
+        page.wait_for_timeout(600)
+    complete_action = page.locator(
+        f'[data-on-click="completeWorkOrder"][data-action-args*="{order_id}"]'
+    )
+    complete_action.wait_for(state="visible", timeout=10000)
+    complete_action.click()
     page.wait_for_selector("#maintenanceModal.show", timeout=10000)
     page.fill("#mtEditResolution", "Replaced test spindle sensor and confirmed alarm cleared.")
     page.fill("#mtEditRootCause", "Loose sensor cable")
     page.fill("#mtEditRepairAction", "Reseated connector and verified signal stability")
-    page.click('button[onclick="saveMaintenanceWorkOrder()"]')
+    page.click('button[data-on-click="saveMaintenanceWorkOrder"]')
     page.wait_for_timeout(1200)
 
 
@@ -373,6 +431,7 @@ def scan_responsive(playwright, base_url: str, report: dict[str, Any]) -> None:
         for viewport_name, viewport in VIEWPORTS.items():
             for username, path in pages:
                 context = browser.new_context(viewport=viewport)
+                block_external_fonts(context)
                 page = context.new_page()
                 attach_error_capture(page, report)
                 login(page, base_url, username, report)
@@ -399,9 +458,150 @@ def attach_error_capture(page, report: dict[str, Any]) -> None:
     )
 
 
+def run_core_smoke(playwright, base_url: str, report: dict[str, Any]) -> None:
+    browser = launch_browser(playwright)
+    context = browser.new_context(viewport=VIEWPORTS["desktop"])
+    block_external_fonts(context)
+    page = context.new_page()
+    attach_error_capture(page, report)
+    chat_history_lengths: list[int] = []
+
+    def mock_chat(route) -> None:
+        payload = route.request.post_data_json or {}
+        messages = payload.get("messages") or []
+        chat_history_lengths.append(len(messages))
+        answer_number = len(chat_history_lengths)
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "id": f"browser-smoke-answer-{answer_number}",
+                    "object": "chat.completion",
+                    "choices": [{
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": f"Browser smoke reply {answer_number}",
+                        },
+                        "finish_reason": "stop",
+                    }],
+                    "rag": {"answer_id": f"browser-smoke-answer-{answer_number}"},
+                }
+            ),
+        )
+
+    try:
+        login(page, base_url, "supervisor01", report)
+        dashboard_response = page.goto(f"{base_url}/dashboard", wait_until="domcontentloaded")
+        if dashboard_response is None:
+            raise AssertionError("dashboard navigation did not return a response")
+        csp = dashboard_response.headers.get("content-security-policy", "")
+        required_directives = ("script-src 'self';", "style-src 'self' https://fonts.googleapis.com;")
+        if any(directive not in csp for directive in required_directives):
+            raise AssertionError(f"dashboard CSP is missing a self-only directive: {csp}")
+        if "unsafe-inline" in csp or "sha256-" in csp:
+            raise AssertionError(f"dashboard CSP still allows inline resources: {csp}")
+        page.wait_for_selector("#trendBars .trend-col", timeout=10000)
+        if page.locator("#trendBars .trend-col").count() != 7:
+            raise AssertionError("dashboard weekly trend did not render seven columns")
+        page.click('[data-on-click="toggleTestTools"]')
+        page.wait_for_selector("#toolsBody.show", timeout=5000)
+        scan_page(page, "smoke-dashboard", report)
+        report["security_checks"].append({
+            "name": "dashboard:csp-self-only",
+            "status": "ok",
+            "content_security_policy": csp,
+        })
+
+        page.route("**/v1/808d/chat", mock_chat)
+        page.goto(f"{base_url}/assistant", wait_until="domcontentloaded")
+        page.click('[data-tab="chat"]')
+        page.fill("#chatInput", "請說明警報 3000")
+        page.click("#chatSendBtn")
+        page.wait_for_selector(".msg.assistant:has-text('Browser smoke reply 1')", timeout=10000)
+        page.fill("#chatInput", "請接續上一題提供檢查步驟")
+        page.click("#chatSendBtn")
+        page.wait_for_selector(".msg.assistant:has-text('Browser smoke reply 2')", timeout=10000)
+        if chat_history_lengths != [1, 3]:
+            raise AssertionError(f"assistant did not preserve multi-turn history: {chat_history_lengths}")
+        if page.locator("#chatMessages .msg.user").count() != 2:
+            raise AssertionError("assistant did not render both user questions")
+        scan_page(page, "smoke-assistant-chat", report)
+        report["chat_checks"].append({
+            "name": "assistant:multi-turn-history",
+            "status": "ok",
+            "request_message_counts": chat_history_lengths,
+        })
+
+        login(page, base_url, "operator01", report)
+        page.goto(f"{base_url}/dashboard", wait_until="domcontentloaded")
+        page.wait_for_function(
+            "() => window.location.pathname === '/operator'",
+            timeout=15000,
+        )
+        report["security_checks"].append({
+            "name": "roles:operator-dashboard-denied",
+            "status": "ok",
+            "redirected_to": page.url,
+        })
+        page.click('[data-on-click="AlarmApp.logout"]')
+        page.wait_for_function(
+            "() => window.location.pathname === '/login'",
+            timeout=15000,
+        )
+        if page.evaluate("() => localStorage.getItem('alarmAuthUser')") is not None:
+            raise AssertionError("logout left the browser auth user in localStorage")
+        report["flows"].append({"name": "logout:operator01", "status": "ok", "url": page.url})
+
+        throttle_statuses = []
+        throttle_headers: dict[str, str] = {}
+        for _ in range(3):
+            response = page.request.post(
+                f"{base_url}/auth/login",
+                data={"username": "browser-e2e-throttle", "password": "invalid-password"},
+            )
+            throttle_statuses.append(response.status)
+            throttle_headers = response.headers
+        if throttle_statuses != [401, 401, 429]:
+            raise AssertionError(f"unexpected login throttle statuses: {throttle_statuses}")
+        if not throttle_headers.get("retry-after"):
+            raise AssertionError("login throttle response did not include Retry-After")
+        report["security_checks"].append({
+            "name": "login:throttle",
+            "status": "ok",
+            "statuses": throttle_statuses,
+            "retry_after": throttle_headers["retry-after"],
+        })
+
+        login(page, base_url, "admin01", report)
+        metrics_response = page.request.get(f"{base_url}/metrics/runtime")
+        if metrics_response.status != 200:
+            raise AssertionError(f"runtime metrics endpoint returned {metrics_response.status}")
+        metrics_payload = metrics_response.json()
+        auth_metrics = metrics_payload.get("auth") or {}
+        if auth_metrics.get("login_failures", 0) < 2 or auth_metrics.get("throttle_triggers", 0) < 1:
+            raise AssertionError(f"runtime login metrics are incomplete: {auth_metrics}")
+        if "postgres" not in metrics_payload or "http" not in metrics_payload or "rag" not in metrics_payload:
+            raise AssertionError("runtime metrics payload is missing required sections")
+        report["security_checks"].append({
+            "name": "metrics:admin-runtime-snapshot",
+            "status": "ok",
+            "http_requests": metrics_payload["http"].get("requests", 0),
+            "throttle_triggers": auth_metrics.get("throttle_triggers", 0),
+            "postgres_status": metrics_payload["postgres"].get("status", ""),
+        })
+
+        assert_no_browser_errors(report, "core smoke")
+    finally:
+        context.close()
+        browser.close()
+
+
 def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
     browser = launch_browser(playwright)
     context = browser.new_context(viewport=VIEWPORTS["desktop"])
+    block_external_fonts(context)
     page = context.new_page()
     attach_error_capture(page, report)
     try:
@@ -413,19 +613,20 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
             alarm="5000",
             description="Browser E2E spindle alarm verification",
         )
+        work_order_id = linked_work_order_id(page, issue_id)
         report["flows"].append({"name": "operator:create_issue_with_work_order", "status": "ok", "issue_id": issue_id})
         scan_page(page, "flow-operator-created", report)
 
         login(page, base_url, "maintenance01", report)
-        complete_first_maintenance_order(page)
+        complete_maintenance_order(page, work_order_id)
         report["flows"].append({"name": "maintenance:accept_complete", "status": "ok"})
         scan_page(page, "flow-maintenance-completed", report)
 
         login(page, base_url, "operator01", report)
         page.wait_for_selector("[data-issue-id]", timeout=10000)
-        page.locator("[data-issue-id]").first.click()
+        page.locator(f'[data-issue-id="{issue_id}"]').click()
         page.wait_for_selector("#operatorIssueModal.show", timeout=10000)
-        page.click('[onclick^="verifyOperatorIssue"]')
+        page.click('[data-on-click="verifyOperatorIssue"]')
         page.wait_for_timeout(1000)
         report["flows"].append({"name": "operator:verify_completed_issue", "status": "ok"})
         scan_page(page, "flow-operator-verified", report)
@@ -438,14 +639,15 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
             alarm="5100",
             description="Browser E2E reopen path verification",
         )
+        reopen_work_order_id = linked_work_order_id(page, reopen_issue_id)
         login(page, base_url, "maintenance01", report)
-        complete_first_maintenance_order(page)
+        complete_maintenance_order(page, reopen_work_order_id)
         login(page, base_url, "operator01", report)
         page.wait_for_selector("[data-issue-id]", timeout=10000)
         page.locator(f'[data-issue-id="{reopen_issue_id}"]').click()
         page.wait_for_selector("#operatorIssueModal.show", timeout=10000)
         page.fill("#operatorNoteInput", "Alarm returned during browser E2E validation.")
-        page.click('[onclick^="reopenOperatorIssue"]')
+        page.click('[data-on-click="reopenOperatorIssue"]')
         page.wait_for_timeout(1000)
         report["flows"].append({"name": "operator:reopen_completed_issue", "status": "ok", "issue_id": reopen_issue_id})
         scan_page(page, "flow-operator-reopened", report)
@@ -459,14 +661,16 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
             description="Browser E2E supervisor verification path",
             answer_id=TRACE_ANSWER_ID,
         )
+        supervisor_work_order_id = linked_work_order_id(page, supervisor_issue_id)
         login(page, base_url, "maintenance01", report)
-        complete_first_maintenance_order(page)
+        complete_maintenance_order(page, supervisor_work_order_id)
         login(page, base_url, "supervisor01", report)
         page.goto(f"{base_url}/supervisor", wait_until="domcontentloaded")
         page.click('[data-supervisor-section-target="verification"]')
         page.wait_for_selector("#svVerificationQueue .role-row", timeout=10000)
         trace_button = page.locator(
-            f'#svVerificationQueue button[onclick*="{TRACE_ANSWER_ID}"]'
+            f'#svVerificationQueue button[data-on-click="AnswerTrace.open"]'
+            f'[data-action-args*="{TRACE_ANSWER_ID}"]'
         )
         trace_button.wait_for(state="visible", timeout=10000)
         trace_row = trace_button.locator(
@@ -482,7 +686,7 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
         trace_button.click()
         inspect_answer_trace_modal(page, TRACE_ANSWER_ID)
         close_answer_trace(page, "backdrop")
-        trace_row.locator('[onclick^="verifySupervisorOrder"]').click()
+        trace_row.locator('[data-on-click="verifySupervisorOrder"]').click()
         page.wait_for_timeout(1200)
         report["flows"].append({"name": "supervisor:verify_completed_order", "status": "ok", "issue_id": supervisor_issue_id})
         scan_page(page, "flow-supervisor-verified", report)
@@ -491,7 +695,8 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
         page.on("dialog", lambda dialog: dialog.accept())
         page.click('[data-admin-section-target="quality"]')
         admin_trace_button = page.locator(
-            f'#adminQualityList .role-row:has-text("{TRACE_ANSWER_ID}") button[onclick^="AnswerTrace.open"]'
+            f'#adminQualityList .role-row:has-text("{TRACE_ANSWER_ID}") '
+            'button[data-on-click="AnswerTrace.open"]'
         )
         admin_trace_button.wait_for(state="visible", timeout=10000)
         open_answer_trace(page, admin_trace_button, "flow-admin-answer-trace", report)
@@ -551,7 +756,7 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
         if not doc_id:
             raise AssertionError("admin KB text document id was not found after ingest")
         page.click('[data-admin-section-target="sessions"]')
-        page.click('button[onclick="loadAdminSessions()"]')
+        page.click('button[data-on-click="loadAdminSessions"]')
         page.wait_for_timeout(500)
         report["flows"].append({"name": "admin:kb_ingest_sessions", "status": "ok", "doc_id": doc_id})
         scan_page(page, "flow-admin-kb-ingest", report)
@@ -560,11 +765,6 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
         page.wait_for_timeout(1200)
         report["flows"].append({"name": "admin:kb_delete_document", "status": "ok", "doc_id": doc_id})
         scan_page(page, "flow-admin-kb-delete", report)
-
-        page.evaluate("() => window.rebuildAdminKb()")
-        page.wait_for_timeout(1200)
-        report["flows"].append({"name": "admin:kb_rebuild", "status": "ok"})
-        scan_page(page, "flow-admin-kb-rebuild", report)
 
         page.goto(f"{base_url}/operations", wait_until="domcontentloaded")
         for tab in ["kb", "settings", "work"]:
@@ -603,6 +803,8 @@ def main() -> int:
         "browser_errors": [],
         "http_errors": [],
         "modal_checks": [],
+        "security_checks": [],
+        "chat_checks": [],
         "server_output_tail": "",
     }
 
@@ -613,6 +815,7 @@ def main() -> int:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
+            run_core_smoke(playwright, base_url, report)
             run_issue_flow(playwright, base_url, report)
             scan_responsive(playwright, base_url, report)
 

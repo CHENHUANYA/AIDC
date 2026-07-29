@@ -227,10 +227,10 @@ function renderSupervisorBulkAssigneeOptions() {
 function renderSupervisorVerificationOrder(app, order, issue) {
   const answerId = order.rag_answer_id || issue?.rag_answer_id || '';
   const answerButton = answerId
-    ? `<button class="wo-btn alt" type="button" onclick="AnswerTrace.open(${supervisorJsArg(answerId)})">查看原回答</button>`
+    ? `<button class="wo-btn alt" type="button" data-on-click="AnswerTrace.open" data-action-args="[${supervisorJsArg(answerId)}]">查看原回答</button>`
     : '';
   const issueButton = order.issue_id
-    ? `<button class="wo-btn alt" type="button" onclick="requestSupervisorRework(${supervisorJsArg(order.issue_id)})">退回重工</button>`
+    ? `<button class="wo-btn alt" type="button" data-on-click="requestSupervisorRework" data-action-args="[${supervisorJsArg(order.issue_id)}]">退回重工</button>`
     : '';
   return `<div class="role-row">
     <div>
@@ -245,7 +245,7 @@ function renderSupervisorVerificationOrder(app, order, issue) {
     </div>
     <div class="role-row-actions">
       ${answerButton}
-      <button class="wo-btn" type="button" onclick="verifySupervisorOrder(${supervisorJsArg(order.id)})">驗證完成</button>
+      <button class="wo-btn" type="button" data-on-click="verifySupervisorOrder" data-action-args="[${supervisorJsArg(order.id)}]">驗證完成</button>
       ${issueButton}
     </div>
   </div>`;
@@ -319,14 +319,14 @@ function visibleSupervisorOrders(app, issues, orders) {
 function renderSupervisorResponsibilityOrder(app, order, issue) {
   const answerId = order.rag_answer_id || issue.rag_answer_id || '';
   const answerButton = answerId
-    ? `<button class="wo-btn alt" type="button" onclick="AnswerTrace.open(${supervisorJsArg(answerId)})">查看原回答</button>`
+    ? `<button class="wo-btn alt" type="button" data-on-click="AnswerTrace.open" data-action-args="[${supervisorJsArg(answerId)}]">查看原回答</button>`
     : '';
   const editable = order.status !== 'completed';
   const editControls = editable ? `<div class="sv-order-edit">
     <select class="wo-select" id="svAssignee_${supervisorAttr(order.id)}" aria-label="負責人">${supervisorAssigneeOptions(order.assigned_to || '')}</select>
     <select class="wo-select" id="svPriority_${supervisorAttr(order.id)}" aria-label="優先等級">${supervisorPriorityOptions(order.priority || 'medium')}</select>
     <select class="wo-select" id="svStatus_${supervisorAttr(order.id)}" aria-label="狀態">${supervisorStatusOptions(order.status || 'pending')}</select>
-    <button class="wo-btn alt" type="button" onclick="updateSupervisorOrder(${supervisorJsArg(order.id)})">更新</button>
+    <button class="wo-btn alt" type="button" data-on-click="updateSupervisorOrder" data-action-args="[${supervisorJsArg(order.id)}]">更新</button>
   </div>` : '';
   return `<div class="role-row compact">
     <div>
@@ -608,18 +608,6 @@ async function verifySupervisorOrder(orderId) {
         ...(order.version === undefined ? {} : { version: order.version }),
       }),
     });
-    if (order.issue_id) {
-      const issueVersion = supervisorIssueVersion(app, order.issue_id);
-      await app.apiJson(`/issues/${encodeURIComponent(order.issue_id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: 'verified',
-          updated_by: userId,
-          ...(issueVersion === undefined ? {} : { version: issueVersion }),
-        }),
-      });
-    }
     setSupervisorResult(`工單 #${orderId} 已驗證`);
     await loadSupervisorConsole();
   } catch (error) {
