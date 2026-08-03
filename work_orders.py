@@ -272,6 +272,10 @@ def _load_orders() -> List[dict]:
     if postgres_store_enabled():
         orders = postgres_work_orders.load_all()
         for order in orders:
+            try:
+                order["version"] = max(int(order.get("version") or 1), 1)
+            except (TypeError, ValueError):
+                order["version"] = 1
             order.setdefault("kb_candidate", False)
             order.setdefault("kb_review_status", "not_ready")
             order.setdefault("kb_review_note", "")
@@ -288,6 +292,10 @@ def _load_orders() -> List[dict]:
         with open(WO_FILE, "r", encoding="utf-8") as f:
             orders = json.load(f)
         for order in orders:
+            try:
+                order["version"] = max(int(order.get("version") or 1), 1)
+            except (TypeError, ValueError):
+                order["version"] = 1
             order.setdefault("kb_candidate", False)
             order.setdefault("kb_review_status", "not_ready")
             order.setdefault("kb_review_note", "")

@@ -223,16 +223,8 @@ def launch_browser(playwright):
         raise bundled_error
 
 
-def block_external_fonts(context) -> None:
-    context.route(
-        "https://fonts.googleapis.com/**",
-        lambda route: route.fulfill(status=200, content_type="text/css", body=""),
-    )
-    context.route("https://fonts.gstatic.com/**", lambda route: route.abort())
-
-
 def assert_no_browser_errors(report: dict[str, Any], context: str) -> None:
-    errors = report["browser_errors"] + report["http_errors"]
+    errors = report["browser_errors"] + report["http_errors"] + report["third_party_requests"]
     if errors:
         raise AssertionError(f"{context} browser errors: {errors[-3:]}")
 
@@ -346,6 +338,90 @@ def scan_page(page, name: str, report: dict[str, Any], *, full_page: bool = True
     report["responsive"].append({"name": name, "screenshot": shot, **layout})
 
 
+def audit_accessibility(page, name: str, report: dict[str, Any]) -> None:
+    result = page.evaluate(
+        """() => {
+          const violations = [];
+          const text = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+          const labelledByText = (element) => text(
+            (element.getAttribute('aria-labelledby') || '')
+              .split(/\\s+/)
+              .filter(Boolean)
+              .map((id) => document.getElementById(id)?.textContent || '')
+              .join(' ')
+          );
+          const controlName = (element) => {
+            const ariaLabel = text(element.getAttribute('aria-label'));
+            if (ariaLabel) return ariaLabel;
+            const labelledBy = labelledByText(element);
+            if (labelledBy) return labelledBy;
+            const labels = text(
+              Array.from(element.labels || [])
+                .map((label) => label.textContent || '')
+                .join(' ')
+            );
+            if (labels) return labels;
+            const title = text(element.getAttribute('title'));
+            if (title) return title;
+            if (element.matches('button, a[href]')) return text(element.textContent);
+            if (element.matches('input[type="button"], input[type="submit"], input[type="reset"]')) {
+              return text(element.value);
+            }
+            return '';
+          };
+
+          const mains = document.querySelectorAll('main');
+          if (mains.length !== 1) violations.push(`expected exactly one main landmark, found ${mains.length}`);
+          const main = document.getElementById('main-content');
+          if (!main || main.tagName !== 'MAIN') violations.push('missing main#main-content landmark');
+
+          const skip = document.querySelector('body > a.skip-link[href="#main-content"]');
+          if (!skip) {
+            violations.push('missing first-level skip link');
+          } else {
+            skip.focus();
+            const style = getComputedStyle(skip);
+            const rect = skip.getBoundingClientRect();
+            if (document.activeElement !== skip || style.outlineStyle === 'none' || rect.bottom <= 0) {
+              violations.push('skip link is not visibly keyboard focusable');
+            }
+          }
+
+          if (!text(document.title)) violations.push('document title is empty');
+          if (document.querySelectorAll('h1').length !== 1) {
+            violations.push(`expected exactly one h1, found ${document.querySelectorAll('h1').length}`);
+          }
+
+          document.querySelectorAll('button, input:not([type="hidden"]), select, textarea, a[href]').forEach((control) => {
+            if (!controlName(control)) {
+              violations.push(`control has no accessible name: ${control.tagName.toLowerCase()}#${control.id || '-'}`);
+            }
+          });
+
+          document.querySelectorAll('img').forEach((image) => {
+            if (!image.hasAttribute('alt')) {
+              violations.push(`image is missing alt: #${image.id || '-'}`);
+            }
+          });
+
+          document.querySelectorAll('.wo-modal, .answer-trace-modal').forEach((dialog) => {
+            if (dialog.getAttribute('role') !== 'dialog') {
+              violations.push(`modal is missing role=dialog: #${dialog.id || '-'}`);
+            }
+            if (dialog.getAttribute('aria-modal') !== 'true') {
+              violations.push(`modal is missing aria-modal=true: #${dialog.id || '-'}`);
+            }
+            if (!labelledByText(dialog) && !text(dialog.getAttribute('aria-label'))) {
+              violations.push(`dialog has no accessible name: #${dialog.id || '-'}`);
+            }
+          });
+
+          return {violations};
+        }"""
+    )
+    report["accessibility"].append({"name": name, **result})
+
+
 def inspect_answer_trace_modal(page, expected_answer_id: str) -> dict[str, Any]:
     page.wait_for_selector("#answerTraceModal.show .state-complete", timeout=10000)
     details = page.evaluate(
@@ -368,6 +444,7 @@ def inspect_answer_trace_modal(page, expected_answer_id: str) -> dict[str, Any]:
             answerText: sectionText('Answer'),
             citationCount: modal?.querySelectorAll('.answer-trace-citations li').length || 0,
             closeVisible: Boolean(modal?.querySelector('[data-answer-trace-close]')?.offsetParent),
+            focusInside: Boolean(modal?.contains(document.activeElement)),
             viewport: {width: innerWidth, height: innerHeight},
             card: rect ? {
               left: Math.round(rect.left), right: Math.round(rect.right),
@@ -391,6 +468,13 @@ def inspect_answer_trace_modal(page, expected_answer_id: str) -> dict[str, Any]:
         raise AssertionError(f"answer trace query/answer mismatch: {details}")
     if not details.get("closeVisible") or not card:
         raise AssertionError(f"answer trace controls/card are not visible: {details}")
+    if not details.get("focusInside"):
+        raise AssertionError(f"answer trace did not receive keyboard focus: {details}")
+    page.keyboard.press("Shift+Tab")
+    if not page.evaluate(
+        "() => document.querySelector('#answerTraceModal.show')?.contains(document.activeElement)"
+    ):
+        raise AssertionError("answer trace did not retain focus during reverse tab navigation")
     if card.get("left", -1) < 0 or card.get("right", 0) > viewport.get("width", 0):
         raise AssertionError(f"answer trace card is horizontally clipped: {details}")
     if card.get("top", -1) < 0 or card.get("bottom", 0) > viewport.get("height", 0):
@@ -413,6 +497,8 @@ def close_answer_trace(page, method: str) -> None:
         page.click("#answerTraceModal [data-answer-trace-close]")
     elif method == "backdrop":
         page.locator("#answerTraceModal").click(position={"x": 4, "y": 4})
+    elif method == "escape":
+        page.keyboard.press("Escape")
     else:
         raise ValueError(f"unsupported answer trace close method: {method}")
     page.wait_for_selector("#answerTraceModal", state="hidden", timeout=5000)
@@ -431,12 +517,13 @@ def scan_responsive(playwright, base_url: str, report: dict[str, Any]) -> None:
         for viewport_name, viewport in VIEWPORTS.items():
             for username, path in pages:
                 context = browser.new_context(viewport=viewport)
-                block_external_fonts(context)
                 page = context.new_page()
                 attach_error_capture(page, report)
                 login(page, base_url, username, report)
                 page.goto(f"{base_url}{path}", wait_until="domcontentloaded")
                 scan_page(page, f"{viewport_name}-{path.strip('/') or 'root'}", report)
+                if viewport_name == "desktop":
+                    audit_accessibility(page, path.strip("/") or "root", report)
                 context.close()
     finally:
         browser.close()
@@ -456,12 +543,18 @@ def attach_error_capture(page, report: dict[str, Any]) -> None:
         if response.status >= 400 and not response.url.endswith("/favicon.ico")
         else None,
     )
+    page.on(
+        "request",
+        lambda request: report["third_party_requests"].append(request.url)
+        if request.url.startswith(("http://", "https://"))
+        and not request.url.startswith(report["base_url"])
+        else None,
+    )
 
 
 def run_core_smoke(playwright, base_url: str, report: dict[str, Any]) -> None:
     browser = launch_browser(playwright)
     context = browser.new_context(viewport=VIEWPORTS["desktop"])
-    block_external_fonts(context)
     page = context.new_page()
     attach_error_capture(page, report)
     chat_history_lengths: list[int] = []
@@ -497,21 +590,54 @@ def run_core_smoke(playwright, base_url: str, report: dict[str, Any]) -> None:
         if dashboard_response is None:
             raise AssertionError("dashboard navigation did not return a response")
         csp = dashboard_response.headers.get("content-security-policy", "")
-        required_directives = ("script-src 'self';", "style-src 'self' https://fonts.googleapis.com;")
+        required_directives = ("script-src 'self';", "style-src 'self';", "font-src 'self';")
         if any(directive not in csp for directive in required_directives):
             raise AssertionError(f"dashboard CSP is missing a self-only directive: {csp}")
-        if "unsafe-inline" in csp or "sha256-" in csp:
-            raise AssertionError(f"dashboard CSP still allows inline resources: {csp}")
+        if "unsafe-inline" in csp or "sha256-" in csp or "fonts.googleapis.com" in csp or "fonts.gstatic.com" in csp:
+            raise AssertionError(f"dashboard CSP still allows inline or third-party resources: {csp}")
         page.wait_for_selector("#trendBars .trend-col", timeout=10000)
         if page.locator("#trendBars .trend-col").count() != 7:
             raise AssertionError("dashboard weekly trend did not render seven columns")
         page.click('[data-on-click="toggleTestTools"]')
         page.wait_for_selector("#toolsBody.show", timeout=5000)
         scan_page(page, "smoke-dashboard", report)
+        audit_accessibility(page, "dashboard", report)
         report["security_checks"].append({
             "name": "dashboard:csp-self-only",
             "status": "ok",
             "content_security_policy": csp,
+        })
+
+        cache_expectations = {
+            "/static/css/tokens.css?v=1": "public, max-age=31536000, immutable",
+            "/static/js/core/api.js": "public, max-age=3600, must-revalidate",
+            "/login": "no-store",
+        }
+        observed_cache_headers = {}
+        observed_compression_headers = {}
+        for path, expected in cache_expectations.items():
+            response = page.request.get(f"{base_url}{path}")
+            observed = response.headers.get("cache-control", "")
+            observed_cache_headers[path] = observed
+            observed_compression_headers[path] = {
+                "content-encoding": response.headers.get("content-encoding", ""),
+                "vary": response.headers.get("vary", ""),
+            }
+            if response.status != 200 or observed != expected:
+                raise AssertionError(
+                    f"unexpected cache policy for {path}: status={response.status}, "
+                    f"cache-control={observed!r}"
+                )
+        token_compression = observed_compression_headers["/static/css/tokens.css?v=1"]
+        if token_compression["content-encoding"] != "gzip":
+            raise AssertionError(f"versioned token CSS was not compressed: {token_compression}")
+        if "accept-encoding" not in token_compression["vary"].lower():
+            raise AssertionError(f"versioned token CSS did not vary by encoding: {token_compression}")
+        report["security_checks"].append({
+            "name": "static-assets:cache-and-compression",
+            "status": "ok",
+            "cache_control": observed_cache_headers,
+            "compression": token_compression,
         })
 
         page.route("**/v1/808d/chat", mock_chat)
@@ -528,6 +654,7 @@ def run_core_smoke(playwright, base_url: str, report: dict[str, Any]) -> None:
         if page.locator("#chatMessages .msg.user").count() != 2:
             raise AssertionError("assistant did not render both user questions")
         scan_page(page, "smoke-assistant-chat", report)
+        audit_accessibility(page, "assistant", report)
         report["chat_checks"].append({
             "name": "assistant:multi-turn-history",
             "status": "ok",
@@ -553,6 +680,7 @@ def run_core_smoke(playwright, base_url: str, report: dict[str, Any]) -> None:
         if page.evaluate("() => localStorage.getItem('alarmAuthUser')") is not None:
             raise AssertionError("logout left the browser auth user in localStorage")
         report["flows"].append({"name": "logout:operator01", "status": "ok", "url": page.url})
+        audit_accessibility(page, "login", report)
 
         throttle_statuses = []
         throttle_headers: dict[str, str] = {}
@@ -601,7 +729,6 @@ def run_core_smoke(playwright, base_url: str, report: dict[str, Any]) -> None:
 def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
     browser = launch_browser(playwright)
     context = browser.new_context(viewport=VIEWPORTS["desktop"])
-    block_external_fonts(context)
     page = context.new_page()
     attach_error_capture(page, report)
     try:
@@ -683,9 +810,13 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
             report,
         )
         close_answer_trace(page, "button")
+        if not trace_button.evaluate("(button) => document.activeElement === button"):
+            raise AssertionError("answer trace did not restore focus after button close")
         trace_button.click()
         inspect_answer_trace_modal(page, TRACE_ANSWER_ID)
-        close_answer_trace(page, "backdrop")
+        close_answer_trace(page, "escape")
+        if not trace_button.evaluate("(button) => document.activeElement === button"):
+            raise AssertionError("answer trace did not restore focus after Escape")
         trace_row.locator('[data-on-click="verifySupervisorOrder"]').click()
         page.wait_for_timeout(1200)
         report["flows"].append({"name": "supervisor:verify_completed_order", "status": "ok", "issue_id": supervisor_issue_id})
@@ -802,9 +933,11 @@ def main() -> int:
         "responsive": [],
         "browser_errors": [],
         "http_errors": [],
+        "third_party_requests": [],
         "modal_checks": [],
         "security_checks": [],
         "chat_checks": [],
+        "accessibility": [],
         "server_output_tail": "",
     }
 
@@ -827,6 +960,18 @@ def main() -> int:
         if layout_failures:
             report["layout_failures"] = layout_failures
             raise AssertionError(f"{len(layout_failures)} responsive scans found overflow/clipped elements")
+        accessibility_failures = [
+            item
+            for item in report["accessibility"]
+            if item["violations"]
+        ]
+        if accessibility_failures:
+            report["accessibility_failures"] = accessibility_failures
+            violation_count = sum(len(item["violations"]) for item in accessibility_failures)
+            raise AssertionError(
+                f"{violation_count} accessibility violations across "
+                f"{len(accessibility_failures)} pages"
+            )
         assert_no_browser_errors(report, "responsive scan")
         return 0
     except Exception as exc:

@@ -779,6 +779,111 @@ function renderResolvedCalendar({ calendarEl, listEl, items, monthKey, selectedD
     : `<div class="maintenance-empty-state"><div class="maintenance-empty-title">這天沒有已解決紀錄</div><div class="maintenance-empty-text">${esc(emptyText || '請切換到有標記的日期。')}</div></div>`}`;
 }
 
+const dialogPreviousFocus = new WeakMap();
+
+function dialogFocusables(dialog) {
+  return Array.from(dialog.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), '
+    + 'textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )).filter((element) => element.getClientRects().length > 0);
+}
+
+function syncDialogFocus(dialog) {
+  const isOpen = dialog.classList.contains('show');
+  const wasOpen = dialog.dataset.a11yOpen === 'true';
+  if (isOpen && !wasOpen) {
+    dialog.dataset.a11yOpen = 'true';
+    dialogPreviousFocus.set(dialog, document.activeElement);
+    window.queueMicrotask(() => {
+      const focusTarget = dialogFocusables(dialog)[0] || dialog;
+      if (focusTarget === dialog && !dialog.hasAttribute('tabindex')) {
+        dialog.setAttribute('tabindex', '-1');
+      }
+      focusTarget.focus();
+    });
+    return;
+  }
+  if (!isOpen && wasOpen) {
+    delete dialog.dataset.a11yOpen;
+    const previous = dialogPreviousFocus.get(dialog);
+    if (previous?.isConnected && typeof previous.focus === 'function') {
+      previous.focus();
+    }
+    dialogPreviousFocus.delete(dialog);
+  }
+}
+
+function activeModalDialog() {
+  return Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"].show')).at(-1) || null;
+}
+
+function initDialogAccessibility() {
+  if (typeof MutationObserver !== 'function') {
+    return;
+  }
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      if (mutation.type === 'attributes') {
+        syncDialogFocus(mutation.target);
+        return;
+      }
+      mutation.addedNodes.forEach((node) => {
+        if (!(node instanceof Element)) {
+          return;
+        }
+        if (node.matches('[role="dialog"][aria-modal="true"]')) {
+          observer.observe(node, {attributes: true, attributeFilter: ['class']});
+          syncDialogFocus(node);
+        }
+        node.querySelectorAll?.('[role="dialog"][aria-modal="true"]').forEach((dialog) => {
+          observer.observe(dialog, {attributes: true, attributeFilter: ['class']});
+          syncDialogFocus(dialog);
+        });
+      });
+    });
+  });
+  document.querySelectorAll('[role="dialog"][aria-modal="true"]').forEach((dialog) => {
+    observer.observe(dialog, {attributes: true, attributeFilter: ['class']});
+    syncDialogFocus(dialog);
+  });
+  observer.observe(document.body, {childList: true, subtree: true});
+
+  document.addEventListener('keydown', (event) => {
+    const dialog = activeModalDialog();
+    if (!dialog) {
+      return;
+    }
+    if (event.key === 'Escape') {
+      const closeButton = dialog.querySelector(
+        '[data-answer-trace-close], [data-on-click^="close"]'
+      );
+      if (closeButton) {
+        event.preventDefault();
+        closeButton.click();
+      }
+      return;
+    }
+    if (event.key !== 'Tab') {
+      return;
+    }
+    const focusables = dialogFocusables(dialog);
+    if (!focusables.length) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusables[0];
+    const last = focusables.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+}
+
 function initCommonPageBindings() {
   if (appState.pageBindingsReady) {
     return;
@@ -913,5 +1018,8 @@ window.AlarmApp = {
   initOperationsPage,
 };
 
-document.addEventListener('DOMContentLoaded', applyAuthChrome);
+document.addEventListener('DOMContentLoaded', () => {
+  applyAuthChrome();
+  initDialogAccessibility();
+});
 

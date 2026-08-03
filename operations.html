@@ -4,11 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SINUMERIK 維運管理</title>
-  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/tokens.css?v=1">
   <link rel="stylesheet" href="/static/css/operations.css?v=quality-2">
   <link rel="stylesheet" href="/static/css/utilities.css?v=csp-1">
+  <link rel="stylesheet" href="/static/css/accessibility.css?v=1">
 </head>
 <body data-page="operations">
+<a class="skip-link" href="#main-content">跳至主要內容</a>
 
 <div class="alarm-banner" id="alarmBanner">
   <div class="banner-left">
@@ -50,6 +52,7 @@
   <button class="tab-btn" data-tab="settings" data-on-click="switchTab" data-action-args='["settings"]' data-action-target>系統設定</button>
 </div>
 
+<main id="main-content" tabindex="-1">
 <div class="panel active" id="panel-work">
   <div class="container">
     <div class="section-label">維修工單</div>
@@ -63,13 +66,13 @@
     <div class="card">
       <div class="section-label">新增工單</div>
       <div class="wo-form-grid">
-        <div class="wo-field"><label class="wo-field-label">警報代碼 *</label><input class="wo-input" id="woAlarm" placeholder="例如 3000"></div>
-        <div class="wo-field"><label class="wo-field-label">手冊</label><select class="wo-select" id="woManual"><option value="808d">808D</option><option value="840d">840D</option><option value="840dsl">840D sl</option></select></div>
-        <div class="wo-field"><label class="wo-field-label">機台 / 設備</label><input class="wo-input" id="woMachine" placeholder="例如 CNC-01"></div>
-        <div class="wo-field"><label class="wo-field-label">優先等級</label><select class="wo-select" id="woPriority"><option value="medium">中</option><option value="low">低</option><option value="high">高</option><option value="critical">緊急</option></select></div>
-        <div class="wo-field"><label class="wo-field-label">負責人員</label><input class="wo-input" id="woAssignee" placeholder="負責人員姓名"></div>
-        <div class="wo-field"><label class="wo-field-label">來源</label><input class="wo-input" id="woSource" placeholder="API / OPC / n8n"></div>
-        <div class="wo-field wo-field-full"><label class="wo-field-label">問題描述 / RAG 摘要</label><textarea class="wo-text" id="woDesc"></textarea></div>
+        <div class="wo-field"><label class="wo-field-label" for="woAlarm">警報代碼 *</label><input class="wo-input" id="woAlarm" placeholder="例如 3000"></div>
+        <div class="wo-field"><label class="wo-field-label" for="woManual">手冊</label><select class="wo-select" id="woManual"><option value="808d">808D</option><option value="840d">840D</option><option value="840dsl">840D sl</option></select></div>
+        <div class="wo-field"><label class="wo-field-label" for="woMachine">機台 / 設備</label><input class="wo-input" id="woMachine" placeholder="例如 CNC-01"></div>
+        <div class="wo-field"><label class="wo-field-label" for="woPriority">優先等級</label><select class="wo-select" id="woPriority"><option value="medium">中</option><option value="low">低</option><option value="high">高</option><option value="critical">緊急</option></select></div>
+        <div class="wo-field"><label class="wo-field-label" for="woAssignee">負責人員</label><input class="wo-input" id="woAssignee" placeholder="負責人員姓名"></div>
+        <div class="wo-field"><label class="wo-field-label" for="woSource">來源</label><input class="wo-input" id="woSource" placeholder="API / OPC / n8n"></div>
+        <div class="wo-field wo-field-full"><label class="wo-field-label" for="woDesc">問題描述 / RAG 摘要</label><textarea class="wo-text" id="woDesc"></textarea></div>
       </div>
       <div class="wo-actions"><button class="wo-btn" data-on-click="createWorkOrder">新增工單</button><button class="wo-btn alt" data-on-click="loadWorkOrders">重新整理</button></div>
     </div>
@@ -80,7 +83,7 @@
         <div class="eu-icon">📁</div>
         <div class="eu-text">點擊上傳 .xlsx 檔案，或拖曳至此</div>
       </div>
-      <input class="u-hidden" type="file" id="excelFile" accept=".xlsx,.xls" data-on-change="uploadExcel" data-action-target>
+      <input class="u-hidden" type="file" id="excelFile" accept=".xlsx,.xls" aria-label="選擇 Excel 匯入檔案" data-on-change="uploadExcel" data-action-target>
       <div class="excel-result" id="excelResult"></div>
     </div>
 
@@ -106,7 +109,7 @@
         <div class="upload-zone-icon">📤</div>
         <div class="upload-zone-text">點擊上傳 PDF 檔案，或拖曳至此</div>
       </div>
-      <input class="u-hidden" type="file" id="pdfFile" accept=".pdf" data-on-change="handlePdfUpload" data-action-target>
+      <input class="u-hidden" type="file" id="pdfFile" accept=".pdf" aria-label="選擇 PDF 文件" data-on-change="handlePdfUpload" data-action-target>
       <div class="upload-progress" id="uploadProgress">
         <div class="u-upload-status" id="uploadStatus">上傳中...</div>
         <div class="progress-bar-bg"><div class="progress-bar-fill" id="uploadBar"></div></div>
@@ -118,12 +121,12 @@
       <div class="section-label">✏️ 新增維修紀錄至知識庫</div>
       <div class="text-ingest-form">
         <div class="u-grid-2-gap-10">
-          <input type="text" id="ingestCode" placeholder="警報代碼（選填）">
-          <input type="text" id="ingestTitle" placeholder="標題（選填）">
+          <input type="text" id="ingestCode" placeholder="警報代碼（選填）" aria-label="知識內容警報代碼">
+          <input type="text" id="ingestTitle" placeholder="標題（選填）" aria-label="知識內容標題">
         </div>
-        <textarea id="ingestText" placeholder="輸入維修紀錄內容"></textarea>
+        <textarea id="ingestText" placeholder="輸入維修紀錄內容" aria-label="知識內容"></textarea>
         <div class="u-flex-center-gap-10">
-          <select class="test-select" id="ingestSource"><option value="manual">手動輸入</option><option value="workorder">維修工單</option><option value="bulletin">公告</option><option value="feedback">現場回饋</option></select>
+          <select class="test-select" id="ingestSource" aria-label="知識內容來源"><option value="manual">手動輸入</option><option value="workorder">維修工單</option><option value="bulletin">公告</option><option value="feedback">現場回饋</option></select>
           <button class="ingest-btn" id="ingestBtn" data-on-click="handleTextIngest">⭐ 寫入知識庫</button>
         </div>
         <div class="upload-result" id="textResult"></div>
@@ -160,7 +163,7 @@
       <div class="wo-form-grid">
         <div class="wo-field">
           <label class="wo-field-label">預設手冊</label>
-          <select class="wo-select" id="settingsDefaultManual">
+          <select class="wo-select" id="settingsDefaultManual" aria-label="預設手冊">
             <option value="808d">808D</option>
             <option value="840d">840D</option>
             <option value="840dsl">840D sl</option>
@@ -169,7 +172,7 @@
         </div>
         <div class="wo-field">
           <label class="wo-field-label">登入有效時數</label>
-          <input class="wo-input" id="settingsSessionHours" type="number" min="1" max="72" step="1">
+          <input class="wo-input" id="settingsSessionHours" type="number" min="1" max="72" step="1" aria-label="登入有效時數">
         </div>
         <label class="settings-toggle">
           <input id="settingsAllowOperatorReopen" type="checkbox">
@@ -184,32 +187,33 @@
     </div>
   </div>
 </div>
+</main>
 
-<div class="wo-modal" id="woModal">
+<div class="wo-modal" id="woModal" role="dialog" aria-modal="true" aria-labelledby="woModalTitle">
   <div class="wo-modal-card">
     <div class="wo-modal-head">
       <div><div class="wo-modal-title" id="woModalTitle">工單</div><div class="wo-note" id="woModalId"></div></div>
-      <button class="close-x" data-on-click="closeWoModal">✕</button>
+      <button class="close-x" data-on-click="closeWoModal" aria-label="關閉工單對話框">✕</button>
     </div>
     <div class="wo-modal-grid">
-      <div><div class="wo-note">狀態</div><select class="wo-select" id="woEditStatus"><option value="pending">待處理</option><option value="assigned">已指派</option><option value="in_progress">處理中</option><option value="completed">已完成</option></select></div>
-      <div><div class="wo-note">優先等級</div><select class="wo-select" id="woEditPriority"><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">緊急</option></select></div>
-      <div><div class="wo-note">負責人</div><input class="wo-input" id="woEditAssignee"></div>
-      <div><div class="wo-note">機台</div><input class="wo-input" id="woEditMachine"></div>
+      <div><div class="wo-note">狀態</div><select class="wo-select" id="woEditStatus" aria-label="工單狀態"><option value="pending">待處理</option><option value="assigned">已指派</option><option value="in_progress">處理中</option><option value="completed">已完成</option></select></div>
+      <div><div class="wo-note">優先等級</div><select class="wo-select" id="woEditPriority" aria-label="工單優先等級"><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">緊急</option></select></div>
+      <div><div class="wo-note">負責人</div><input class="wo-input" id="woEditAssignee" aria-label="工單負責人"></div>
+      <div><div class="wo-note">機台</div><input class="wo-input" id="woEditMachine" aria-label="工單機台"></div>
     </div>
-    <div class="wo-note u-mt-10">問題描述</div><textarea class="wo-text" id="woEditDesc"></textarea>
-    <div class="wo-note u-mt-10">處理結果 / 解決方案（維修紀錄）</div><textarea class="wo-text" id="woEditResolution"></textarea>
-    <div class="wo-note u-mt-10">備註</div><textarea class="wo-text" id="woEditNotes"></textarea>
+    <div class="wo-note u-mt-10">問題描述</div><textarea class="wo-text" id="woEditDesc" aria-label="問題描述"></textarea>
+    <div class="wo-note u-mt-10">處理結果 / 解決方案（維修紀錄）</div><textarea class="wo-text" id="woEditResolution" aria-label="處理結果或解決方案"></textarea>
+    <div class="wo-note u-mt-10">備註</div><textarea class="wo-text" id="woEditNotes" aria-label="工單備註"></textarea>
     <div class="wo-modal-grid u-mt-10">
-      <div><div class="wo-note">接受人員</div><input class="wo-input" id="woEditAcceptedBy"></div>
-      <div><div class="wo-note">完成人員</div><input class="wo-input" id="woEditCompletedBy"></div>
-      <div><div class="wo-note">根本原因</div><input class="wo-input" id="woEditRootCause"></div>
-      <div><div class="wo-note">故障分類</div><input class="wo-input" id="woEditFailureCategory"></div>
-      <div><div class="wo-note">LLM 正確率回饋</div><select class="wo-select" id="woEditLlmCorrectness"><option value="">未評估</option><option value="correct">正確</option><option value="partially_correct">部分正確</option><option value="incorrect">不正確</option><option value="unknown">未知</option></select></div>
-      <div><div class="wo-note">LLM 覆蓋率回饋</div><select class="wo-select" id="woEditLlmCoverage"><option value="">未評估</option><option value="complete">完整</option><option value="missing_steps">缺步驟</option><option value="missing_source">缺來源</option><option value="not_applicable">不適用</option></select></div>
+      <div><div class="wo-note">接受人員</div><input class="wo-input" id="woEditAcceptedBy" aria-label="接受人員"></div>
+      <div><div class="wo-note">完成人員</div><input class="wo-input" id="woEditCompletedBy" aria-label="完成人員"></div>
+      <div><div class="wo-note">根本原因</div><input class="wo-input" id="woEditRootCause" aria-label="根本原因"></div>
+      <div><div class="wo-note">故障分類</div><input class="wo-input" id="woEditFailureCategory" aria-label="故障分類"></div>
+      <div><div class="wo-note">LLM 正確率回饋</div><select class="wo-select" id="woEditLlmCorrectness" aria-label="LLM 正確率回饋"><option value="">未評估</option><option value="correct">正確</option><option value="partially_correct">部分正確</option><option value="incorrect">不正確</option><option value="unknown">未知</option></select></div>
+      <div><div class="wo-note">LLM 覆蓋率回饋</div><select class="wo-select" id="woEditLlmCoverage" aria-label="LLM 覆蓋率回饋"><option value="">未評估</option><option value="complete">完整</option><option value="missing_steps">缺步驟</option><option value="missing_source">缺來源</option><option value="not_applicable">不適用</option></select></div>
     </div>
-    <div class="wo-note u-mt-10">實際維修動作</div><textarea class="wo-text" id="woEditRepairAction"></textarea>
-    <div class="wo-note u-mt-10">LLM 缺漏 / 建議修正</div><textarea class="wo-text" id="woEditLlmMissingInfo"></textarea>
+    <div class="wo-note u-mt-10">實際維修動作</div><textarea class="wo-text" id="woEditRepairAction" aria-label="實際維修動作"></textarea>
+    <div class="wo-note u-mt-10">LLM 缺漏 / 建議修正</div><textarea class="wo-text" id="woEditLlmMissingInfo" aria-label="LLM 缺漏或建議修正"></textarea>
     <div class="wo-actions"><button class="wo-btn" data-on-click="saveWorkOrder">儲存</button><button class="wo-btn danger" data-on-click="deleteWorkOrder">刪除</button></div>
   </div>
 </div>

@@ -26,6 +26,7 @@ load_dotenv_defaults()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from app_context import load_all_engines
 from api_contracts import ApiContractMiddleware
@@ -64,6 +65,7 @@ app.add_middleware(
 app.add_middleware(ApiContractMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 load_all_engines()
 

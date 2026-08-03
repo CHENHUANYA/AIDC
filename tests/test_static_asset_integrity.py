@@ -136,6 +136,108 @@ class StaticAssetIntegrityTests(unittest.TestCase):
 
         self.assertEqual([], missing)
 
+    def test_pages_do_not_load_third_party_styles_scripts_or_fonts(self):
+        external = []
+        for path in HTML_FILES:
+            for ref in html_refs(path):
+                if urlparse(ref).scheme in {"http", "https"}:
+                    external.append(f"{path.name}: {ref}")
+
+        self.assertEqual([], external)
+
+    def test_pages_load_shared_tokens_before_page_styles(self):
+        errors = []
+        tokens_path = "/static/css/tokens.css"
+        for page in sorted(PAGE_NAMES):
+            refs = [urlparse(ref).path for ref in html_refs(ROOT / f"{page}.html")]
+            page_path = f"/static/css/{page}.css"
+            if refs.count(tokens_path) != 1:
+                errors.append(f"{page}: expected one {tokens_path} reference")
+                continue
+            if refs.count(page_path) != 1:
+                errors.append(f"{page}: expected one {page_path} reference")
+                continue
+            if refs.index(tokens_path) > refs.index(page_path):
+                errors.append(f"{page}: tokens.css must load before the page stylesheet")
+
+        self.assertEqual([], errors)
+
+    def test_design_tokens_have_one_canonical_source(self):
+        token_source = (ROOT / "static" / "css" / "tokens.css").read_text(encoding="utf-8")
+        required_tokens = {
+            "--bg",
+            "--surface",
+            "--border",
+            "--acc",
+            "--grn",
+            "--red",
+            "--text",
+            "--mono",
+            "--sans",
+            "--shadow",
+            "--r-md",
+            "--ease",
+        }
+        missing = sorted(
+            token
+            for token in required_tokens
+            if not re.search(rf"^\s*{re.escape(token)}\s*:", token_source, re.MULTILINE)
+        )
+        duplicates = []
+        for page in sorted(PAGE_NAMES):
+            page_source = (ROOT / "static" / "css" / f"{page}.css").read_text(encoding="utf-8")
+            for token in sorted(required_tokens):
+                if re.search(rf"^\s*{re.escape(token)}\s*:", page_source, re.MULTILINE):
+                    duplicates.append(f"{page}.css: {token}")
+
+        self.assertEqual([], missing)
+        self.assertEqual([], duplicates)
+
+    def test_pages_have_keyboard_navigation_landmarks(self):
+        errors = []
+        accessibility_path = "/static/css/accessibility.css"
+        for page in sorted(PAGE_NAMES):
+            html_path = ROOT / f"{page}.html"
+            source = html_path.read_text(encoding="utf-8")
+            stylesheet_paths = [
+                urlparse(ref).path
+                for ref in html_refs(html_path)
+                if urlparse(ref).path.endswith(".css")
+            ]
+            if source.count("<main") != 1:
+                errors.append(f"{page}: expected exactly one main landmark")
+            if not re.search(r'<main\b[^>]*\bid="main-content"[^>]*\btabindex="-1"', source):
+                errors.append(f"{page}: main#main-content must be programmatically focusable")
+            if not re.search(
+                r'<body\b[^>]*>\s*<a class="skip-link" href="#main-content">',
+                source,
+            ):
+                errors.append(f"{page}: skip link must be the first body content")
+            if not stylesheet_paths or stylesheet_paths[-1] != accessibility_path:
+                errors.append(f"{page}: accessibility.css must be the last stylesheet")
+
+        self.assertEqual([], errors)
+
+    def test_static_modals_publish_dialog_semantics(self):
+        errors = []
+        for page in ("maintenance", "operations", "operator"):
+            source = (ROOT / f"{page}.html").read_text(encoding="utf-8")
+            for tag in re.findall(r'<div class="wo-modal"[^>]*>', source):
+                if 'role="dialog"' not in tag or 'aria-modal="true"' not in tag:
+                    errors.append(f"{page}: modal is missing dialog semantics")
+                if not re.search(r'\baria-labelledby="[^"]+"', tag):
+                    errors.append(f"{page}: modal is missing an accessible name")
+
+        self.assertEqual([], errors)
+
+    def test_accessibility_styles_cover_focus_and_reduced_motion(self):
+        source = (ROOT / "static" / "css" / "accessibility.css").read_text(encoding="utf-8")
+
+        self.assertIn(":focus-visible", source)
+        self.assertIn(".skip-link:focus", source)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", source)
+        self.assertIn("outline:", source)
+
     def test_each_page_has_matching_css_and_js_bundle(self):
         missing = []
         for page in sorted(PAGE_NAMES):

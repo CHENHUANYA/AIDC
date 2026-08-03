@@ -96,6 +96,21 @@ class FrontendApiContractTests(unittest.TestCase):
         self.assertIn("supervisor: '/supervisor'", source)
         self.assertNotIn("supervisor: '/dashboard'", source)
 
+    def test_supervisor_section_switch_clears_transient_result(self):
+        source = (ROOT / "static" / "js" / "pages" / "supervisor.js").read_text(encoding="utf-8")
+
+        self.assertIn("currentSection !== nextSection", source)
+        self.assertIn("clearSupervisorResult();", source)
+        self.assertIn("app.setResultMessage(result, 'upload-result', '');", source)
+
+    def test_operator_suggestions_show_full_expandable_content_without_ellipsis(self):
+        source = (ROOT / "static" / "js" / "pages" / "operator.js").read_text(encoding="utf-8")
+
+        self.assertIn("function fullSuggestionText", source)
+        self.assertIn('<details class="suggestion-details" open>', source)
+        self.assertNotIn("compactText(remedy", source)
+        self.assertNotIn("compactText(body, 900)", source)
+
     def test_admin_user_updates_send_optimistic_lock_version(self):
         source = (ROOT / "static" / "js" / "pages" / "admin.js").read_text(encoding="utf-8")
 

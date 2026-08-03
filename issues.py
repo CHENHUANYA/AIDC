@@ -93,7 +93,14 @@ def _load_issues() -> List[dict]:
             payload = json.load(file)
     except (json.JSONDecodeError, OSError):
         return []
-    return payload if isinstance(payload, list) else []
+    if not isinstance(payload, list):
+        return []
+    for issue in payload:
+        try:
+            issue["version"] = max(int(issue.get("version") or 1), 1)
+        except (TypeError, ValueError):
+            issue["version"] = 1
+    return payload
 
 
 def _save_issues(issues: List[dict]) -> None:

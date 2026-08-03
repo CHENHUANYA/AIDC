@@ -1,67 +1,5 @@
 /* ═══ operator.css — Standalone CSS for operator.html ═══ */
 
-:root {
-  /* Backgrounds */
-  --bg:        #eae8e4;
-  --bg-raised: #f0eee9;
-  --surface:   #f7f5f2;
-  --surface2:  #f0eee9;
-  --surface3:  #e8e5e0;
-
-  /* Borders */
-  --border:    rgba(0,0,0,0.06);
-  --border2:   rgba(0,0,0,0.09);
-  --border3:   rgba(0,0,0,0.13);
-
-  /* Accent — Indigo */
-  --acc:       #6366f1;
-  --acc-lt:    rgba(99,102,241,0.08);
-  --acc-dk:    #4f46e5;
-  --acc-glow:  rgba(99,102,241,0.18);
-  --acc-soft:  #ece9f8;
-
-  /* Semantic */
-  --grn:       #16a34a;
-  --grn-lt:    rgba(22,163,74,0.08);
-  --grn-bg:    #ecf5ee;
-  --red:       #dc2626;
-  --red-lt:    rgba(220,38,38,0.08);
-  --red-bg:    #f5ecec;
-  --org:       #d97706;
-  --org-lt:    rgba(217,119,6,0.08);
-  --org-bg:    #f5f0e4;
-  --ylw:       #b45309;
-  --cyan:      #0891b2;
-  --cyan-lt:   rgba(8,145,178,0.08);
-  --purple:    #7c3aed;
-  --purple-lt: rgba(124,58,237,0.08);
-
-  /* Typography */
-  --text:      #1a1d2b;
-  --text2:     #4b5268;
-  --dim:       #8891a5;
-  --wht:       #f7f5f2;
-
-  /* Effects */
-  --shadow:    0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03);
-  --shadow2:   0 8px 24px rgba(0,0,0,0.08);
-  --shadow3:   0 16px 48px rgba(0,0,0,0.1);
-  --glass:     saturate(180%) blur(16px);
-
-  /* Fonts */
-  --mono:      'Rajdhani', sans-serif;
-  --sans:      'Noto Sans TC', sans-serif;
-
-  /* Radius */
-  --r-sm:      8px;
-  --r-md:      12px;
-  --r-lg:      16px;
-  --r-xl:      20px;
-
-  /* Transitions */
-  --ease:      cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-out:  cubic-bezier(0, 0, 0.2, 1);
-}
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh}
@@ -425,6 +363,28 @@ header{
   text-transform:uppercase;
   margin-bottom:6px;
 }
+.suggestion-details>summary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:0;
+  cursor:pointer;
+  list-style:none;
+}
+.suggestion-details>summary::-webkit-details-marker{display:none}
+.suggestion-details[open]>summary{margin-bottom:6px}
+.suggestion-toggle-copy{
+  flex:0 0 auto;
+  font-family:var(--sans);
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:0;
+  text-transform:none;
+  color:var(--acc);
+}
+.suggestion-toggle-copy::before{content:'收合'}
+.suggestion-details:not([open]) .suggestion-toggle-copy::before{content:'展開完整內容'}
 .suggestion-text{
   font-size:15px;
   color:var(--text);
@@ -450,4 +410,5 @@ header{
   .status-pill span:last-child{display:none}
   .tabs .tab-btn{padding:12px 16px;font-size:11px}
   .container{padding:20px 14px 60px}
+  .suggestion-details>summary{align-items:flex-start}
 }

@@ -55,6 +55,10 @@ function compactText(value, maxLength = 700) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
 
+function fullSuggestionText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
 function setIssueResult(message, isError = false) {
   const app = operatorApp();
   const result = app?.$('issueResult');
@@ -82,10 +86,23 @@ function findManualField(text, label) {
 
 function renderSuggestionSection(title, body, tone = '') {
   const app = operatorApp();
-  if (!body) return '';
+  const text = fullSuggestionText(body);
+  if (!text) return '';
+  const content = `<div class="suggestion-text">${app.esc(text)}</div>`;
+  if (text.length > 420) {
+    return `<div class="suggestion-section ${tone}">
+      <details class="suggestion-details" open>
+        <summary class="suggestion-label">
+          <span>${app.esc(title)}</span>
+          <span class="suggestion-toggle-copy" aria-hidden="true"></span>
+        </summary>
+        ${content}
+      </details>
+    </div>`;
+  }
   return `<div class="suggestion-section ${tone}">
     <div class="suggestion-label">${app.esc(title)}</div>
-    <div class="suggestion-text">${app.esc(body)}</div>
+    ${content}
   </div>`;
 }
 
@@ -96,7 +113,7 @@ function renderLookupSuggestion(lookup) {
   const reaction = findManualField(text, 'Reaction');
   const explanation = findManualField(text, 'Explanation');
   const program = findManualField(text, 'Program continuation');
-  const fallback = !remedy && !reaction && !explanation ? compactText(text, 520) : '';
+  const fallback = !remedy && !reaction && !explanation ? text : '';
 
   return `<div class="suggestion-card">
     <div class="suggestion-head">
@@ -106,10 +123,10 @@ function renderLookupSuggestion(lookup) {
       </div>
       <div class="suggestion-page">P.${app.esc(lookup.page || '-')}</div>
     </div>
-    ${renderSuggestionSection('建議處置', compactText(remedy || fallback), 'primary')}
-    ${renderSuggestionSection('系統反應', compactText(reaction), 'warn')}
-    ${renderSuggestionSection('說明', compactText(explanation))}
-    ${renderSuggestionSection('程式延續', compactText(program))}
+    ${renderSuggestionSection('建議處置', remedy || fallback, 'primary')}
+    ${renderSuggestionSection('系統反應', reaction, 'warn')}
+    ${renderSuggestionSection('說明', explanation)}
+    ${renderSuggestionSection('程式延續', program)}
   </div>`;
 }
 
@@ -130,7 +147,7 @@ function renderChatSuggestion(content) {
         <div class="suggestion-title">${app.esc(title)}</div>
       </div>
     </div>
-    ${renderSuggestionSection('排除方向', compactText(body, 900), 'primary')}
+    ${renderSuggestionSection('排除方向', body, 'primary')}
   </div>`;
 }
 

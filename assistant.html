@@ -4,11 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SINUMERIK 智慧助理</title>
-  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/tokens.css?v=1">
   <link rel="stylesheet" href="/static/css/assistant.css?v=quality-2">
   <link rel="stylesheet" href="/static/css/utilities.css?v=csp-1">
+  <link rel="stylesheet" href="/static/css/accessibility.css?v=1">
 </head>
 <body data-page="assistant">
+<a class="skip-link" href="#main-content">跳至主要內容</a>
 
 <div class="alarm-banner" id="alarmBanner">
   <div class="banner-left">
@@ -52,6 +54,7 @@
   <button class="tab-btn" data-tab="reference" data-on-click="switchTab" data-action-args='["reference"]' data-action-target>參考資料</button>
 </div>
 
+<main id="main-content" tabindex="-1">
 <div class="panel active" id="panel-lookup">
   <div class="container">
     <div class="section-label">📚 選擇手冊</div>
@@ -72,7 +75,7 @@
 
     <div class="section-label">輸入警報代碼或關鍵字</div>
     <div class="search-wrap">
-      <input class="search-box" id="searchInput" type="text" placeholder="例如：3000 或 emergency stop" autocomplete="off" spellcheck="false">
+      <input class="search-box" id="searchInput" type="text" placeholder="例如：3000 或 emergency stop" autocomplete="off" spellcheck="false" aria-label="警報代碼或關鍵字">
       <button class="search-btn" id="searchBtn" data-on-click="doSearch">🔍 查詢</button>
     </div>
 
@@ -146,7 +149,7 @@
         </div>
       </div>
       <div class="chat-input-area">
-        <textarea class="chat-input" id="chatInput" rows="1" placeholder="輸入問題，例如：請解釋警報 5000 的原因及解決方案" data-on-input="autoResize" data-input-target data-on-keydown="chatKeydown" data-keydown-event></textarea>
+        <textarea class="chat-input" id="chatInput" rows="1" placeholder="輸入問題，例如：請解釋警報 5000 的原因及解決方案" aria-label="智慧助理問題" data-on-input="autoResize" data-input-target data-on-keydown="chatKeydown" data-keydown-event></textarea>
         <button class="chat-clear-btn" data-on-click="clearChat" title="清除對話">🗑️</button>
         <button class="chat-send-btn" id="chatSendBtn" data-on-click="sendChat" title="傳送">➤</button>
       </div>
@@ -158,7 +161,7 @@
   <div class="container">
     <div class="section-label">📋 System Reactions 系統反應對照表</div>
     <div class="card">
-      <input class="ref-search" id="refSearch" type="text" placeholder="搜尋反應名稱或說明..." data-on-input="filterRefTable">
+      <input class="ref-search" id="refSearch" type="text" placeholder="搜尋反應名稱或說明..." aria-label="搜尋參考資料" data-on-input="filterRefTable">
       <div class="ref-count" id="refCount">共 16 筆</div>
       <div class="u-overflow-x">
         <table class="ref-table" id="refTable">
@@ -232,6 +235,7 @@
     </div>
   </div>
 </div>
+</main>
 
 <script src="/static/js/core/api.js"></script>
 <script src="/static/js/core/storage.js"></script>

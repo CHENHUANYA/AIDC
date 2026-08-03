@@ -151,7 +151,27 @@ the login-throttle migration, before smoke testing multiple replicas. Do not
 run the isolated `browser_e2e_responsive.py` against staging: it intentionally
 starts a disposable local service. Use the boundary and API smoke runners for
 the deployed environment, then perform the approved browser check against the
-staging URL.
+staging URL. Confirm that browser pages make no requests to third-party static
+hosts and that CSP contains `script-src 'self'`, `style-src 'self'`, and
+`font-src 'self'` without `unsafe-inline` or hash exceptions.
+Also verify cache behavior through the deployment proxy:
+
+```bash
+curl -I "https://staging.example.com/static/css/tokens.css?v=1"
+curl -I "https://staging.example.com/static/js/core/api.js"
+curl -I "https://staging.example.com/login"
+curl -sS -D - -o /dev/null -H "Accept-Encoding: gzip" \
+  "https://staging.example.com/static/css/tokens.css?v=1"
+```
+
+Versioned static resources must retain
+`Cache-Control: public, max-age=31536000, immutable`; unversioned static
+resources use `public, max-age=3600, must-revalidate`; authenticated HTML and
+login pages must remain `no-store`. Configure the reverse proxy to preserve
+these application headers instead of applying a blanket cache rule. Large
+compressible responses use GZip when the client advertises support; preserve
+`Content-Encoding` and `Vary: Accept-Encoding`. Do not enable proxy buffering
+or compression for `text/event-stream`.
 
 For a full standalone acceptance pass:
 
@@ -215,7 +235,10 @@ python scripts/browser_e2e_responsive.py
 ```
 
 The browser E2E starts an isolated local FastAPI instance and writes its report
-and screenshots under `tests_tmp/browser_e2e/`.
+and screenshots under `tests_tmp/browser_e2e/`. Require all eight entries in
+the report's `accessibility` section to contain an empty `violations` list.
+Manually confirm that Tab reveals the “跳至主要內容” link, focus remains visible,
+and Escape closes an open modal before approving the staging UI.
 
 For a public domain or reverse-proxy boundary check, run the production URL with
 the expected browser origin:

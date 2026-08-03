@@ -30,6 +30,10 @@ function activeSupervisorSectionFromHash() {
 
 function selectSupervisorSection(section, updateHash = true) {
   const nextSection = SUPERVISOR_SECTIONS.has(section) ? section : 'overview';
+  const currentSection = document.querySelector('[data-supervisor-section].active')?.dataset.supervisorSection;
+  if (currentSection && currentSection !== nextSection) {
+    clearSupervisorResult();
+  }
   document.querySelectorAll('[data-supervisor-section]').forEach((panel) => {
     panel.classList.toggle('active', panel.dataset.supervisorSection === nextSection);
   });
@@ -122,6 +126,15 @@ function setSupervisorResult(message, isError = false) {
     return;
   }
   app.setResultMessage(result, `upload-result show${isError ? ' error' : ''}`, message);
+}
+
+function clearSupervisorResult() {
+  const app = supervisorApp();
+  const result = app?.$('svResult');
+  if (!app || !result) {
+    return;
+  }
+  app.setResultMessage(result, 'upload-result', '');
 }
 
 function activeSupervisorData() {

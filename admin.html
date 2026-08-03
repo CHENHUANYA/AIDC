@@ -4,12 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Alarm RAG 管理後台</title>
-  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/tokens.css?v=1">
   <link rel="stylesheet" href="/static/css/admin.css">
   <link rel="stylesheet" href="/static/css/utilities.css?v=csp-1">
   <link rel="stylesheet" href="/static/css/answer-trace.css">
+  <link rel="stylesheet" href="/static/css/accessibility.css?v=1">
 </head>
 <body data-page="admin">
+<a class="skip-link" href="#main-content">跳至主要內容</a>
 <header>
   <div class="logo">
     <div class="logo-icon">⚙️</div>
@@ -34,7 +36,7 @@
   <button class="tab-btn" type="button" data-admin-section-target="settings"><span class="tab-icon">⚙️</span> 設定與稽核</button>
 </div>
 
-<main class="panel active">
+<main class="panel active" id="main-content" tabindex="-1">
   <div class="container role-console">
 
     <div class="admin-toolbar">
@@ -69,21 +71,21 @@
             <option value="active">啟用</option>
             <option value="inactive">停用</option>
           </select>
-          <input class="wo-input" id="adminUserSearch" placeholder="搜尋使用者、姓名、團隊、scope">
+          <input class="wo-input" id="adminUserSearch" placeholder="搜尋使用者、姓名、團隊、scope" aria-label="搜尋使用者">
           <button class="wo-btn alt u-m-0" type="button" data-on-click="exportAdminUsersCsv">匯出</button>
         </div>
         <div class="admin-control-row">
-          <input class="wo-input" id="adminNewUserId" placeholder="user_id">
-          <input class="wo-input" id="adminNewUserName" placeholder="顯示名稱">
-          <input class="wo-input" id="adminNewUserTeam" placeholder="團隊">
+          <input class="wo-input" id="adminNewUserId" placeholder="user_id" aria-label="新使用者 ID">
+          <input class="wo-input" id="adminNewUserName" placeholder="顯示名稱" aria-label="新使用者顯示名稱">
+          <input class="wo-input" id="adminNewUserTeam" placeholder="團隊" aria-label="新使用者團隊">
           <select class="wo-select" id="adminNewUserRole" aria-label="新使用者角色">
             <option value="operator">Operator</option>
             <option value="maintenance">Maintenance</option>
             <option value="supervisor">Supervisor</option>
             <option value="admin">Admin</option>
           </select>
-          <input class="wo-input" id="adminNewUserScope" placeholder="scope：LINE-A, LINE-B, *">
-          <input class="wo-input" id="adminNewUserPassword" type="password" placeholder="密碼（預設 demo1234）">
+          <input class="wo-input" id="adminNewUserScope" placeholder="scope：LINE-A, LINE-B, *" aria-label="新使用者產線範圍">
+          <input class="wo-input" id="adminNewUserPassword" type="password" placeholder="密碼（預設 demo1234）" aria-label="新使用者密碼">
           <button class="wo-btn u-m-0" type="button" data-on-click="createAdminUser">建立使用者</button>
         </div>
         <div id="adminUserList" class="role-list"><div class="wo-empty">載入中...</div></div>
@@ -98,7 +100,7 @@
           <div class="uz-title">上傳 Excel 工單資料</div>
           <div class="uz-sub">匯入後會更新 Work Order 與 BI 統計</div>
         </div>
-        <input class="u-hidden" type="file" id="adminExcelFile" accept=".xlsx,.xls" data-on-change="uploadAdminExcel" data-action-target>
+        <input class="u-hidden" type="file" id="adminExcelFile" accept=".xlsx,.xls" aria-label="選擇 Excel 匯入檔案" data-on-change="uploadAdminExcel" data-action-target>
         <div class="excel-result" id="adminExcelResult"></div>
         <div id="adminImportLog" class="role-list role-list-spaced"></div>
       </div>
@@ -134,7 +136,7 @@
           <div class="uz-title">上傳 PDF 手冊或維修文件至目前知識庫</div>
           <div class="uz-sub">支援技術手冊、維修 SOP、故障排除文件</div>
         </div>
-        <input class="u-hidden" type="file" id="adminPdfFile" accept=".pdf" data-on-change="uploadAdminPdf" data-action-target>
+        <input class="u-hidden" type="file" id="adminPdfFile" accept=".pdf" aria-label="選擇 PDF 文件" data-on-change="uploadAdminPdf" data-action-target>
         <div id="adminKbHealth" class="admin-health-grid">
           <div class="wo-empty">載入中...</div>
         </div>
@@ -142,10 +144,10 @@
         <div class="admin-ingest-form">
           <div class="section-label u-mb-10">✏️ 文字寫入</div>
           <div class="ingest-inputs">
-            <input type="text" id="adminIngestCode" placeholder="Alarm code（選填）">
-            <input type="text" id="adminIngestTitle" placeholder="標題（選填）">
+            <input type="text" id="adminIngestCode" placeholder="Alarm code（選填）" aria-label="知識內容警報代碼">
+            <input type="text" id="adminIngestTitle" placeholder="標題（選填）" aria-label="知識內容標題">
           </div>
-          <textarea id="adminIngestText" placeholder="新增 SOP、公告或已驗證維修紀錄"></textarea>
+          <textarea id="adminIngestText" placeholder="新增 SOP、公告或已驗證維修紀錄" aria-label="知識內容"></textarea>
           <div class="wo-actions u-mt-0">
             <button class="wo-btn" id="adminIngestBtn" type="button" data-on-click="ingestAdminText">📝 寫入知識庫</button>
           </div>
@@ -165,7 +167,7 @@
             <option value="feedback">最近回饋</option>
             <option value="all">全部</option>
           </select>
-          <input class="wo-input" id="adminQualitySearch" placeholder="搜尋 alarm code、manual、工單、缺漏說明">
+          <input class="wo-input" id="adminQualitySearch" placeholder="搜尋 alarm code、manual、工單、缺漏說明" aria-label="搜尋品質清單">
           <button class="wo-btn alt u-m-0" type="button" data-on-click="exportAdminQualityCsv">匯出品質清單</button>
         </div>
         <div class="role-kpi-grid compact" id="adminQualitySummary">
@@ -192,7 +194,7 @@
         <div class="admin-settings-grid">
           <div class="wo-field">
             <label class="wo-field-label">預設手冊</label>
-            <select class="wo-select" id="adminDefaultManual">
+            <select class="wo-select" id="adminDefaultManual" aria-label="預設手冊">
               <option value="808d">808D</option>
               <option value="840d">840D</option>
               <option value="840dsl">840D sl</option>
@@ -201,7 +203,7 @@
           </div>
           <div class="wo-field">
             <label class="wo-field-label">登入有效時數</label>
-            <input class="wo-input" id="adminSessionHours" type="number" min="1" max="72" step="1">
+            <input class="wo-input" id="adminSessionHours" type="number" min="1" max="72" step="1" aria-label="登入有效時數">
           </div>
           <label class="settings-toggle">
             <input id="adminAllowOperatorReopen" type="checkbox">

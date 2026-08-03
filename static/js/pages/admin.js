@@ -208,12 +208,12 @@ function renderAdminUser(app, user) {
         <span class="wo-badge">scope ${app.esc(lineScope || '-')}</span>
       </div>
       <div class="role-user-edit">
-        <input class="wo-input" id="adminName_${safeId}" value="${adminAttr(user.name || '')}" placeholder="顯示名稱">
-        <input class="wo-input" id="adminTeam_${safeId}" value="${adminAttr(user.team || '')}" placeholder="團隊">
-        <select class="wo-select" id="adminRole_${safeId}">
+        <input class="wo-input" id="adminName_${safeId}" value="${adminAttr(user.name || '')}" placeholder="顯示名稱" aria-label="${safeId} 的顯示名稱">
+        <input class="wo-input" id="adminTeam_${safeId}" value="${adminAttr(user.team || '')}" placeholder="團隊" aria-label="${safeId} 的團隊">
+        <select class="wo-select" id="adminRole_${safeId}" aria-label="${safeId} 的角色">
           ${renderAdminRoleOptions(user.role)}
         </select>
-        <input class="wo-input" id="adminScope_${safeId}" value="${adminAttr(lineScope)}" placeholder="LINE-A, LINE-B 或 *">
+        <input class="wo-input" id="adminScope_${safeId}" value="${adminAttr(lineScope)}" placeholder="LINE-A, LINE-B 或 *" aria-label="${safeId} 的產線範圍">
         <div class="wo-actions u-mt-0">
           <button class="wo-btn alt" type="button" data-on-click="resetAdminPassword" data-action-args="[${adminJsArg(userId)}]">重設密碼</button>
           <button class="wo-btn alt" type="button" data-on-click="revokeAdminUserSessions" data-action-args="[${adminJsArg(userId)}]">撤銷 Session</button>

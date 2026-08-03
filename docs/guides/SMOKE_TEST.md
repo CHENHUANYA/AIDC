@@ -117,10 +117,32 @@ isolated data directory. It does not restart or write to the service on port
 8100. The suite covers login/logout, login throttling, multi-turn Assistant
 history, Dashboard charts and tools, role redirects, CSP console/runtime
 errors, issue/work-order lifecycle flows, answer trace modals, responsive
-layouts, and screenshots. Results are written to:
+layouts, screenshots, and a zero-third-party-request assertion. It also audits
+all eight pages for main landmarks, keyboard skip links, visible focus,
+accessible control names, image alternatives, and dialog semantics. Answer
+Trace verifies focus containment, Escape closing, and focus restoration. The UI
+uses cross-platform system font stacks, so browser pages should not contact
+Google Fonts or any other external static-asset host. Results are written to:
 
 - `tests_tmp/browser_e2e/browser_e2e_report.json`
 - `tests_tmp/browser_e2e/screenshots/`
+
+Static asset cache policy can be checked independently:
+
+```bash
+curl -I "http://localhost:8100/static/css/tokens.css?v=1"
+curl -I "http://localhost:8100/static/js/core/api.js"
+curl -I "http://localhost:8100/login"
+curl -sS -D - -o /dev/null -H "Accept-Encoding: gzip" \
+  "http://localhost:8100/static/css/tokens.css?v=1"
+```
+
+The versioned asset should return
+`Cache-Control: public, max-age=31536000, immutable`; the unversioned asset
+should return `public, max-age=3600, must-revalidate`; and the login page should
+remain `no-store`. The final request should also return `Content-Encoding:
+gzip` and `Vary: Accept-Encoding`. Streaming `text/event-stream` responses are
+excluded from compression so incremental chat delivery is not buffered.
 
 ## Notes
 

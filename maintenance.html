@@ -4,11 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>維修工作台</title>
-  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/tokens.css?v=1">
   <link rel="stylesheet" href="/static/css/maintenance.css?v=quality-3">
   <link rel="stylesheet" href="/static/css/utilities.css?v=csp-1">
+  <link rel="stylesheet" href="/static/css/accessibility.css?v=1">
 </head>
 <body data-page="maintenance">
+<a class="skip-link" href="#main-content">跳至主要內容</a>
 
 <header>
   <div class="logo">
@@ -32,6 +34,7 @@
   <button class="tab-btn" data-tab="chat" data-on-click="switchTab" data-action-args='["chat"]' data-action-target>對話</button>
 </div>
 
+<main id="main-content" tabindex="-1">
 <div class="panel active" id="panel-workbench">
   <div class="container">
     <div class="section-label">維修目前狀態</div>
@@ -48,7 +51,7 @@
         <button class="wo-btn alt" data-on-click="loadMaintenanceData">重整</button>
       </div>
       <div class="maintenance-filter-row">
-        <input class="wo-input" id="mtIssueFilter" placeholder="篩選問題、機台、產線、alarm">
+        <input class="wo-input" id="mtIssueFilter" placeholder="篩選問題、機台、產線、alarm" aria-label="篩選問題佇列">
       </div>
       <div id="maintenanceIssueList"><div class="wo-empty">載入中...</div></div>
     </div>
@@ -59,21 +62,21 @@
         <button class="wo-btn alt" data-on-click="loadMaintenanceData">重整</button>
       </div>
       <div class="maintenance-filter-row">
-        <select class="wo-select" id="mtWorkView">
+        <select class="wo-select" id="mtWorkView" aria-label="工單檢視範圍">
           <option value="active">進行中 / 待驗證</option>
           <option value="verified">已驗證封存</option>
           <option value="all">全部未封存</option>
           <option value="unassigned">未指派</option>
           <option value="mine">我的工單</option>
         </select>
-        <select class="wo-select" id="mtPriorityFilter">
+        <select class="wo-select" id="mtPriorityFilter" aria-label="工單優先等級篩選">
           <option value="">全部優先級</option>
           <option value="critical">緊急</option>
           <option value="high">高</option>
           <option value="medium">中</option>
           <option value="low">低</option>
         </select>
-        <input class="wo-input" id="mtWorkFilter" placeholder="篩選工單、機台、alarm">
+        <input class="wo-input" id="mtWorkFilter" placeholder="篩選工單、機台、alarm" aria-label="篩選工單">
       </div>
       <div class="wo-board" id="maintenanceWorkBoard"></div>
     </div>
@@ -113,7 +116,7 @@
 
     <div class="section-label">輸入警報代碼或問題描述</div>
     <div class="search-wrap">
-      <input class="search-box" id="searchInput" type="text" placeholder="例如：5000 或 communication job not executable" autocomplete="off" spellcheck="false">
+      <input class="search-box" id="searchInput" type="text" placeholder="例如：5000 或 communication job not executable" autocomplete="off" spellcheck="false" aria-label="警報代碼或關鍵字">
       <button class="search-btn" id="searchBtn" data-on-click="doSearch">查詢</button>
     </div>
 
@@ -187,43 +190,44 @@
         </div>
       </div>
       <div class="chat-input-area">
-        <textarea class="chat-input" id="chatInput" rows="1" placeholder="輸入維修問題，例如：Alarm 5000 出現後 HMI 無法載入 NC 程式" data-on-input="autoResize" data-input-target data-on-keydown="chatKeydown" data-keydown-event></textarea>
+        <textarea class="chat-input" id="chatInput" rows="1" placeholder="輸入維修問題，例如：Alarm 5000 出現後 HMI 無法載入 NC 程式" aria-label="維修助理問題" data-on-input="autoResize" data-input-target data-on-keydown="chatKeydown" data-keydown-event></textarea>
         <button class="chat-clear-btn" data-on-click="clearChat" title="清除對話">清除</button>
         <button class="chat-send-btn" id="chatSendBtn" data-on-click="sendChat" title="傳送">➤</button>
       </div>
     </div>
   </div>
 </div>
+</main>
 
-<div class="wo-modal" id="maintenanceModal">
+<div class="wo-modal" id="maintenanceModal" role="dialog" aria-modal="true" aria-labelledby="mtModalTitle">
   <div class="wo-modal-card">
     <div class="wo-modal-head">
       <div><div class="wo-modal-title" id="mtModalTitle">工單</div><div class="wo-note" id="mtModalId"></div></div>
-      <button class="close-x" data-on-click="closeMaintenanceModal">x</button>
+      <button class="close-x" data-on-click="closeMaintenanceModal" aria-label="關閉工單對話框">x</button>
     </div>
     <div class="maintenance-context" id="mtIssueContext"></div>
     <div class="maintenance-timeline" id="mtWorkTimeline"></div>
     <div class="maintenance-verify-note u-hidden" id="mtKnowledgeReview"></div>
     <div class="wo-modal-grid">
-      <div><div class="wo-note">狀態</div><select class="wo-select" id="mtEditStatus"><option value="pending">待處理</option><option value="assigned">已指派</option><option value="in_progress">進行中</option><option value="completed">已完成</option></select></div>
-      <div><div class="wo-note">優先等級</div><select class="wo-select" id="mtEditPriority"><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">緊急</option></select></div>
-      <div><div class="wo-note">負責人</div><input class="wo-input" id="mtEditAssignee"></div>
-      <div><div class="wo-note">機台</div><input class="wo-input" id="mtEditMachine"></div>
+      <div><div class="wo-note">狀態</div><select class="wo-select" id="mtEditStatus" aria-label="工單狀態"><option value="pending">待處理</option><option value="assigned">已指派</option><option value="in_progress">進行中</option><option value="completed">已完成</option></select></div>
+      <div><div class="wo-note">優先等級</div><select class="wo-select" id="mtEditPriority" aria-label="工單優先等級"><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">緊急</option></select></div>
+      <div><div class="wo-note">負責人</div><input class="wo-input" id="mtEditAssignee" aria-label="工單負責人"></div>
+      <div><div class="wo-note">機台</div><input class="wo-input" id="mtEditMachine" aria-label="工單機台"></div>
     </div>
-    <div class="wo-note u-mt-10">問題描述</div><textarea class="wo-text" id="mtEditDesc"></textarea>
-    <div class="wo-note u-mt-10">產線端 LLM 初步建議</div><textarea class="wo-text" id="mtEditRagSuggestion" readonly></textarea>
-    <div class="wo-note u-mt-10">處理結果 / 解決方案</div><textarea class="wo-text" id="mtEditResolution"></textarea>
-    <div class="wo-note u-mt-10">備註</div><textarea class="wo-text" id="mtEditNotes"></textarea>
+    <div class="wo-note u-mt-10">問題描述</div><textarea class="wo-text" id="mtEditDesc" aria-label="問題描述"></textarea>
+    <div class="wo-note u-mt-10">產線端 LLM 初步建議</div><textarea class="wo-text" id="mtEditRagSuggestion" aria-label="產線端 LLM 初步建議" readonly></textarea>
+    <div class="wo-note u-mt-10">處理結果 / 解決方案</div><textarea class="wo-text" id="mtEditResolution" aria-label="處理結果或解決方案"></textarea>
+    <div class="wo-note u-mt-10">備註</div><textarea class="wo-text" id="mtEditNotes" aria-label="工單備註"></textarea>
     <div class="wo-modal-grid u-mt-10">
-      <div><div class="wo-note">接受人員</div><input class="wo-input" id="mtEditAcceptedBy"></div>
-      <div><div class="wo-note">完成人員</div><input class="wo-input" id="mtEditCompletedBy"></div>
-      <div><div class="wo-note">根本原因</div><input class="wo-input" id="mtEditRootCause"></div>
-      <div><div class="wo-note">故障分類</div><input class="wo-input" id="mtEditFailureCategory"></div>
-      <div><div class="wo-note">LLM 正確率回饋</div><select class="wo-select" id="mtEditLlmCorrectness"><option value="">未評估</option><option value="correct">正確</option><option value="partially_correct">部分正確</option><option value="incorrect">不正確</option><option value="unknown">未知</option></select></div>
-      <div><div class="wo-note">LLM 覆蓋率回饋</div><select class="wo-select" id="mtEditLlmCoverage"><option value="">未評估</option><option value="complete">完整</option><option value="missing_steps">缺步驟</option><option value="missing_source">缺來源</option><option value="not_applicable">不適用</option></select></div>
+      <div><div class="wo-note">接受人員</div><input class="wo-input" id="mtEditAcceptedBy" aria-label="接受人員"></div>
+      <div><div class="wo-note">完成人員</div><input class="wo-input" id="mtEditCompletedBy" aria-label="完成人員"></div>
+      <div><div class="wo-note">根本原因</div><input class="wo-input" id="mtEditRootCause" aria-label="根本原因"></div>
+      <div><div class="wo-note">故障分類</div><input class="wo-input" id="mtEditFailureCategory" aria-label="故障分類"></div>
+      <div><div class="wo-note">LLM 正確率回饋</div><select class="wo-select" id="mtEditLlmCorrectness" aria-label="LLM 正確率回饋"><option value="">未評估</option><option value="correct">正確</option><option value="partially_correct">部分正確</option><option value="incorrect">不正確</option><option value="unknown">未知</option></select></div>
+      <div><div class="wo-note">LLM 覆蓋率回饋</div><select class="wo-select" id="mtEditLlmCoverage" aria-label="LLM 覆蓋率回饋"><option value="">未評估</option><option value="complete">完整</option><option value="missing_steps">缺步驟</option><option value="missing_source">缺來源</option><option value="not_applicable">不適用</option></select></div>
     </div>
-    <div class="wo-note u-mt-10">實際維修動作</div><textarea class="wo-text" id="mtEditRepairAction"></textarea>
-    <div class="wo-note u-mt-10">LLM 缺漏 / 建議修正</div><textarea class="wo-text" id="mtEditLlmMissingInfo"></textarea>
+    <div class="wo-note u-mt-10">實際維修動作</div><textarea class="wo-text" id="mtEditRepairAction" aria-label="實際維修動作"></textarea>
+    <div class="wo-note u-mt-10">LLM 缺漏 / 建議修正</div><textarea class="wo-text" id="mtEditLlmMissingInfo" aria-label="LLM 缺漏或建議修正"></textarea>
     <div class="maintenance-verify-note">
       閉環規則：維修完成時需填寫根本原因與實際維修動作；工單需由 Operator 或 Supervisor 驗證後才會正式關閉。
     </div>

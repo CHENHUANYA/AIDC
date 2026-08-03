@@ -1,3 +1,4 @@
+import json
 import shutil
 from datetime import datetime, timedelta, timezone
 import unittest
@@ -155,6 +156,48 @@ class IssueWorkOrderPermissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("error", result["status"])
         self.assertIn("Reload and retry", result["message"])
         self.assertEqual("medium", work_orders.get_order_dict(order["id"])["priority"])
+
+    async def test_null_legacy_issue_version_is_normalized_and_can_be_updated(self):
+        issue = issues.create_issue_dict(
+            machine_id="CNC-01",
+            description="Legacy issue",
+            line_id="LINE-A",
+            created_by="operator01",
+        )
+        payload = json.loads((self.tmp_root / "issues.json").read_text(encoding="utf-8"))
+        payload[0]["version"] = None
+        (self.tmp_root / "issues.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        result = await issues.api_update_issue(
+            issue["issue_id"],
+            issues.UpdateIssue(description="Updated legacy issue", version=1),
+            actor=SUPERVISOR,
+        )
+
+        self.assertEqual("ok", result["status"])
+        self.assertEqual(2, result["issue"]["version"])
+        self.assertEqual("Updated legacy issue", result["issue"]["description"])
+
+    async def test_null_legacy_work_order_version_is_normalized_and_can_be_updated(self):
+        order = work_orders.create_order_dict(
+            alarm_code="3000",
+            machine_id="CNC-01",
+            description="Legacy work order",
+            created_by="operator01",
+        )
+        payload = json.loads((self.tmp_root / "work_orders.json").read_text(encoding="utf-8"))
+        payload[0]["version"] = None
+        (self.tmp_root / "work_orders.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        result = await work_orders.api_update_order(
+            order["id"],
+            work_orders.UpdateWorkOrder(priority="high", version=1),
+            actor=SUPERVISOR,
+        )
+
+        self.assertEqual("ok", result["status"])
+        self.assertEqual(2, result["order"]["version"])
+        self.assertEqual("high", result["order"]["priority"])
 
     async def test_stale_issue_update_is_rejected_with_reload_message(self):
         issue = issues.create_issue_dict(
