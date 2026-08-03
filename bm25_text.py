@@ -36,6 +36,14 @@ _DOMAIN_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("夹具", ("clamp",)),
     ("刀庫", ("tool", "magazine")),
     ("刀库", ("tool", "magazine")),
+    ("換刀", ("tool", "change", "magazine", "clamp", "confirmation", "pocket", "sensor", "home", "switch", "automatic")),
+    ("换刀", ("tool", "change", "magazine", "clamp", "confirmation", "pocket", "sensor", "home", "switch", "automatic")),
+    ("刀具更換", ("tool", "change", "magazine", "clamp", "confirmation", "pocket", "sensor", "home", "switch", "automatic")),
+    ("刀具更换", ("tool", "change", "magazine", "clamp", "confirmation", "pocket", "sensor", "home", "switch", "automatic")),
+    ("無法啟動", ("start", "disable")),
+    ("无法启动", ("start", "disable")),
+    ("不能啟動", ("start", "disable")),
+    ("不能启动", ("start", "disable")),
     ("探針", ("probe",)),
     ("探针", ("probe",)),
     ("校正", ("calibration",)),
@@ -46,6 +54,13 @@ _DOMAIN_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("空压", ("air", "pressure")),
     ("調壓器", ("regulator",)),
     ("调压器", ("regulator",)),
+)
+
+_RETRIEVAL_PHRASE_EXPANSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("換刀", ("tool change", "tool magazine", "tool clamp", "clamp confirmation", "pocket sensor", "magazine home", "automatic tool change")),
+    ("换刀", ("tool change", "tool magazine", "tool clamp", "clamp confirmation", "pocket sensor", "magazine home", "automatic tool change")),
+    ("刀具更換", ("tool change", "tool magazine", "tool clamp", "clamp confirmation", "pocket sensor", "magazine home", "automatic tool change")),
+    ("刀具更换", ("tool change", "tool magazine", "tool clamp", "clamp confirmation", "pocket sensor", "magazine home", "automatic tool change")),
 )
 
 
@@ -65,3 +80,28 @@ def tokenize_bm25(value: str) -> list[str]:
         for _ in range(occurrences):
             tokens.extend(aliases)
     return tokens
+
+
+def expand_query_with_domain_aliases(value: str) -> str:
+    """Append matched English domain aliases for embedding/vector retrieval."""
+    original = str(value or "")
+    normalized = unicodedata.normalize("NFKC", original).casefold()
+    additions: list[str] = []
+    seen: set[str] = set()
+    for phrase, aliases in _DOMAIN_ALIASES:
+        if phrase not in normalized:
+            continue
+        for alias in aliases:
+            if alias in seen:
+                continue
+            seen.add(alias)
+            additions.append(alias)
+    for phrase, expansions in _RETRIEVAL_PHRASE_EXPANSIONS:
+        if phrase not in normalized:
+            continue
+        for expansion in expansions:
+            if expansion in seen:
+                continue
+            seen.add(expansion)
+            additions.append(expansion)
+    return f"{original} {' '.join(additions)}".strip()

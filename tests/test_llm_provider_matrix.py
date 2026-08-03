@@ -110,6 +110,48 @@ class LlmProviderMatrixTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(("school answer", "school"), school_result)
         self.assertEqual(("ollama answer", "ollama"), fallback_result)
 
+    async def test_grounding_guard_retries_false_not_found_answer(self):
+        docs = [{
+            "text": "3000 Emergency stop. NC Start disable.",
+            "meta": {"code": "3000", "page": 58, "title": "Emergency stop"},
+        }]
+        calls = AsyncMock(side_effect=[
+            "無法在手冊中找到警報代碼 3000，請確認代碼或建立索引後再試。",
+            "Alarm 3000 已找到；請檢查急停狀態與 NC Start disable。",
+        ])
+
+        with patch.object(chat_lookup_routes, "call_llm", new=calls):
+            answer = await chat_lookup_routes.call_llm_with_retrieval_guard(
+                [{"role": "system", "content": "grounded"}, {"role": "user", "content": "q"}],
+                docs,
+                "Alarm 3000 為什麼無法啟動？",
+                0.1,
+                128,
+            )
+
+        self.assertIn("Alarm 3000 已找到", answer)
+        self.assertEqual(2, calls.await_count)
+        self.assertIn("Retrieval metadata confirms", calls.await_args_list[1].args[0][0]["content"])
+
+    async def test_grounding_guard_blocks_repeated_retrieval_contradiction(self):
+        docs = [{
+            "text": "3000 Emergency stop.",
+            "meta": {"code": "3000", "page": 58, "title": "Emergency stop"},
+        }]
+        false_answer = "無法在手冊中找到警報代碼 3000，請確認代碼或建立索引後再試。"
+
+        with patch.object(chat_lookup_routes, "call_llm", new=AsyncMock(return_value=false_answer)):
+            answer = await chat_lookup_routes.call_llm_with_retrieval_guard(
+                [{"role": "system", "content": "grounded"}],
+                docs,
+                "Alarm 3000 無法啟動",
+                0.1,
+                128,
+            )
+
+        self.assertIn("已在檢索資料中找到 Alarm 3000", answer)
+        self.assertNotIn("無法在手冊中找到", answer)
+
     async def test_streaming_error_response_contains_readable_fallback_and_done(self):
         request = ChatRequest(messages=[Message(role="user", content="Alarm 3000")], stream=True)
 

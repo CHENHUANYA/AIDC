@@ -36,11 +36,13 @@ from app_context import (
     SCHOOL_API_MODEL,
     ChatRequest,
     build_augmented_messages,
+    build_grounded_diagnostic_answer,
     build_rag_metadata,
     build_rag_preview,
     classify_alarm,
     error_log,
     get_existing_engine,
+    is_troubleshooting_query,
     is_safe_path_segment,
     log_query,
     make_openai_response,
@@ -209,6 +211,95 @@ async def call_llm(messages: list[dict], temperature: float, max_tokens: int) ->
     return content
 
 
+_NOT_FOUND_ANSWER_MARKERS = (
+    "無法在手冊中找到警報代碼",
+    "无法在手册中找到报警代码",
+    "alarm code was not found",
+    "alarm code not found",
+    "not found in the manual",
+)
+
+
+def answer_conflicts_with_retrieval(answer: str, user_query: str, docs: list[dict]) -> bool:
+    normalized_answer = re.sub(r"\s+", " ", str(answer or "")).casefold()
+    if not any(marker.casefold() in normalized_answer for marker in _NOT_FOUND_ANSWER_MARKERS):
+        return False
+    requested_codes = set(re.findall(r"\b\d{2,6}\b", str(user_query or "")))
+    retrieved_codes = {
+        str(doc.get("meta", {}).get("code") or "").strip()
+        for doc in docs
+        if str(doc.get("meta", {}).get("code") or "").strip()
+    }
+    return bool(requested_codes & retrieved_codes)
+
+
+def _grounding_repair_messages(messages: list[dict], user_query: str, docs: list[dict]) -> list[dict]:
+    confirmed_codes = sorted(
+        {
+            str(doc.get("meta", {}).get("code") or "").strip()
+            for doc in docs
+            if str(doc.get("meta", {}).get("code") or "").strip()
+        }
+    )
+    correction = (
+        "\n\nCORRECTION: Retrieval metadata confirms these alarm codes are present: "
+        f"{', '.join(confirmed_codes)}. Your previous response incorrectly claimed a requested code was missing. "
+        "Answer the user's troubleshooting question from the retrieved sections. State any uncovered part of the scenario "
+        "as a limitation, but do not use the not-found template for a confirmed code."
+    )
+    repaired = [dict(message) for message in messages]
+    if repaired and repaired[0].get("role") == "system":
+        repaired[0]["content"] = str(repaired[0].get("content") or "") + correction
+    else:
+        repaired.insert(0, {"role": "system", "content": correction.strip()})
+    repaired.append(
+        {
+            "role": "user",
+            "content": f"Re-answer the original question without contradicting the retrieved alarm metadata: {user_query}",
+        }
+    )
+    return repaired
+
+
+def _retrieval_conflict_fallback(user_query: str, docs: list[dict]) -> str:
+    requested_codes = set(re.findall(r"\b\d{2,6}\b", str(user_query or "")))
+    matches = []
+    for doc in docs:
+        meta = doc.get("meta", {})
+        code = str(meta.get("code") or "").strip()
+        if code not in requested_codes:
+            continue
+        title = str(meta.get("title") or "").strip()
+        page = str(meta.get("page") or "").strip()
+        matches.append(f"Alarm {code} {title} (P.{page})".strip())
+    confirmed = "、".join(matches) or "已命中的手冊段落"
+    return (
+        f"已在檢索資料中找到 {confirmed}，但模型回覆與檢索結果衝突，因此已阻止錯誤的「找不到」結論。"
+        "請先依下方引用檢查；目前資料不足以安全生成其餘故障步驟。"
+    )
+
+
+async def call_llm_with_retrieval_guard(
+    messages: list[dict],
+    docs: list[dict],
+    user_query: str,
+    temperature: float,
+    max_tokens: int,
+) -> str:
+    generation_max_tokens = min(max_tokens, 256) if is_troubleshooting_query(user_query) else max_tokens
+    content = await call_llm(messages, temperature, generation_max_tokens)
+    if not answer_conflicts_with_retrieval(content, user_query, docs):
+        return content
+
+    logger.warning("LLM contradicted exact retrieval metadata; retrying grounded answer")
+    repaired_messages = _grounding_repair_messages(messages, user_query, docs)
+    repaired_content = await call_llm(repaired_messages, 0.0, generation_max_tokens)
+    if answer_conflicts_with_retrieval(repaired_content, user_query, docs):
+        logger.error("LLM repeated a retrieval contradiction; returning deterministic guard response")
+        return _retrieval_conflict_fallback(user_query, docs)
+    return repaired_content
+
+
 def save_rag_answer(
     *,
     answer_id: str,
@@ -297,7 +388,7 @@ async def stream_chat_events(
     answer_state = "complete"
     tags = answer_source_tags(docs)
     try:
-        if LLM_PROVIDER == "ollama":
+        if LLM_PROVIDER == "ollama" and not is_troubleshooting_query(user_query):
             async for content_part in stream_ollama(messages, temperature, max_tokens):
                 if first_event and tags:
                     content_part = f"{tags}\n{content_part}"
@@ -312,7 +403,13 @@ async def stream_chat_events(
                 raise RuntimeError("LLM returned empty streaming response")
             provider = request_llm_source.get()
         else:
-            content = await call_llm(messages, temperature, max_tokens)
+            content = await call_llm_with_retrieval_guard(
+                messages,
+                docs,
+                user_query,
+                temperature,
+                max_tokens,
+            )
             if not content:
                 raise RuntimeError("LLM returned empty response")
             if tags:
@@ -427,6 +524,42 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
     response_id = new_answer_id()
     temperature = req.temperature if req.temperature is not None else 0.1
     max_tokens = req.max_tokens or 1024
+    grounded_answer = build_grounded_diagnostic_answer(user_query, docs)
+    if grounded_answer:
+        tags = answer_source_tags(docs)
+        content = f"{tags}\n{grounded_answer}" if tags else grounded_answer
+        elapsed_ms = int((time.time() - start_ts) * 1000)
+        log_query(collection_name, user_query, source="api-grounded", elapsed_ms=elapsed_ms)
+        save_rag_answer(
+            answer_id=response_id,
+            query=user_query,
+            collection=collection_name,
+            answer=content,
+            rag_metadata=rag_metadata,
+            provider="retrieval",
+            model="",
+            elapsed_ms=elapsed_ms,
+            created_by=actor_id(actor),
+            tokenizer_version=getattr(engine, "tokenizer_version", "legacy-whitespace-v0"),
+            answer_state="complete",
+        )
+        runtime_metrics.record_rag(
+            retrieval_ms=retrieval_ms,
+            model_ms=0,
+            total_ms=(time.monotonic() - request_started) * 1000,
+            provider="retrieval",
+            outcome="complete",
+            streaming=req.stream,
+        )
+        if req.stream:
+            async def grounded_stream():
+                yield make_sse_chunk(content, rag=rag_metadata, response_id=response_id)
+                yield make_sse_chunk("", finish=True, response_id=response_id)
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(grounded_stream(), media_type="text/event-stream", headers=SSE_HEADERS)
+        return make_openai_response(content, rag=rag_metadata, response_id=response_id)
+
     if req.stream:
         return StreamingResponse(
             stream_chat_events(
@@ -448,8 +581,10 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
         )
     model_started = time.monotonic()
     try:
-        content = await call_llm(
+        content = await call_llm_with_retrieval_guard(
             messages=augmented,
+            docs=docs,
+            user_query=user_query,
             temperature=temperature,
             max_tokens=max_tokens,
         )

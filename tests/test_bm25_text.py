@@ -3,7 +3,7 @@ import pickle
 from rank_bm25 import BM25Okapi
 
 import rag_engine
-from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
+from bm25_text import BM25_TOKENIZER_VERSION, expand_query_with_domain_aliases, tokenize_bm25
 from rag_engine import AlarmRAGEngine
 
 
@@ -13,6 +13,27 @@ def test_tokenizer_normalizes_unicode_and_adds_domain_aliases():
     assert BM25_TOKENIZER_VERSION == "unicode-domain-v1"
     assert {"roughing", "coolant", "pressure", "low", "pump", "ready", "signal", "lost"} <= set(tokens)
     assert "冷卻" in tokens
+
+
+def test_tokenizer_maps_traditional_chinese_tool_change_start_failure():
+    tokens = tokenize_bm25("換刀後 NC 無法啟動")
+
+    assert {
+        "tool", "change", "magazine", "clamp", "confirmation", "pocket", "sensor", "home", "switch", "automatic",
+        "nc", "start", "disable",
+    } <= set(tokens)
+
+
+def test_vector_query_expansion_appends_domain_aliases_once():
+    expanded = expand_query_with_domain_aliases("換刀後無法啟動")
+
+    assert expanded.startswith("換刀後無法啟動 ")
+    assert expanded.count("tool magazine") == 1
+    assert expanded.count("automatic tool change") == 1
+    assert {
+        "change", "magazine", "clamp", "confirmation", "pocket", "sensor", "home", "switch", "automatic",
+        "start", "disable",
+    } <= set(expanded.split())
 
 
 def test_runtime_retrieval_expands_chinese_query_for_legacy_english_index():

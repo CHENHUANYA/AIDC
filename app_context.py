@@ -31,6 +31,7 @@ load_local_env()
 from pydantic import BaseModel, Field
 
 from config_values import env_float, env_int
+from bm25_text import expand_query_with_domain_aliases
 from rag_engine import AlarmRAGEngine
 from secret_values import secret_value
 from storage import (
@@ -100,6 +101,24 @@ When manual sections are provided, base your answer on them. You may:
 
 If the manual sections are not relevant to the question, answer from general CNC/SINUMERIK knowledge and clearly say so.
 Keep answers concise and practical for factory floor use."""
+
+DIAGNOSTIC_SYSTEM_PROMPT = """You are a SINUMERIK CNC maintenance assistant answering a troubleshooting question.
+Use ONLY facts supported by the retrieved sections. Answer the user's actual question in Traditional Chinese; do not merely
+copy or translate one alarm entry.
+
+GROUNDING RULES:
+1. A header such as [Alarm: 3000] proves that Alarm 3000 was found. Never claim that a requested code was not found when
+   the same code appears in a retrieved header.
+2. Start with the checks directly supported by the exact alarm section, then add relevant checks from the other retrieved
+   sections. Every check MUST end with its supporting source, for example [Alarm 3000, P.58] or [mock-week2-sop].
+3. Do not invent PLC bits, signal states, thresholds, causal relationships, or machine-specific procedures.
+4. Clearly distinguish official manual content from internal or MOCK DATA sources. Never present mock knowledge as an
+   official manual instruction.
+5. If the retrieved sections do not cover part of the user's scenario, say exactly what is not covered and ask for the
+   missing alarm code, PLC signal, or machine state needed to continue.
+6. Do not say a cause is likely unless a retrieved section explicitly states that relationship.
+7. Use at most six short bullets and 300 Traditional Chinese characters. Organize the answer as: direct conclusion, checks,
+   and missing evidence (only when needed)."""
 
 NOT_READY_TEMPLATE = """⚠️ The index for manual **{name}** has not been built yet.
 
@@ -254,20 +273,130 @@ def get_collection_summary(collection_name: str) -> dict:
     return summary
 
 
+_DIAGNOSTIC_QUERY_MARKERS = (
+    "檢查",
+    "检查",
+    "原因",
+    "為什麼",
+    "为什么",
+    "無法",
+    "无法",
+    "不能",
+    "怎麼",
+    "怎么",
+    "如何",
+    "還需要",
+    "还需要",
+    "check",
+    "why",
+    "cannot",
+    "can't",
+    "won't",
+    "troubleshoot",
+    "root cause",
+    "remedy",
+)
+
+
+def is_troubleshooting_query(query: str) -> bool:
+    normalized = str(query or "").casefold()
+    return any(marker in normalized for marker in _DIAGNOSTIC_QUERY_MARKERS)
+
+
+def _doc_identity(doc: dict) -> tuple[str, str, str, str]:
+    meta = doc.get("meta", {})
+    return (
+        str(meta.get("doc_id") or ""),
+        str(meta.get("code") or ""),
+        str(meta.get("page") or ""),
+        str(doc.get("text") or ""),
+    )
+
+
+def _retrieve_for_question(user_query: str, engine: AlarmRAGEngine) -> list[dict]:
+    docs = engine.retrieve(user_query, top_k=RAG_CHAT_TOP_K)
+    if not is_troubleshooting_query(user_query) or len(docs) != 1 or RAG_CHAT_TOP_K <= 1:
+        return docs
+
+    exact_code = str(docs[0].get("meta", {}).get("code") or "").strip()
+    if not exact_code or not re.search(rf"\b{re.escape(exact_code)}\b", user_query):
+        return docs
+
+    related_query = re.sub(
+        rf"\b(?:alarm\s*)?{re.escape(exact_code)}\b",
+        " ",
+        user_query,
+        flags=re.IGNORECASE,
+    ).strip()
+    if not related_query:
+        return docs
+
+    expanded_related_query = expand_query_with_domain_aliases(related_query)
+    related_docs = engine.retrieve(expanded_related_query, top_k=max(RAG_CHAT_TOP_K * 4, 12))
+    priority_weights = {
+        "tool change": 6,
+        "tool magazine": 5,
+        "tool clamp": 4,
+        "clamp confirmation": 3,
+        "start disable": 2,
+    }
+
+    def related_priority(item: tuple[int, dict]) -> tuple[int, int]:
+        rank, doc = item
+        searchable = f"{doc.get('meta', {}).get('title') or ''} {doc.get('text') or ''}".casefold()
+        score = sum(
+            weight
+            for phrase, weight in priority_weights.items()
+            if phrase in expanded_related_query.casefold() and phrase in searchable
+        )
+        if "tool" in expanded_related_query.casefold() and "tool" in searchable:
+            score += 2
+        if doc.get("meta", {}).get("source") or doc.get("meta", {}).get("source_file"):
+            score += 1
+        return (-score, rank)
+
+    related_docs = [doc for _, doc in sorted(enumerate(related_docs), key=related_priority)]
+    merged: list[dict] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for doc in [*docs, *related_docs]:
+        identity = _doc_identity(doc)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        merged.append(doc)
+        if len(merged) >= RAG_CHAT_TOP_K:
+            break
+    return merged
+
+
+def _retrieval_context(docs: list[dict]) -> str:
+    if not docs:
+        return "No relevant alarm sections found."
+    sections = []
+    for doc in docs:
+        meta = doc.get("meta", {})
+        source = meta.get("source") or meta.get("source_file") or meta.get("kind") or meta.get("type") or "manual"
+        sections.append(
+            f"[Page {meta.get('page', '')} | Alarm: {meta.get('code', '')} | Source: {source}]\n"
+            f"{str(doc.get('text') or '')[:RAG_CONTEXT_CHARS_PER_DOC]}"
+        )
+    return "\n\n".join(sections)
+
+
 def build_augmented_messages(messages: List[Message], engine: AlarmRAGEngine) -> tuple[list[dict], list[dict]]:
     user_query = next((m.content for m in reversed(messages) if m.role == "user"), "")
     if not user_query:
         return [{"role": m.role, "content": m.content} for m in messages], []
 
-    docs = engine.retrieve(user_query, top_k=RAG_CHAT_TOP_K)
-    context = "\n\n".join([
-        f"[Page {d['meta']['page']} | Alarm: {d['meta']['code']}]\n{str(d['text'])[:RAG_CONTEXT_CHARS_PER_DOC]}"
-        for d in docs
-    ]) if docs else "No relevant alarm sections found."
+    docs = _retrieve_for_question(user_query, engine)
+    context = _retrieval_context(docs)
 
     if len([m for m in messages if m.role == "user"]) == 1:
         return [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": DIAGNOSTIC_SYSTEM_PROMPT if is_troubleshooting_query(user_query) else SYSTEM_PROMPT,
+            },
             {
                 "role": "user",
                 "content": f"Retrieved manual sections:\n---\n{context}\n---\n\nQuestion: {user_query}",
@@ -285,6 +414,100 @@ def build_augmented_messages(messages: List[Message], engine: AlarmRAGEngine) ->
         "content": f"Relevant manual sections for this question:\n---\n{context}\n---\n\n{user_query}",
     })
     return result, docs
+
+
+def _matching_evidence(text: str, keywords: tuple[str, ...], limit: int) -> list[str]:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    sentences = re.split(r"(?<=[.!?])\s+", normalized)
+    matches = []
+    for sentence in sentences:
+        clean = sentence.strip()
+        if not clean or not any(keyword in clean.casefold() for keyword in keywords):
+            continue
+        matches.append(clean)
+        if len(matches) >= limit:
+            break
+    return matches
+
+
+def build_grounded_diagnostic_answer(user_query: str, docs: list[dict]) -> str:
+    """Build a source-locked answer for exact-code troubleshooting questions."""
+    if not is_troubleshooting_query(user_query) or not docs:
+        return ""
+
+    requested_codes = set(re.findall(r"\b\d{2,6}\b", str(user_query or "")))
+    exact_doc = next(
+        (
+            doc
+            for doc in docs
+            if str(doc.get("meta", {}).get("code") or "").strip() in requested_codes
+        ),
+        None,
+    )
+    if exact_doc is None:
+        return ""
+
+    meta = exact_doc.get("meta", {})
+    code = str(meta.get("code") or "").strip()
+    title = str(meta.get("title") or "").strip()
+    page = str(meta.get("page") or "").strip()
+    exact_text = str(exact_doc.get("text") or "")
+    status_evidence = _matching_evidence(
+        exact_text,
+        ("not ready", "start disable", "interface signals", "alarm display"),
+        3,
+    )
+    recovery_evidence = _matching_evidence(
+        exact_text,
+        ("remove", "acknowledge", "clear alarm", "reset key", "restart"),
+        3,
+    )
+
+    lines = [
+        "**直接結論**",
+        f"已找到 Alarm {code} {title}（P.{page}）。以下僅列出檢索資料實際包含的證據，不推測未提供的信號或原因。",
+        "",
+        "**手冊可確認的檢查點**",
+    ]
+    if status_evidence:
+        lines.append(f"- 狀態：`{' '.join(status_evidence)}` [Alarm {code}, P.{page}]")
+    if recovery_evidence:
+        lines.append(f"- 排除與復歸：`{' '.join(recovery_evidence)}` [Alarm {code}, P.{page}]")
+
+    related_lines = []
+    for doc in docs:
+        if doc is exact_doc:
+            continue
+        related_meta = doc.get("meta", {})
+        source = str(related_meta.get("source") or related_meta.get("source_file") or "").strip()
+        related_text = str(doc.get("text") or "")
+        evidence = _matching_evidence(
+            related_text,
+            ("checks:", "root cause:", "repair action:", "recovery:", "check ", "tool change"),
+            2,
+        )
+        if not evidence:
+            continue
+        related_code = str(related_meta.get("code") or "").strip()
+        related_page = str(related_meta.get("page") or "").strip()
+        citation = source or f"Alarm {related_code}, P.{related_page}"
+        qualifier = "內部模擬資料，非官方手冊" if "mock" in f"{source} {related_text}".casefold() else "相關檢索資料"
+        related_lines.append(f"- {qualifier}：`{' '.join(evidence)}` [{citation}]")
+        if len(related_lines) >= 2:
+            break
+
+    if related_lines:
+        lines.extend(["", "**換刀情境的補充證據**", *related_lines])
+
+    scenario = "換刀與 Alarm " + code + " 之間的直接因果關係" if "換刀" in user_query or "换刀" in user_query else "額外故障情境"
+    lines.extend(
+        [
+            "",
+            "**尚缺證據**",
+            f"- 目前引用資料沒有證明{scenario}。若上述檢查後仍無法啟動，請提供同時出現的其他警報碼與實際 PLC／互鎖狀態。",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def retrieval_citations(collection: str, docs: list[dict]) -> list[dict]:
