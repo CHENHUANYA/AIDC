@@ -20,4 +20,7 @@ venv/
 htmlcov/
 pytest-cache-files-*/
 tests_tmp/
+deliverables/
+docx_work/
+outputs/
 tmp*/

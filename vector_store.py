@@ -22,6 +22,18 @@ def _looks_like_missing_collection(exc: Exception) -> bool:
     return any(token in detail for token in ["does not exist", "not found", "not exists", "unknown collection"])
 
 
+def _validate_batch_inputs(texts: List[str], embeddings: List[list], metadatas: List[dict], ids: List[str]) -> None:
+    lengths = {
+        "texts": len(texts),
+        "embeddings": len(embeddings),
+        "metadatas": len(metadatas),
+        "ids": len(ids),
+    }
+    if len(set(lengths.values())) != 1:
+        details = ", ".join(f"{name}={size}" for name, size in lengths.items())
+        raise ValueError(f"Vector batch inputs must have equal lengths ({details})")
+
+
 class BaseVectorStore:
     def ping(self) -> None:
         raise NotImplementedError
@@ -79,6 +91,7 @@ class ChromaStore(BaseVectorStore):
                 _warn(f"Unable to delete Chroma collection {collection}: {exc}")
 
     def add(self, collection: str, texts: List[str], embeddings: List[list], metadatas: List[dict], ids: List[str]):
+        _validate_batch_inputs(texts, embeddings, metadatas, ids)
         col = self.client.get_collection(collection)
         col.add(documents=texts, embeddings=embeddings, metadatas=metadatas, ids=ids)
 
@@ -171,6 +184,7 @@ class QdrantStore(BaseVectorStore):
         return f"s{iid}"
 
     def add(self, collection: str, texts: List[str], embeddings: List[list], metadatas: List[dict], ids: List[str]):
+        _validate_batch_inputs(texts, embeddings, metadatas, ids)
         self.ensure_collection(collection)
 
         batch_size = env_int("QDRANT_UPSERT_BATCH_SIZE", 64, minimum=1)

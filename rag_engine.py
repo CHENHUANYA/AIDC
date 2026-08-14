@@ -21,7 +21,11 @@ from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
 from config_values import env_int
 from vector_store import get_store
 
-ALARM_PATTERN = re.compile(r"\b(\d{2,6})\b")
+ALARM_LABEL_PATTERN = re.compile(
+    r"(?:\balarm|警報(?:代碼|碼)?|报警(?:代码|码)?)\s*[:#-]?\s*(\d{2,6})\b",
+    re.IGNORECASE,
+)
+STANDALONE_ALARM_PATTERN = re.compile(r"(?<![\w-])(\d{3,6})(?![\w-])")
 CJK_PATTERN = re.compile(r"[\u3400-\u9fff]")
 DB_PATH = os.getenv("DB_PATH", "./alarm_db")
 EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "mixedbread-ai/mxbai-embed-large-v1")
@@ -40,6 +44,14 @@ VECTOR_STORE_ERROR = (
 )
 VECTOR_HYDRATE_ON_LOAD = os.getenv("RAG_VECTOR_HYDRATE_ON_LOAD", "false").strip().lower() in {"1", "true", "yes", "on"}
 VECTOR_REBUILD_BATCH_SIZE = env_int("RAG_VECTOR_REBUILD_BATCH_SIZE", 64, minimum=1)
+
+
+def extract_alarm_codes(query: str) -> list[str]:
+    """Extract alarm codes without mistaking machine IDs such as CNC-LINE-01 for alarms."""
+    text = str(query or "")
+    labelled = ALARM_LABEL_PATTERN.findall(text)
+    matches = labelled or STANDALONE_ALARM_PATTERN.findall(text)
+    return list(dict.fromkeys(matches))
 
 # Shared models – loaded once, reused by all engine instances
 _embedder = None
@@ -69,7 +81,7 @@ def _model_cache_dirs(model_name: str) -> list[str]:
 
 
 def _latest_snapshot_path(model_name: str) -> str | None:
-    snapshots = []
+    snapshots: list[str] = []
     for cache_dir in _model_cache_dirs(model_name):
         snapshots_dir = os.path.join(cache_dir, "snapshots")
         if not os.path.isdir(snapshots_dir):
@@ -530,9 +542,9 @@ class AlarmRAGEngine:
             return []
 
         # Stage 1: Exact alarm code match
-        match = ALARM_PATTERN.search(query)
-        if match:
-            code = match.group(1)
+        alarm_codes = extract_alarm_codes(query)
+        if alarm_codes:
+            code = alarm_codes[0]
             exact = self.lookup_code(code)
             if exact:
                 self.last_retrieval_mode = "exact"
@@ -569,7 +581,7 @@ class AlarmRAGEngine:
             rrf[idx] = rrf.get(idx, 0) + 1 / (60 + rank + 1)
         for rank, idx in enumerate(vec_top20):
             rrf[idx] = rrf.get(idx, 0) + 1 / (60 + rank + 1)
-        cand_idxs = sorted(rrf, key=rrf.get, reverse=True)[:20]
+        cand_idxs = sorted(rrf, key=lambda index: rrf[index], reverse=True)[:20]
         cand_texts = [self.sections[i]["text"] for i in cand_idxs]
 
         if self.reranker is None:

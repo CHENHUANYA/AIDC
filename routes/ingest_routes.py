@@ -494,16 +494,21 @@ async def delete_document(
     if not engine.sections:
         return {"status": "error", "message": "Engine not ready"}
 
-    remaining = [section for section in engine.sections if section.get("doc_id") != doc_id]
-    removed = len(engine.sections) - len(remaining)
+    original_sections = list(engine.sections)
+    remaining = [section for section in original_sections if section.get("doc_id") != doc_id]
+    removed = len(original_sections) - len(remaining)
     if removed == 0:
         return {"status": "not_found", "message": "No sections removed"}
 
     engine.rebuild(remaining)
     try:
-        remove_document_entry(collection_name, doc_id, expected_revision=expected_revision)
+        metadata_removed = remove_document_entry(collection_name, doc_id, expected_revision=expected_revision)
     except ConcurrentContentUpdateError as exc:
+        engine.rebuild(original_sections)
         return {"status": "error", "message": str(exc)}
+    if not metadata_removed:
+        engine.rebuild(original_sections)
+        return {"status": "not_found", "message": "Document metadata was already removed"}
     ingest_log.append({
         "time": now_iso(),
         "collection": collection_name,

@@ -52,6 +52,24 @@ class HydrationStore:
 
 
 class RagEngineRetrieveTests(unittest.TestCase):
+    def test_labeled_alarm_code_takes_priority_over_machine_id_suffix(self):
+        engine = AlarmRAGEngine.__new__(AlarmRAGEngine)
+        engine.collection_name = "808d"
+        engine.sections = [
+            {"text": "machine identifier", "code": "01", "page": 0, "type": "workorder"},
+            {"text": "3000 Emergency stop", "code": "3000", "page": 58, "type": "alarm"},
+        ]
+        engine.bm25 = BM25Okapi([section["text"].split() for section in engine.sections])
+        engine.ready = True
+        engine.embedder = None
+        engine.reranker = None
+
+        results = engine.retrieve("CNC-LINE-01 完成程式傳輸後出現 Alarm 3000", top_k=3)
+
+        self.assertEqual("3000", results[0]["meta"]["code"])
+        self.assertEqual(58, results[0]["meta"]["page"])
+        self.assertEqual(["3000"], rag_engine.extract_alarm_codes("CNC-LINE-01 出現 Alarm 3000"))
+
     def test_retrieve_ignores_stale_vector_ids(self):
         engine = AlarmRAGEngine.__new__(AlarmRAGEngine)
         engine.collection_name = "808d"

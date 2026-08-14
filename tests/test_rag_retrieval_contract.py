@@ -52,7 +52,13 @@ class ExactThenRelatedEngine:
         self.queries.append((query, top_k))
         if "3000" in query:
             return [{
-                "text": "3000 Emergency stop. NC Start disable. Check DB2600 DBX0.1 and acknowledge DBX0.2.",
+                "text": (
+                    "3000 Emergency stop. The EMERGENCY STOP request is applied to the NCK/PLC interface "
+                    "DB2600 DBX0.1 (Emergency stop). NC not ready. Mode group not ready, also effective for single axes. "
+                    "NC Start disable in this channel. Remove the cause of the emergency stop and acknowledge the "
+                    "emergency stop via the PLC/NCK interface DB2600 DBX0.2 (emergency stop acknowledgment). "
+                    "Clear alarm with the RESET key in all channels of this mode group. Restart part program."
+                ),
                 "meta": {"code": "3000", "page": 58, "title": "Emergency stop", "type": "alarm"},
             }]
         return [
@@ -77,7 +83,10 @@ class ExactThenRelatedEngine:
                 },
             },
             {
-                "text": "Tool magazine checks: home state and pocket sensor before tool change.",
+                "text": (
+                    "Symptom: tool magazine does not confirm pocket position before tool change. Checks: magazine home "
+                    "state, pocket sensor, tool number in the active program, and manual override state."
+                ),
                 "meta": {
                     "code": "6100",
                     "page": 0,
@@ -164,11 +173,44 @@ def test_grounded_diagnostic_answer_uses_verbatim_evidence_and_marks_limitations
 
     answer = build_grounded_diagnostic_answer(query, docs)
 
-    assert "已找到 Alarm 3000 Emergency stop（P.58）" in answer
-    assert "`NC Start disable.`" in answer
-    assert "內部模擬資料，非官方手冊" in answer
+    assert "已找到 Alarm 3000 Emergency stop（緊急停止）（P.58）" in answer
+    assert "確認 `DB2600 DBX0.1`" in answer
+    assert "NC Ready、Mode Group Ready" in answer
+    assert "透過 `DB2600 DBX0.2`" in answer
+    assert "在該 Mode Group 的所有通道以 RESET" in answer
+    assert "非官方手冊；僅在機型、線別與控制邏輯相符時參考" in answer
+    assert "自動換刀期間的刀具夾緊確認訊號消失" in answer
+    assert "刀庫原點狀態、刀套位置感測器" in answer
     assert "沒有證明換刀與 Alarm 3000 之間的直接因果關係" in answer
     assert "急停按鈕" not in answer
+
+
+def test_program_transfer_scenario_uses_manual_page_and_does_not_mention_tool_change():
+    engine = ExactThenRelatedEngine()
+    query = (
+        "CNC-LINE-01 完成程式傳輸後出現 Alarm 3000，NC 啟動受到阻擋，"
+        "操作員無法恢復自動循環。"
+    )
+    _, docs = build_augmented_messages([Message(role="user", content=query)], engine)
+
+    answer = build_grounded_diagnostic_answer(query, docs)
+    tags = chat_lookup_routes.answer_source_tags(docs)
+
+    assert docs[0]["meta"]["title"] == "Emergency stop"
+    assert "（P.58）" in answer
+    assert "程式傳輸是警報出現前的操作情境" in answer
+    assert "沒有證明程式傳輸與 Alarm 3000 之間的直接因果關係" in answer
+    assert "換刀是故障發生時機" not in answer
+    assert "<!-- PAGE:58 -->" in tags
+
+
+def test_work_order_page_zero_is_not_rendered_as_a_manual_page():
+    docs = [{"text": "repair", "meta": {"code": "3000", "page": 0, "title": "Work order", "type": "workorder"}}]
+
+    tags = chat_lookup_routes.answer_source_tags(docs)
+
+    assert "PAGE" not in tags
+    assert "<!-- CODE:3000 -->" in tags
 
 
 def test_exact_code_troubleshooting_bypasses_llm_and_persists_retrieval_provider():

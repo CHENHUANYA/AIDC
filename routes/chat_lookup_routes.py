@@ -54,6 +54,7 @@ from app_context import (
 from auth import actor_id, get_actor
 from observability import runtime_metrics
 from repositories.rag_answers import RagAnswerRepository
+from rag_engine import extract_alarm_codes
 from storage import ERROR_LOG_PATH, append_jsonl
 
 
@@ -224,7 +225,7 @@ def answer_conflicts_with_retrieval(answer: str, user_query: str, docs: list[dic
     normalized_answer = re.sub(r"\s+", " ", str(answer or "")).casefold()
     if not any(marker.casefold() in normalized_answer for marker in _NOT_FOUND_ANSWER_MARKERS):
         return False
-    requested_codes = set(re.findall(r"\b\d{2,6}\b", str(user_query or "")))
+    requested_codes = set(extract_alarm_codes(user_query))
     retrieved_codes = {
         str(doc.get("meta", {}).get("code") or "").strip()
         for doc in docs
@@ -262,7 +263,7 @@ def _grounding_repair_messages(messages: list[dict], user_query: str, docs: list
 
 
 def _retrieval_conflict_fallback(user_query: str, docs: list[dict]) -> str:
-    requested_codes = set(re.findall(r"\b\d{2,6}\b", str(user_query or "")))
+    requested_codes = set(extract_alarm_codes(user_query))
     matches = []
     for doc in docs:
         meta = doc.get("meta", {})
@@ -346,8 +347,13 @@ def answer_source_tags(docs: list[dict]) -> str:
     if not docs:
         return ""
     meta = docs[0].get("meta", {})
+    raw_page = meta.get("page")
+    try:
+        page = raw_page if int(raw_page) > 0 else None
+    except (TypeError, ValueError):
+        page = None
     values = [
-        ("PAGE", meta.get("page")),
+        ("PAGE", page),
         ("TITLE", meta.get("title")),
         ("CODE", meta.get("code")),
     ]
@@ -480,6 +486,7 @@ async def stream_chat_events(
 async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None = None):
     request_started = time.monotonic()
     actor = actor or {}
+    streaming = bool(req.stream)
     engine = get_existing_engine(collection_name)
     user_query = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
 
@@ -506,9 +513,9 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
             total_ms=(time.monotonic() - request_started) * 1000,
             provider="unavailable",
             outcome="unavailable",
-            streaming=req.stream,
+            streaming=streaming,
         )
-        if req.stream:
+        if streaming:
             async def s():
                 yield make_sse_chunk(msg, rag=rag_metadata, response_id=response_id)
                 yield make_sse_chunk("", finish=True, response_id=response_id)
@@ -549,9 +556,9 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
             total_ms=(time.monotonic() - request_started) * 1000,
             provider="retrieval",
             outcome="complete",
-            streaming=req.stream,
+            streaming=streaming,
         )
-        if req.stream:
+        if streaming:
             async def grounded_stream():
                 yield make_sse_chunk(content, rag=rag_metadata, response_id=response_id)
                 yield make_sse_chunk("", finish=True, response_id=response_id)
@@ -560,7 +567,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
             return StreamingResponse(grounded_stream(), media_type="text/event-stream", headers=SSE_HEADERS)
         return make_openai_response(content, rag=rag_metadata, response_id=response_id)
 
-    if req.stream:
+    if streaming:
         return StreamingResponse(
             stream_chat_events(
                 messages=augmented,

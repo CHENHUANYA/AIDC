@@ -94,7 +94,7 @@ def _looks_like_page_number(line: str, all_lines: list, idx: int) -> bool:
     return False
 
 
-def is_alarm_code_line(line: str, all_lines: list = None, idx: int = 0) -> bool:
+def is_alarm_code_line(line: str, all_lines: list | None = None, idx: int = 0) -> bool:
     if not ALARM_CODE_RE.match(line.strip()):
         return False
     if all_lines is not None and _looks_like_page_number(line, all_lines, idx):

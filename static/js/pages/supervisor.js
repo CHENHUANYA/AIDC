@@ -19,6 +19,34 @@ const SUPERVISOR_STATUS_LABELS = {
   pending: '待處理',
 };
 
+const SUPERVISOR_AUDIT_ACTION_LABELS = {
+  created: '建立工單',
+  updated: '更新維修紀錄',
+  status_changed: '變更狀態',
+  issue_synced: '同步問題狀態',
+  knowledge_approve: '核准知識',
+  knowledge_needs_revision: '退回知識補充',
+  knowledge_reject: '不採用知識',
+  import_status_override: '匯入狀態更新',
+};
+
+const SUPERVISOR_FIELD_LABELS = {
+  status: '狀態',
+  description: '問題描述',
+  root_cause: '根本原因',
+  repair_action: '實際維修動作',
+  resolution: '處理結果',
+  notes: '備註',
+  assigned_to: '負責人',
+  accepted_by: '接受人員',
+  completed_by: '完成人員',
+  verified_by: '驗證人員',
+  priority: '優先等級',
+  failure_category: '故障分類',
+  kb_candidate: '知識候選',
+  kb_review_status: '知識審核狀態',
+};
+
 function supervisorLabel(value, labels = SUPERVISOR_STATUS_LABELS) {
   return labels[value] || value || '-';
 }
@@ -237,13 +265,149 @@ function renderSupervisorBulkAssigneeOptions() {
   ].join('');
 }
 
+function supervisorReviewDuration(startValue, endValue) {
+  const start = new Date(startValue || '');
+  const end = new Date(endValue || '');
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    return '-';
+  }
+  const minutes = Math.round((end - start) / 60_000);
+  if (minutes < 60) return `${minutes} 分鐘`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours} 小時 ${remainder} 分鐘` : `${hours} 小時`;
+}
+
+function supervisorReviewStartTime(order) {
+  const events = Array.isArray(order.work_order_history) ? order.work_order_history : [];
+  const started = events.find((event) => event.to_status === 'in_progress');
+  return started?.created_at || order.created_at || '';
+}
+
+function supervisorReviewField(app, title, value, wide = false) {
+  const content = String(value || '').trim() || '尚未填寫';
+  return `<article class="sv-review-field${wide ? ' wide' : ''}">
+    <h3>${app.esc(title)}</h3>
+    <div>${app.esc(content)}</div>
+  </article>`;
+}
+
+function supervisorReviewChangeValue(app, field, value) {
+  if (field === 'status') return app.esc(supervisorLabel(value));
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (value === null || value === undefined || value === '') return '-';
+  if (typeof value === 'object') return app.esc(JSON.stringify(value));
+  return app.esc(String(value));
+}
+
+function renderSupervisorReviewChanges(app, event) {
+  const changes = Array.isArray(event?.changes) ? event.changes : [];
+  if (!changes.length) return '';
+  return `<div class="audit-fields">${changes.map((change) => {
+    const field = String(change.field || '');
+    const label = SUPERVISOR_FIELD_LABELS[field] || field;
+    return `<div><b>${app.esc(label)}</b>：${supervisorReviewChangeValue(app, field, change.from)} → ${supervisorReviewChangeValue(app, field, change.to)}</div>`;
+  }).join('')}</div>`;
+}
+
+function renderSupervisorReviewTimeline(app, order, issue) {
+  const box = app.$('svReviewTimeline');
+  if (!box) return;
+  const events = (window.AlarmAudit?.mergeEvents(order.work_order_history, issue?.issue_history) || [])
+    .slice()
+    .reverse();
+  if (!events.length) {
+    box.innerHTML = '<div class="sv-review-section-title">處理時間線</div><div class="wo-empty">目前沒有歷程紀錄</div>';
+    return;
+  }
+  box.innerHTML = `<div class="sv-review-section-title">處理時間線 <span>${events.length} 筆</span></div>
+    ${events.map((event) => {
+      const source = event.audit_source === 'issue' ? '問題' : '工單';
+      const action = SUPERVISOR_AUDIT_ACTION_LABELS[event.action] || event.action || '更新';
+      const statusText = event.from_status || event.to_status
+        ? `${supervisorLabel(event.from_status)} → ${supervisorLabel(event.to_status)}`
+        : '';
+      return `<div class="audit-event">
+        <div class="audit-dot"></div>
+        <div class="audit-body">
+          <div class="audit-title">${app.esc(source)} · ${app.esc(action)}${statusText ? `<span>${app.esc(statusText)}</span>` : ''}</div>
+          <div class="audit-meta">${app.esc(event.user_id || 'system')} · ${app.esc(supervisorTime(event.created_at))}</div>
+          ${renderSupervisorReviewChanges(app, event)}
+        </div>
+      </div>`;
+    }).join('')}`;
+}
+
+function openSupervisorReviewModal(orderId) {
+  const app = supervisorApp();
+  const order = (app?.getState('supervisorOrders') || []).find((item) => item.id === orderId);
+  if (!app || !order) return;
+  const issue = (app.getState('supervisorIssues') || []).find((item) => item.issue_id === order.issue_id) || null;
+  const modal = app.$('svReviewModal');
+  if (!modal) return;
+
+  app.setState('supervisorCurrentReviewOrderId', orderId);
+  app.$('svReviewModalTitle').textContent = `完整維修紀錄 · 工單 #${order.id}`;
+  app.$('svReviewModalSubtitle').textContent = `問題 ${order.issue_id || 'N/A'} · ${String(order.manual || '808d').toUpperCase()}`;
+
+  const startedAt = supervisorReviewStartTime(order);
+  const completedAt = order.completed_at || order.updated_at || '';
+  app.$('svReviewSummary').innerHTML = `
+    <div class="sv-review-summary-main">
+      <div class="sv-review-alarm">Alarm ${app.esc(order.alarm_code || 'SYMPTOM')}</div>
+      <div class="wo-meta">
+        <span class="wo-badge">${app.esc(supervisorLabel(order.status))}</span>
+        <span class="wo-badge">${app.esc(order.machine_id || '未指定機台')}</span>
+        <span class="wo-badge">${app.esc(issue?.line_id || '未指定產線')}</span>
+        <span class="wo-badge">${app.esc(order.priority || 'medium')}</span>
+      </div>
+    </div>
+    <div class="sv-review-time-grid">
+      <div><span>建立</span><b>${app.esc(supervisorTime(order.created_at))}</b></div>
+      <div><span>開始處理</span><b>${app.esc(supervisorTime(startedAt))}</b></div>
+      <div><span>完成</span><b>${app.esc(supervisorTime(completedAt))}</b></div>
+      <div><span>處理耗時</span><b>${app.esc(supervisorReviewDuration(startedAt, completedAt))}</b></div>
+    </div>`;
+
+  const symptom = order.description || issue?.original_description || issue?.description || '';
+  app.$('svReviewRecords').innerHTML = [
+    supervisorReviewField(app, '問題／症狀', symptom, true),
+    supervisorReviewField(app, '根本原因', order.root_cause),
+    supervisorReviewField(app, '實際維修動作', order.repair_action),
+    supervisorReviewField(app, '處理結果／解決方案', order.resolution, true),
+    supervisorReviewField(app, '維修備註', order.notes, true),
+    supervisorReviewField(app, '人員紀錄', `負責：${order.assigned_to || '-'}\n接受：${order.accepted_by || '-'}\n完成：${order.completed_by || order.updated_by || '-'}`),
+    supervisorReviewField(app, '故障分類', order.failure_category || '未分類'),
+  ].join('');
+
+  renderSupervisorReviewTimeline(app, order, issue);
+  const answerId = order.rag_answer_id || issue?.rag_answer_id || '';
+  app.$('svReviewActions').innerHTML = `
+    ${answerId ? `<button class="wo-btn alt" type="button" data-on-click="AnswerTrace.open" data-action-args="[${supervisorJsArg(answerId)}]">查看原回答</button>` : ''}
+    ${order.issue_id ? `<button class="wo-btn danger" type="button" data-on-click="requestSupervisorRework" data-action-args="[${supervisorJsArg(order.issue_id)}]">退回重工</button>` : ''}
+    <button class="wo-btn" type="button" data-on-click="verifySupervisorOrder" data-action-args="[${supervisorJsArg(order.id)}]">驗證通過</button>`;
+
+  app.setState('supervisorReviewReturnFocus', document.activeElement);
+  modal.classList.add('show');
+  modal.querySelector('.sv-review-scroll').scrollTop = 0;
+  modal.querySelector('.close-x')?.focus();
+}
+
+function closeSupervisorReviewModal() {
+  const app = supervisorApp();
+  const modal = app?.$('svReviewModal');
+  if (!app || !modal) return;
+  modal.classList.remove('show');
+  app.setState('supervisorCurrentReviewOrderId', null);
+  const returnFocus = app.getState('supervisorReviewReturnFocus');
+  if (returnFocus && document.contains(returnFocus)) returnFocus.focus();
+  app.setState('supervisorReviewReturnFocus', null);
+}
+
 function renderSupervisorVerificationOrder(app, order, issue) {
   const answerId = order.rag_answer_id || issue?.rag_answer_id || '';
   const answerButton = answerId
     ? `<button class="wo-btn alt" type="button" data-on-click="AnswerTrace.open" data-action-args="[${supervisorJsArg(answerId)}]">查看原回答</button>`
-    : '';
-  const issueButton = order.issue_id
-    ? `<button class="wo-btn alt" type="button" data-on-click="requestSupervisorRework" data-action-args="[${supervisorJsArg(order.issue_id)}]">退回重工</button>`
     : '';
   return `<div class="role-row">
     <div>
@@ -257,9 +421,8 @@ function renderSupervisorVerificationOrder(app, order, issue) {
       </div>
     </div>
     <div class="role-row-actions">
+      <button class="wo-btn" type="button" data-on-click="openSupervisorReviewModal" data-action-args="[${supervisorJsArg(order.id)}]">查看完整紀錄</button>
       ${answerButton}
-      <button class="wo-btn" type="button" data-on-click="verifySupervisorOrder" data-action-args="[${supervisorJsArg(order.id)}]">驗證完成</button>
-      ${issueButton}
     </div>
   </div>`;
 }
@@ -622,6 +785,7 @@ async function verifySupervisorOrder(orderId) {
       }),
     });
     setSupervisorResult(`工單 #${orderId} 已驗證`);
+    closeSupervisorReviewModal();
     await loadSupervisorConsole();
   } catch (error) {
     setSupervisorResult(app.formatError(error, '驗證失敗'), true);
@@ -649,6 +813,7 @@ async function requestSupervisorRework(issueId) {
       }),
     });
     setSupervisorResult(`Issue ${issueId} 已退回重工`);
+    closeSupervisorReviewModal();
     await loadSupervisorConsole();
   } catch (error) {
     setSupervisorResult(app.formatError(error, '退回重工失敗'), true);
@@ -671,10 +836,20 @@ document.addEventListener('DOMContentLoaded', () => {
     app.$(id)?.addEventListener('input', renderSupervisorResponsibility);
     app.$(id)?.addEventListener('change', renderSupervisorResponsibility);
   });
+  app.$('svReviewModal')?.addEventListener('click', (event) => {
+    if (event.target === app.$('svReviewModal')) closeSupervisorReviewModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && app.$('svReviewModal')?.classList.contains('show')) {
+      closeSupervisorReviewModal();
+    }
+  });
   loadSupervisorConsole();
 });
 
 window.loadSupervisorConsole = loadSupervisorConsole;
+window.openSupervisorReviewModal = openSupervisorReviewModal;
+window.closeSupervisorReviewModal = closeSupervisorReviewModal;
 window.verifySupervisorOrder = verifySupervisorOrder;
 window.requestSupervisorRework = requestSupervisorRework;
 window.exportSupervisorCsv = exportSupervisorCsv;

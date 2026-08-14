@@ -787,6 +787,137 @@ body[data-page="supervisor"] .role-console {
   gap: 10px;
 }
 
+.sv-review-modal-card {
+  width: min(94vw, 880px);
+  max-width: 880px;
+  height: min(900px, calc(100dvh - 32px));
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.sv-review-modal-head {
+  flex: 0 0 auto;
+  padding: 18px 22px 14px;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.sv-review-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 18px 22px 4px;
+}
+.sv-review-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 1.35fr);
+  gap: 18px;
+  padding: 16px 18px;
+  border: 1px solid rgba(99,102,241,0.2);
+  border-radius: var(--r-md);
+  background: var(--acc-soft);
+  margin-bottom: 14px;
+}
+.sv-review-summary-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.sv-review-alarm {
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--acc);
+  margin-bottom: 8px;
+}
+.sv-review-time-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.sv-review-time-grid > div {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+.sv-review-time-grid span,
+.sv-review-time-grid b {
+  display: block;
+}
+.sv-review-time-grid span {
+  font-size: 10px;
+  color: var(--dim);
+  margin-bottom: 3px;
+}
+.sv-review-time-grid b {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.sv-review-records {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.sv-review-field {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface2);
+}
+.sv-review-field.wide { grid-column: 1 / -1; }
+.sv-review-field h3 {
+  margin: 0 0 7px;
+  font-size: 12px;
+  color: var(--acc);
+}
+.sv-review-field div {
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sv-review-section-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 14px;
+}
+.sv-review-section-title span {
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+}
+.sv-review-timeline {
+  margin-bottom: 14px;
+  box-shadow: none;
+}
+.sv-review-timeline .audit-fields {
+  margin-top: 7px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.sv-review-timeline .audit-fields b { color: var(--text); }
+.sv-review-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin: 0;
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
 /* ─── Settings toggle ─── */
 .settings-toggle {
   grid-column: 1 / -1;
@@ -1070,6 +1201,16 @@ body[data-page="supervisor"] .role-console {
   .sv-filter-row { grid-template-columns: 1fr; }
   .sv-toolbar { justify-content: flex-start; }
   .wo-header { grid-template-columns: 1fr; }
+  .wo-modal { padding: 8px; }
+  .sv-review-modal-card { width: 100%; height: calc(100dvh - 16px); }
+  .sv-review-modal-head,
+  .sv-review-actions { padding-left: 14px; padding-right: 14px; }
+  .sv-review-scroll { padding: 14px 14px 2px; }
+  .sv-review-summary { grid-template-columns: 1fr; padding: 14px; }
+  .sv-review-records { grid-template-columns: 1fr; }
+  .sv-review-field.wide { grid-column: auto; }
+  .sv-review-actions { justify-content: stretch; }
+  .sv-review-actions .wo-btn { flex: 1 1 100%; }
 }
 @media (max-width: 560px) {
   .wo-modal-grid { grid-template-columns: 1fr; }

@@ -220,7 +220,7 @@ class StaticAssetIntegrityTests(unittest.TestCase):
 
     def test_static_modals_publish_dialog_semantics(self):
         errors = []
-        for page in ("maintenance", "operations", "operator"):
+        for page in ("maintenance", "operations", "operator", "supervisor"):
             source = (ROOT / f"{page}.html").read_text(encoding="utf-8")
             for tag in re.findall(r'<div class="wo-modal"[^>]*>', source):
                 if 'role="dialog"' not in tag or 'aria-modal="true"' not in tag:
@@ -297,6 +297,25 @@ class StaticAssetIntegrityTests(unittest.TestCase):
         self.assertNotIn('id="mtEditVerifiedBy"', html)
         self.assertNotIn('<option value="verified">已驗證</option>', html)
         self.assertNotIn("mtEditVerifiedBy", js)
+
+    def test_supervisor_review_modal_exposes_complete_record_and_timeline(self):
+        html = (ROOT / "supervisor.html").read_text(encoding="utf-8")
+        js = (ROOT / "static" / "js" / "pages" / "supervisor.js").read_text(encoding="utf-8")
+
+        for element_id in (
+            "svReviewModal",
+            "svReviewSummary",
+            "svReviewRecords",
+            "svReviewTimeline",
+            "svReviewActions",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+        for field in ("root_cause", "repair_action", "resolution", "notes", "work_order_history"):
+            self.assertIn(field, js)
+        self.assertIn("查看完整紀錄", js)
+        self.assertIn("處理時間線", js)
+        self.assertIn("驗證通過", js)
+        self.assertNotIn(">驗證完成</button>", js)
 
     def test_operations_work_order_modal_does_not_offer_verification_status(self):
         html = (ROOT / "operations.html").read_text(encoding="utf-8")

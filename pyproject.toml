@@ -26,11 +26,16 @@ follow_imports = "skip"
 files = [
     "api_contracts.py",
     "api_schemas.py",
+    "app_context.py",
     "auth.py",
+    "ingest.py",
     "issues.py",
     "main.py",
     "observability.py",
+    "rag_engine.py",
     "security_headers.py",
+    "services/",
+    "storage.py",
     "work_orders.py",
     "bm25_text.py",
     "db/",
@@ -81,7 +86,7 @@ source = [
 ]
 
 [tool.coverage.report]
-fail_under = 60
+fail_under = 73
 show_missing = true
 skip_covered = true
 omit = [

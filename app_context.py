@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 
 from config_values import env_float, env_int
 from bm25_text import expand_query_with_domain_aliases
-from rag_engine import AlarmRAGEngine
+from rag_engine import AlarmRAGEngine, extract_alarm_codes
 from secret_values import secret_value
 from storage import (
     ALARM_LOG_PATH,
@@ -430,17 +430,82 @@ def _matching_evidence(text: str, keywords: tuple[str, ...], limit: int) -> list
     return matches
 
 
+def _official_diagnostic_checks(text: str, code: str, page: str) -> list[str]:
+    normalized = str(text or "").casefold()
+    citation = f"[Alarm {code}, P.{page}]"
+    checks = []
+
+    if "db2600 dbx0.1" in normalized:
+        evidence = _matching_evidence(text, ("db2600 dbx0.1",), 1)
+        checks.append(
+            f"- 急停請求：確認 `DB2600 DBX0.1` 對應的 Emergency Stop request 是否仍有效，"
+            f"並追查、排除造成急停的來源。技術原文：`{' '.join(evidence)}` {citation}"
+        )
+
+    status_evidence = _matching_evidence(text, ("not ready", "start disable"), 3)
+    if status_evidence:
+        checks.append(
+            "- NC 就緒狀態：確認 NC Ready、Mode Group Ready 與通道的 NC Start disable "
+            f"狀態是否已恢復。技術原文：`{' '.join(status_evidence)}` {citation}"
+        )
+
+    if "db2600 dbx0.2" in normalized:
+        evidence = _matching_evidence(text, ("db2600 dbx0.2",), 1)
+        checks.append(
+            f"- 急停確認：排除急停原因後，透過 `DB2600 DBX0.2` 完成 Emergency Stop acknowledgment。"
+            f"技術原文：`{' '.join(evidence)}` {citation}"
+        )
+
+    if "reset key" in normalized or "clear alarm" in normalized:
+        evidence = _matching_evidence(text, ("clear alarm", "reset key"), 1)
+        checks.append(
+            f"- 清除與重啟：在該 Mode Group 的所有通道以 RESET 清除警報，再重新啟動程式。"
+            f"技術原文：`{' '.join(evidence)}` {citation}"
+        )
+    return checks
+
+
+def _localized_related_summary(text: str) -> str:
+    normalized = str(text or "").casefold()
+    parts = []
+    if "tool clamp confirmation dropped" in normalized:
+        parts.append("案例症狀為自動換刀期間的刀具夾緊確認訊號消失")
+    if "worn clamp confirmation switch bracket" in normalized:
+        parts.append("該案例根因為夾緊確認開關支架磨損")
+    if "tool magazine does not confirm pocket position" in normalized:
+        parts.append("案例症狀為換刀前刀庫未完成刀套位置確認")
+    checklist = []
+    checklist_terms = (
+        ("magazine home state", "刀庫原點狀態"),
+        ("pocket sensor", "刀套位置感測器"),
+        ("tool number in the active program", "啟用中程式的刀號"),
+        ("manual override state", "手動覆寫狀態"),
+    )
+    for phrase, translated in checklist_terms:
+        if phrase in normalized:
+            checklist.append(translated)
+    if checklist:
+        parts.append("案例建議比對" + "、".join(checklist))
+    return "；".join(parts)
+
+
 def build_grounded_diagnostic_answer(user_query: str, docs: list[dict]) -> str:
     """Build a source-locked answer for exact-code troubleshooting questions."""
     if not is_troubleshooting_query(user_query) or not docs:
         return ""
 
-    requested_codes = set(re.findall(r"\b\d{2,6}\b", str(user_query or "")))
+    requested_codes = set(extract_alarm_codes(user_query))
     exact_doc = next(
         (
             doc
             for doc in docs
             if str(doc.get("meta", {}).get("code") or "").strip() in requested_codes
+            and str(
+                doc.get("meta", {}).get("type")
+                or doc.get("meta", {}).get("kind")
+                or ""
+            ).casefold() != "workorder"
+            and str(doc.get("meta", {}).get("source") or "").casefold() != "workorder"
         ),
         None,
     )
@@ -452,6 +517,8 @@ def build_grounded_diagnostic_answer(user_query: str, docs: list[dict]) -> str:
     title = str(meta.get("title") or "").strip()
     page = str(meta.get("page") or "").strip()
     exact_text = str(exact_doc.get("text") or "")
+    display_title = "Emergency stop（緊急停止）" if title.casefold() == "emergency stop" else title
+    official_checks = _official_diagnostic_checks(exact_text, code, page)
     status_evidence = _matching_evidence(
         exact_text,
         ("not ready", "start disable", "interface signals", "alarm display"),
@@ -463,15 +530,27 @@ def build_grounded_diagnostic_answer(user_query: str, docs: list[dict]) -> str:
         3,
     )
 
+    conclusion = f"已找到 Alarm {code} {display_title}（P.{page}）。"
+    if code == "3000" and "emergency stop" in f"{title} {exact_text}".casefold():
+        conclusion += "第一優先是確認急停請求來源已排除並完成復歸。"
+    else:
+        conclusion += "以下檢查點僅採用本次檢索到的手冊內容。"
+    if "換刀" in user_query or "换刀" in user_query:
+        conclusion += f"換刀是警報出現前的操作情境，目前證據不足以將它判定為 Alarm {code} 的直接原因。"
+    elif any(marker in user_query.casefold() for marker in ("程式傳輸", "程序传输", "program transfer")):
+        conclusion += f"程式傳輸是警報出現前的操作情境，目前證據不足以將它判定為 Alarm {code} 的直接原因。"
+
     lines = [
         "**直接結論**",
-        f"已找到 Alarm {code} {title}（P.{page}）。以下僅列出檢索資料實際包含的證據，不推測未提供的信號或原因。",
+        conclusion,
         "",
         "**手冊可確認的檢查點**",
     ]
-    if status_evidence:
+    if official_checks:
+        lines.extend(official_checks)
+    elif status_evidence:
         lines.append(f"- 狀態：`{' '.join(status_evidence)}` [Alarm {code}, P.{page}]")
-    if recovery_evidence:
+    if not official_checks and recovery_evidence:
         lines.append(f"- 排除與復歸：`{' '.join(recovery_evidence)}` [Alarm {code}, P.{page}]")
 
     related_lines = []
@@ -491,15 +570,27 @@ def build_grounded_diagnostic_answer(user_query: str, docs: list[dict]) -> str:
         related_code = str(related_meta.get("code") or "").strip()
         related_page = str(related_meta.get("page") or "").strip()
         citation = source or f"Alarm {related_code}, P.{related_page}"
-        qualifier = "內部模擬資料，非官方手冊" if "mock" in f"{source} {related_text}".casefold() else "相關檢索資料"
-        related_lines.append(f"- {qualifier}：`{' '.join(evidence)}` [{citation}]")
+        is_mock = "mock" in f"{source} {related_text}".casefold()
+        qualifier = (
+            "內部模擬案例（非官方手冊；僅在機型、線別與控制邏輯相符時參考）"
+            if is_mock
+            else "相關檢索資料"
+        )
+        localized = _localized_related_summary(related_text)
+        summary = f"{localized}。" if localized else ""
+        related_lines.append(f"- {qualifier}：{summary}技術原文：`{' '.join(evidence)}` [{citation}]")
         if len(related_lines) >= 2:
             break
 
     if related_lines:
-        lines.extend(["", "**換刀情境的補充證據**", *related_lines])
+        lines.extend(["", "**可參考的內部案例（需先確認適用性）**", *related_lines])
 
-    scenario = "換刀與 Alarm " + code + " 之間的直接因果關係" if "換刀" in user_query or "换刀" in user_query else "額外故障情境"
+    if "換刀" in user_query or "换刀" in user_query:
+        scenario = f"換刀與 Alarm {code} 之間的直接因果關係"
+    elif any(marker in user_query.casefold() for marker in ("程式傳輸", "程序传输", "program transfer")):
+        scenario = f"程式傳輸與 Alarm {code} 之間的直接因果關係"
+    else:
+        scenario = "額外故障情境"
     lines.extend(
         [
             "",
