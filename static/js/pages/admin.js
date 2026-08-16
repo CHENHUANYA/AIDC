@@ -1035,7 +1035,7 @@ async function patchAdminUser(userId, payload) {
     }, '使用者更新失敗');
     await loadAdminConsole();
   } catch (error) {
-    setAdminResult('adminKbResult', app.formatError(error, '使用者更新失敗'), true);
+    setAdminResult('adminUserResult', app.formatError(error, '使用者更新失敗'), true);
   }
 }
 
@@ -1060,16 +1060,21 @@ async function resetAdminPassword(userId) {
   if (!password) {
     return;
   }
+  const user = (app.getState('adminUsers') || []).find((item) => String(item.user_id || '') === String(userId));
+  const body = {
+    password,
+    ...(user?.updated_at ? { expected_updated_at: user.updated_at } : {}),
+  };
   try {
     await adminJson(`/users/${encodeURIComponent(userId)}/password`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify(body),
     }, '密碼重設失敗');
-    setAdminResult('adminKbResult', `${userId} 密碼已重設，既有 Session 已撤銷`);
+    setAdminResult('adminUserResult', `${userId} 密碼已重設，既有 Session 已撤銷`);
     await loadAdminSessions();
   } catch (error) {
-    setAdminResult('adminKbResult', app.formatError(error, '密碼重設失敗'), true);
+    setAdminResult('adminUserResult', app.formatError(error, '密碼重設失敗'), true);
   }
 }
 
@@ -1082,10 +1087,10 @@ async function revokeAdminUserSessions(userId) {
     const data = await adminJson(`/users/${encodeURIComponent(userId)}/sessions`, {
       method: 'DELETE',
     }, '使用者 Session 撤銷失敗');
-    setAdminResult('adminKbResult', `已撤銷 ${userId} 的 ${data.revoked || 0} 個 Session`);
+    setAdminResult('adminUserResult', `已撤銷 ${userId} 的 ${data.revoked || 0} 個 Session`);
     await loadAdminSessions();
   } catch (error) {
-    setAdminResult('adminKbResult', app.formatError(error, '使用者 Session 撤銷失敗'), true);
+    setAdminResult('adminUserResult', app.formatError(error, '使用者 Session 撤銷失敗'), true);
   }
 }
 
@@ -1096,7 +1101,7 @@ async function createAdminUser() {
   }
   const userId = app.$('adminNewUserId')?.value.trim() || '';
   if (!userId) {
-    setAdminResult('adminKbResult', '請輸入 user_id', true);
+    setAdminResult('adminUserResult', '請輸入 user_id', true);
     return;
   }
   try {
@@ -1106,10 +1111,10 @@ async function createAdminUser() {
       body: JSON.stringify(newAdminUserPayload(userId)),
     }, '建立使用者失敗');
     clearAdminFields(ADMIN_NEW_USER_FIELDS);
-    setAdminResult('adminKbResult', `已建立使用者 ${userId}`);
+    setAdminResult('adminUserResult', `已建立使用者 ${userId}`);
     await loadAdminConsole();
   } catch (error) {
-    setAdminResult('adminKbResult', app.formatError(error, '建立使用者失敗'), true);
+    setAdminResult('adminUserResult', app.formatError(error, '建立使用者失敗'), true);
   }
 }
 

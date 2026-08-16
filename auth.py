@@ -134,6 +134,7 @@ class CreateUserRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     password: Optional[str] = None
+    expected_updated_at: Optional[str] = None
 
 
 def bootstrap_user_summaries() -> List[dict]:
@@ -556,6 +557,8 @@ async def _api_reset_user_password(user_id: str, req: ResetPasswordRequest, acto
     user = users.get(key)
     if not user:
         return api_error(f"User {user_id} not found")
+    if not same_user_version(req.expected_updated_at, user):
+        return concurrency_error()
     if not req.password:
         password_error = implicit_initial_password_error()
         if password_error:
@@ -563,9 +566,13 @@ async def _api_reset_user_password(user_id: str, req: ResetPasswordRequest, acto
     password = req.password or configured_initial_password()
     if not valid_password(password):
         return api_error("Password must be at least 8 characters and not use a common placeholder")
+    read_version = str(user.get("updated_at") or "") or None
     user["password_hash"] = hash_password(password)
     users[key] = user
-    saved_user = save_user(key, user)
+    try:
+        saved_user = save_user(key, user, expected_updated_at=read_version)
+    except ConcurrentUserUpdateError:
+        return concurrency_error()
     revoke_user_sessions(key)
     return api_ok(user=public_user(saved_user), sessions_revoked=True)
 

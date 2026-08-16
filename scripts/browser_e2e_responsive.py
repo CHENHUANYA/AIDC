@@ -817,7 +817,9 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
         close_answer_trace(page, "escape")
         if not trace_button.evaluate("(button) => document.activeElement === button"):
             raise AssertionError("answer trace did not restore focus after Escape")
-        trace_row.locator('[data-on-click="verifySupervisorOrder"]').click()
+        trace_row.locator('[data-on-click="openSupervisorReviewModal"]').click()
+        page.wait_for_selector("#svReviewModal.show", timeout=10000)
+        page.click('#svReviewModal [data-on-click="verifySupervisorOrder"]')
         page.wait_for_timeout(1200)
         report["flows"].append({"name": "supervisor:verify_completed_order", "status": "ok", "issue_id": supervisor_issue_id})
         scan_page(page, "flow-supervisor-verified", report)
@@ -912,6 +914,125 @@ def run_issue_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
         browser.close()
 
 
+def run_admin_password_reset_flow(playwright, base_url: str, report: dict[str, Any]) -> None:
+    browser = launch_browser(playwright)
+    context = browser.new_context(viewport=VIEWPORTS["desktop"])
+    page = context.new_page()
+    page.on("pageerror", lambda exc: report["browser_errors"].append(f"pageerror: {exc}"))
+    page.on(
+        "console",
+        lambda msg: report["browser_errors"].append(f"console {msg.type}: {msg.text}")
+        if msg.type == "error" and "Failed to load resource" not in msg.text
+        else None,
+    )
+    page.on(
+        "request",
+        lambda request: report["third_party_requests"].append(request.url)
+        if request.url.startswith(("http://", "https://"))
+        and not request.url.startswith(report["base_url"])
+        else None,
+    )
+    try:
+        login(page, base_url, "admin01", report)
+
+        # Bootstrap JSON users do not have versions until their first save. Give
+        # the test user a version, load it into the Admin UI, then change it from
+        # a second request so the displayed version is intentionally stale.
+        seed_response = page.request.patch(
+            f"{base_url}/users/operator01",
+            data={"name": "Operator LINE-A"},
+        )
+        if seed_response.status != 200:
+            raise AssertionError(f"unable to version E2E user: {seed_response.status}")
+        page.goto(f"{base_url}/admin", wait_until="domcontentloaded")
+        page.click('[data-admin-section-target="users"]')
+        page.wait_for_selector('#adminUserList .role-row:has-text("operator01")', timeout=10000)
+        displayed_version = page.evaluate(
+            "() => window.AlarmApp.getState('adminUsers')"
+            ".find((user) => user.user_id === 'operator01').updated_at"
+        )
+        concurrent_response = page.request.patch(
+            f"{base_url}/users/operator01",
+            data={
+                "name": "Operator LINE-A",
+                "expected_updated_at": displayed_version,
+            },
+        )
+        if concurrent_response.status != 200:
+            raise AssertionError(f"unable to create password-reset race: {concurrent_response.status}")
+
+        result = page.locator("#adminUserResult")
+        reset_button = page.locator(
+            '#adminUserList .role-row:has-text("operator01") '
+            '[data-on-click="resetAdminPassword"]'
+        )
+        page.once("dialog", lambda dialog: dialog.accept(TEST_PASSWORD))
+        with page.expect_response(
+            lambda response: response.url.endswith("/users/operator01/password")
+            and response.request.method == "PATCH"
+        ) as conflict_info:
+            reset_button.click()
+        conflict_response = conflict_info.value
+        result.filter(has_text="reload and retry").wait_for(state="visible", timeout=10000)
+        if conflict_response.status != 409 or "error" not in (result.get_attribute("class") or ""):
+            raise AssertionError("password reset version conflict was not shown as an error")
+        report["flows"].append({
+            "name": "admin:password_reset_version_conflict",
+            "status": "ok",
+            "http_status": conflict_response.status,
+            "message": result.inner_text(),
+        })
+
+        page.reload(wait_until="domcontentloaded")
+        page.click('[data-admin-section-target="users"]')
+        page.wait_for_selector('#adminUserList .role-row:has-text("operator01")', timeout=10000)
+        result = page.locator("#adminUserResult")
+        reset_button = page.locator(
+            '#adminUserList .role-row:has-text("operator01") '
+            '[data-on-click="resetAdminPassword"]'
+        )
+        page.once("dialog", lambda dialog: dialog.accept(TEST_PASSWORD))
+        with page.expect_response(
+            lambda response: response.url.endswith("/users/operator01/password")
+            and response.request.method == "PATCH"
+        ) as success_info:
+            reset_button.click()
+        success_response = success_info.value
+        result.filter(has_text="密碼已重設").wait_for(state="visible", timeout=10000)
+        if success_response.status != 200 or "error" in (result.get_attribute("class") or ""):
+            raise AssertionError("successful password reset did not show a success result")
+        report["flows"].append({
+            "name": "admin:password_reset_success",
+            "status": "ok",
+            "http_status": success_response.status,
+            "message": result.inner_text(),
+        })
+
+        page.route(
+            "**/users/operator01/password",
+            lambda route: route.fulfill(
+                status=503,
+                content_type="application/json",
+                body=json.dumps({"status": "error", "message": "Injected persistence failure"}),
+            ),
+        )
+        page.once("dialog", lambda dialog: dialog.accept(TEST_PASSWORD))
+        reset_button.click()
+        result.filter(has_text="Injected persistence failure").wait_for(state="visible", timeout=10000)
+        if "error" not in (result.get_attribute("class") or ""):
+            raise AssertionError("password reset persistence failure was not shown as an error")
+        report["flows"].append({
+            "name": "admin:password_reset_persistence_error",
+            "status": "ok",
+            "http_status": 503,
+            "message": result.inner_text(),
+        })
+        scan_page(page, "flow-admin-password-reset-error", report)
+    finally:
+        context.close()
+        browser.close()
+
+
 def write_report(report: dict[str, Any]) -> Path:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUT_DIR / "browser_e2e_report.json"
@@ -950,6 +1071,7 @@ def main() -> int:
         with sync_playwright() as playwright:
             run_core_smoke(playwright, base_url, report)
             run_issue_flow(playwright, base_url, report)
+            run_admin_password_reset_flow(playwright, base_url, report)
             scan_responsive(playwright, base_url, report)
 
         layout_failures = [

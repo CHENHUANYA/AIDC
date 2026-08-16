@@ -109,6 +109,97 @@ def test_postgresql_stale_user_save_is_reported_as_concurrency_error():
     assert "reload and retry" in result["message"]
 
 
+def test_password_reset_uses_read_version_and_revokes_sessions():
+    updated_at = "2026-08-14T08:00:00+00:00"
+    users = {
+        "operator01": {
+            "user_id": "operator01",
+            "name": "Operator",
+            "role": "operator",
+            "active": True,
+            "updated_at": updated_at,
+            "password_hash": "old-hash",
+        }
+    }
+    actor = {"user_id": "admin01", "role": "admin"}
+    with (
+        patch.object(auth, "load_users", return_value=users),
+        patch.object(auth, "hash_password", return_value="new-hash"),
+        patch.object(auth, "save_user", side_effect=lambda _key, user, **_kwargs: user) as save_user,
+        patch.object(auth, "revoke_user_sessions", return_value=2) as revoke,
+    ):
+        result = asyncio.run(auth._api_reset_user_password(
+            "operator01",
+            auth.ResetPasswordRequest(password="strong-password", expected_updated_at=updated_at),
+            actor,
+        ))
+
+    assert result["status"] == "ok"
+    assert result["user"]["user_id"] == "operator01"
+    save_user.assert_called_once()
+    assert save_user.call_args.kwargs["expected_updated_at"] == updated_at
+    assert save_user.call_args.args[1]["password_hash"] == "new-hash"
+    revoke.assert_called_once_with("operator01")
+
+
+def test_password_reset_rejects_stale_client_version_before_hashing():
+    users = {
+        "operator01": {
+            "user_id": "operator01",
+            "role": "operator",
+            "active": True,
+            "updated_at": "2026-08-14T08:00:00+00:00",
+        }
+    }
+    actor = {"user_id": "admin01", "role": "admin"}
+    with (
+        patch.object(auth, "load_users", return_value=users),
+        patch.object(auth, "hash_password") as hash_password,
+        patch.object(auth, "save_user") as save_user,
+        patch.object(auth, "revoke_user_sessions") as revoke,
+    ):
+        result = asyncio.run(auth._api_reset_user_password(
+            "operator01",
+            auth.ResetPasswordRequest(
+                password="strong-password",
+                expected_updated_at="2026-08-13T08:00:00+00:00",
+            ),
+            actor,
+        ))
+
+    assert result == auth.concurrency_error()
+    hash_password.assert_not_called()
+    save_user.assert_not_called()
+    revoke.assert_not_called()
+
+
+def test_password_reset_reports_write_race_without_revoking_sessions():
+    updated_at = "2026-08-14T08:00:00+00:00"
+    users = {
+        "operator01": {
+            "user_id": "operator01",
+            "role": "operator",
+            "active": True,
+            "updated_at": updated_at,
+        }
+    }
+    actor = {"user_id": "admin01", "role": "admin"}
+    with (
+        patch.object(auth, "load_users", return_value=users),
+        patch.object(auth, "hash_password", return_value="new-hash"),
+        patch.object(auth, "save_user", side_effect=ConcurrentUserUpdateError("stale")),
+        patch.object(auth, "revoke_user_sessions") as revoke,
+    ):
+        result = asyncio.run(auth._api_reset_user_password(
+            "operator01",
+            auth.ResetPasswordRequest(password="strong-password"),
+            actor,
+        ))
+
+    assert result == auth.concurrency_error()
+    revoke.assert_not_called()
+
+
 def test_json_session_for_inactive_user_is_rejected_and_removed():
     token = "session-token"
     sessions = {
