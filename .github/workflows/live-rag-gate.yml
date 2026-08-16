@@ -82,7 +82,7 @@ jobs:
 
       - name: Upload live evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rag-live-gate-${{ github.run_id }}
           path: tests_tmp/rag-live-ci/
