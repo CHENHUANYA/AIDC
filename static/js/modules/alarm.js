@@ -383,13 +383,14 @@ async function loadBI() {
   }
 
   if (app.hasElements(['biWoStatusChart', 'biWoMachineBody'])) {
-    const statusOrder = ['pending', 'assigned', 'in_progress', 'completed', 'verified'];
+    const statusOrder = ['pending', 'assigned', 'in_progress', 'completed', 'verified', 'cancelled'];
     const statusLabels = {
       pending: '待處理',
       assigned: '已指派',
       in_progress: '處理中',
       completed: '已完成',
       verified: '已驗證',
+      cancelled: '已取消',
     };
     const statusCounts = statusOrder.map((status) => ({
       label: statusLabels[status],

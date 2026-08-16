@@ -12,6 +12,7 @@ const MAINTENANCE_STATUS_LABELS = {
   in_progress: '處理中',
   completed: '已完成',
   verified: '已驗證',
+  cancelled: '已取消',
 };
 
 const MAINTENANCE_PRIORITY_LABELS = {
@@ -101,10 +102,10 @@ function filterMaintenanceIssues(issues) {
 function filterWorkOrders(orders) {
   const filters = currentWorkFilters();
   return (orders || []).filter((order) => {
-    if (filters.view === 'active' && order.status === 'verified') return false;
+    if (filters.view === 'active' && ['verified', 'cancelled'].includes(order.status)) return false;
     if (filters.view === 'verified' && order.status !== 'verified') return false;
     if (filters.priority && order.priority !== filters.priority) return false;
-    if (filters.view === 'unassigned' && (order.assigned_to || ['completed', 'verified'].includes(order.status))) return false;
+    if (filters.view === 'unassigned' && (order.assigned_to || ['completed', 'verified', 'cancelled'].includes(order.status))) return false;
     if (filters.view === 'mine' && order.assigned_to !== currentMaintenanceUser()) return false;
     return includesFilter([
       order.id,
@@ -279,7 +280,7 @@ function updateMaintenanceStats(issues, orders, feedbackStats) {
   if (!app) return;
 
   app.$('mtIssueOpen').textContent = String(issues.length);
-  app.$('mtUnassigned').textContent = String(orders.filter((order) => !order.assigned_to && !['completed', 'verified'].includes(order.status)).length);
+  app.$('mtUnassigned').textContent = String(orders.filter((order) => !order.assigned_to && !['completed', 'verified', 'cancelled'].includes(order.status)).length);
   app.$('mtInProgress').textContent = String(orders.filter((order) => ['assigned', 'in_progress'].includes(order.status)).length);
   app.$('mtFeedbackCount').textContent = String(feedbackStats?.technician_feedback ?? 0);
 }

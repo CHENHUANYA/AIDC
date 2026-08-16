@@ -314,6 +314,7 @@ def test_issue_reopen_and_verification_guards(json_issue_store, monkeypatch):
         base["issue_id"], issues.UpdateIssue(status="open", version=1), actor=OPERATOR
     ))
     assert "requires an operator note" in missing_note["message"]
+    monkeypatch.setattr(issues, "sync_work_order_from_issue", lambda *_args: {"id": "WO-1", "status": "pending"})
     reopened = asyncio.run(issues.api_update_issue(
         base["issue_id"], issues.UpdateIssue(status="open", operator_note="Retry", version=1), actor=OPERATOR
     ))

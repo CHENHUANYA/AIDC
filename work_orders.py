@@ -8,6 +8,7 @@ Features
 - Admin approval ingests reviewed notes into the RAG knowledge base.
 """
 
+import copy
 import json
 import logging
 import os
@@ -52,7 +53,15 @@ rag_answers = RagAnswerRepository()
 DB_DIR = os.getenv("DB_PATH", "./alarm_db")
 WO_FILE = os.path.join(DB_DIR, "work_orders.json")
 ARCHIVE_DIR = os.path.join(DB_DIR, "archive")
-STATUSES = ["pending", "assigned", "in_progress", "completed", "verified"]
+STATUSES = ["pending", "assigned", "in_progress", "completed", "verified", "cancelled"]
+STATUS_TRANSITIONS = {
+    "pending": {"assigned", "in_progress", "cancelled"},
+    "assigned": {"pending", "in_progress", "cancelled"},
+    "in_progress": {"pending", "assigned", "completed", "cancelled"},
+    "completed": {"verified"},
+    "verified": set(),
+    "cancelled": set(),
+}
 PRIORITIES = ["low", "medium", "high", "critical"]
 WORK_ORDER_STALE_UPDATE_MESSAGE = "Work order changed since you loaded it. Reload and retry."
 KB_REVIEW_STATUSES = [
@@ -106,6 +115,7 @@ STATUS_LABELS = {
     "in_progress": "處理中",
     "completed": "已完成",
     "verified": "已驗證",
+    "cancelled": "已取消",
 }
 
 PRIORITY_LABELS = {
@@ -135,6 +145,10 @@ def _status_transition_error(previous_status: str, next_status: str) -> str:
         return "Work orders must be completed before verification."
     if previous_status == "verified":
         return "Verified work orders can only be reopened from an operator follow-up."
+    if previous_status == "cancelled":
+        return "Cancelled work orders cannot transition to another status."
+    if next_status not in STATUS_TRANSITIONS.get(previous_status, set()):
+        return f"Work order status cannot transition from {previous_status} to {next_status}."
     return ""
 
 
@@ -345,6 +359,18 @@ def _issue_map_by_id() -> dict[str, dict]:
     except Exception as exc:
         logger.warning("Issue visibility map failed: %s", exc)
         return {}
+
+
+def _restore_json_issue(snapshot: dict) -> None:
+    from issues import _load_issues, _save_issues
+
+    issue_id = str(snapshot.get("issue_id") or "")
+    issues = _load_issues()
+    for index, issue in enumerate(issues):
+        if str(issue.get("issue_id") or "") == issue_id:
+            issues[index] = copy.deepcopy(snapshot)
+            _save_issues(issues)
+            return
 
 
 def _visible_orders(actor: dict) -> List[dict]:
@@ -562,6 +588,10 @@ def sync_work_order_from_issue(issue: dict, user_id: str = "", note: str = "") -
             if order.get("verified_by") != user_id:
                 order["verified_by"] = user_id
                 changed_fields.append("verified_by")
+        elif issue_status == "cancelled":
+            if _status_transition_error(previous_status, "cancelled"):
+                return None
+            next_status = "cancelled"
         elif issue_status == "open" and previous_status in ("completed", "verified"):
             next_status = "assigned" if order.get("assigned_to") else "pending"
             for field in ["verified_by", "completed_at"]:
@@ -761,7 +791,7 @@ async def api_order_stats(actor: dict = Depends(get_actor)):
             if completed_key in completed_daily:
                 completed_daily[completed_key] += 1
 
-        if o["status"] not in ("completed", "verified"):
+        if o["status"] not in ("completed", "verified", "cancelled"):
             open_orders += 1
             if not (o.get("assigned_to") or "").strip():
                 unassigned_open += 1
@@ -787,8 +817,9 @@ async def api_order_stats(actor: dict = Depends(get_actor)):
         if o.get("completed_at", "").startswith(today) and o["status"] in ("completed", "verified")
     )
     pending_verification = by_status.get("completed", 0)
-    closed_orders = by_status.get("verified", 0)
-    completion_rate = round((closed_orders / len(orders)) * 100, 1) if orders else 0
+    verified_orders = by_status.get("verified", 0)
+    closed_orders = verified_orders + by_status.get("cancelled", 0)
+    completion_rate = round((verified_orders / len(orders)) * 100, 1) if orders else 0
     top_machines = sorted(by_machine.items(), key=lambda item: (-item[1], item[0]))[:5]
 
     return {
@@ -937,7 +968,8 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
         return {"status": "error", "message": WORK_ORDER_STALE_UPDATE_MESSAGE}
 
     now = datetime.now().isoformat()
-    before_order = dict(order)
+    before_order = copy.deepcopy(order)
+    linked_issue_snapshot = copy.deepcopy(linked_issue) if linked_issue is not None else None
     previous_status = order.get("status", "pending")
     changed_fields = []
     updated_by = actor_id(actor)
@@ -1036,8 +1068,20 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
         try:
             from issues import sync_issue_from_work_order
             synced_issue = sync_issue_from_work_order(order)
+            if synced_issue is None:
+                raise RuntimeError(f"Linked issue {order['issue_id']} was not synchronized")
         except Exception as exc:
             logger.warning("Issue sync failed for %s: %s", order["id"], exc)
+            if use_postgres:
+                raise
+            orders[idx] = before_order
+            _save_orders(orders)
+            if linked_issue_snapshot is not None:
+                _restore_json_issue(linked_issue_snapshot)
+            return {
+                "status": "error",
+                "message": "Linked issue synchronization failed; work order update was rolled back.",
+            }
 
     review_result = {
         "candidate": bool(order.get("kb_candidate")),

@@ -124,6 +124,92 @@ class IssueWorkOrderPermissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(initial_history_count, len(synced_issue["issue_history"]))
         self.assertEqual("open", synced_issue["status"])
 
+    async def test_work_order_cancellation_closes_the_linked_issue(self):
+        issue, order = self.create_linked_issue_and_order()
+
+        result = await work_orders.api_update_order(
+            order["id"],
+            work_orders.UpdateWorkOrder(status="cancelled", version=order["version"]),
+            actor=SUPERVISOR,
+        )
+
+        self.assertEqual("ok", result["status"])
+        self.assertEqual("cancelled", result["order"]["status"])
+        self.assertEqual("cancelled", result["issue"]["status"])
+        self.assertEqual("cancelled", issues.get_issue_dict(issue["issue_id"])["status"])
+
+        stats = await work_orders.api_order_stats(actor=SUPERVISOR)
+        self.assertEqual(1, stats["closed_orders"])
+        self.assertEqual(0, stats["open_orders"])
+        self.assertEqual(1, stats["by_status"]["cancelled"])
+        self.assertEqual(0, stats["completion_rate"])
+
+    async def test_work_order_update_rolls_back_both_json_records_when_issue_sync_fails(self):
+        issue, order = self.create_linked_issue_and_order()
+        original_sync = issues.sync_issue_from_work_order
+
+        def sync_then_fail(payload):
+            original_sync(payload)
+            raise RuntimeError("injected issue sync failure")
+
+        with patch.object(issues, "sync_issue_from_work_order", side_effect=sync_then_fail):
+            result = await work_orders.api_update_order(
+                order["id"],
+                work_orders.UpdateWorkOrder(status="in_progress", version=order["version"]),
+                actor=SUPERVISOR,
+            )
+
+        self.assertEqual("error", result["status"])
+        self.assertIn("rolled back", result["message"])
+        stored_order = work_orders.get_order_dict(order["id"])
+        stored_issue = issues.get_issue_dict(issue["issue_id"])
+        self.assertEqual("pending", stored_order["status"])
+        self.assertEqual(order["version"], stored_order["version"])
+        self.assertEqual("open", stored_issue["status"])
+
+    async def test_issue_update_rolls_back_both_json_records_when_work_order_sync_fails(self):
+        issue, order = self.create_linked_issue_and_order()
+        original_sync = work_orders.sync_work_order_from_issue
+
+        def sync_then_fail(payload, user_id="", note=""):
+            original_sync(payload, user_id, note)
+            raise RuntimeError("injected work order sync failure")
+
+        with patch.object(issues, "sync_work_order_from_issue", side_effect=sync_then_fail):
+            result = await issues.api_update_issue(
+                issue["issue_id"],
+                issues.UpdateIssue(status="cancelled", version=issue["version"]),
+                actor=SUPERVISOR,
+            )
+
+        self.assertEqual("error", result["status"])
+        self.assertIn("rolled back", result["message"])
+        stored_issue = issues.get_issue_dict(issue["issue_id"])
+        stored_order = work_orders.get_order_dict(order["id"])
+        self.assertEqual("open", stored_issue["status"])
+        self.assertEqual(issue["version"], stored_issue["version"])
+        self.assertEqual("pending", stored_order["status"])
+
+    async def test_cancelled_issue_is_terminal(self):
+        issue = issues.create_issue_dict(
+            machine_id="CNC-01",
+            description="Cancelled alarm",
+            line_id="LINE-A",
+            created_by="operator01",
+        )
+        stored = issues._load_issues()
+        stored[0]["status"] = "cancelled"
+        issues._save_issues(stored)
+
+        result = await issues.api_update_issue(
+            issue["issue_id"],
+            issues.UpdateIssue(status="open", version=issue["version"]),
+            actor=SUPERVISOR,
+        )
+
+        self.assertEqual("error", result["status"])
+        self.assertIn("Cancelled issues", result["message"])
+
 
 
     async def test_issue_update_without_version_is_rejected(self):

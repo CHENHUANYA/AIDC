@@ -6,6 +6,7 @@ future machine integration events. Maintenance work orders can be created from
 issues when escalation is needed.
 """
 
+import copy
 import json
 import logging
 import os
@@ -35,7 +36,7 @@ from repositories.runtime import postgres_store_enabled
 from services.postgres_workflow import create_issue as postgres_create_issue
 from services.postgres_workflow import escalate_issue as postgres_escalate_issue
 from services.transactions import postgres_transactional
-from work_orders import create_order_dict, sync_work_order_from_issue, validate_issue_verification
+from work_orders import create_order_dict, get_order_dict, sync_work_order_from_issue, validate_issue_verification
 
 
 logger = logging.getLogger("alarm_rag.issues")
@@ -139,6 +140,18 @@ def _find_issue(issue_id: str) -> Tuple[int, Optional[dict]]:
 def get_issue_dict(issue_id: str) -> Optional[dict]:
     _, issue = _find_issue(issue_id)
     return issue
+
+
+def _restore_json_work_order(snapshot: dict) -> None:
+    from work_orders import _load_orders, _save_orders
+
+    order_id = str(snapshot.get("id") or "")
+    orders = _load_orders()
+    for index, order in enumerate(orders):
+        if str(order.get("id") or "") == order_id:
+            orders[index] = copy.deepcopy(snapshot)
+            _save_orders(orders)
+            return
 
 
 def _normalize_status(value: Optional[str], fallback: str = "open") -> str:
@@ -653,7 +666,10 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
 
     changed_fields = []
     updated_by = actor_id(actor)
-    before_issue = dict(issue)
+    before_issue = copy.deepcopy(issue)
+    linked_order_id = str(issue.get("work_order_id") or "")
+    linked_order = get_order_dict(linked_order_id) if linked_order_id else None
+    linked_order_snapshot = copy.deepcopy(linked_order) if linked_order is not None else None
     previous_status = issue.get("status", "open")
     if actor_role(actor) == "operator" and req.status == "open" and previous_status in ("completed", "verified"):
         if not _operator_reopen_enabled():
@@ -666,6 +682,8 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
             return {"status": "error", "message": f"Invalid status: {req.status}"}
         if normalized_status == "completed":
             return {"status": "error", "message": "Issues are completed from the linked work order."}
+        if previous_status == "cancelled" and normalized_status != "cancelled":
+            return {"status": "error", "message": "Cancelled issues cannot transition to another status."}
         if normalized_status == "verified":
             if previous_status != "completed":
                 return {"status": "error", "message": "Issues must be completed before verification."}
@@ -719,7 +737,22 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
         _save_issues(issues)
     synced_work_order = None
     if "status" in changed_fields and issue.get("work_order_id"):
-        synced_work_order = sync_work_order_from_issue(issue, updated_by, req.operator_note or "")
+        try:
+            synced_work_order = sync_work_order_from_issue(issue, updated_by, req.operator_note or "")
+            if synced_work_order is None:
+                raise RuntimeError(f"Linked work order {issue['work_order_id']} was not synchronized")
+        except Exception as exc:
+            logger.warning("Work order sync failed for %s: %s", issue["issue_id"], exc)
+            if use_postgres:
+                raise
+            issues[index] = before_issue
+            _save_issues(issues)
+            if linked_order_snapshot is not None:
+                _restore_json_work_order(linked_order_snapshot)
+            return {
+                "status": "error",
+                "message": "Linked work order synchronization failed; issue update was rolled back.",
+            }
     return {"status": "ok", "issue": issue, "work_order": synced_work_order}
 
 

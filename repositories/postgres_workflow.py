@@ -389,7 +389,7 @@ class PostgresWorkOrderRepository:
                     conditions.append(Issue.line_id.in_(line_scope) if line_scope else false())
             elif role == "maintenance":
                 conditions.extend([
-                    WorkOrder.status.not_in(("completed", "verified")),
+                    WorkOrder.status.not_in(("completed", "verified", "cancelled")),
                     or_(WorkOrder.assigned_to_ref == "", WorkOrder.assigned_to_ref == user_id),
                 ])
             else:

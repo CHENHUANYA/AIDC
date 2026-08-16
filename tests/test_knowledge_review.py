@@ -40,6 +40,16 @@ class KnowledgeReviewTests(unittest.IsolatedAsyncioTestCase):
             created_by="maintenance01",
         )
         with patch.object(work_orders, "_auto_feedback_to_kb", new=AsyncMock()) as ingest:
+            started = await work_orders.api_update_order(
+                order["id"],
+                work_orders.UpdateWorkOrder(
+                    status="in_progress",
+                    accepted_by="maintenance01",
+                    version=order["version"],
+                ),
+                actor=MAINTENANCE,
+            )
+            self.assertEqual("ok", started["status"])
             result = await work_orders.api_update_order(
                 order["id"],
                 work_orders.UpdateWorkOrder(
@@ -48,7 +58,7 @@ class KnowledgeReviewTests(unittest.IsolatedAsyncioTestCase):
                     repair_action="Cleaned sensor and reset emergency stop",
                     resolution="Alarm cleared and spindle started normally",
                     completed_by="maintenance01",
-                    version=order["version"],
+                    version=started["order"]["version"],
                 ),
                 actor=MAINTENANCE,
             )

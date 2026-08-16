@@ -1035,7 +1035,7 @@ def can_view_work_order(actor: dict, order: dict, linked_issue: Optional[dict] =
     if role == "operator":
         return linked_issue is not None and can_view_issue(actor, linked_issue)
     if role == "maintenance":
-        if order.get("status") in ("completed", "verified"):
+        if order.get("status") in ("completed", "verified", "cancelled"):
             return False
         assigned_to = str(order.get("assigned_to") or "")
         return not assigned_to or assigned_to == actor_id(actor)

@@ -5,7 +5,7 @@ function supervisorApp() {
 const VERIFIED_ORDER_STATUSES = new Set(['verified']);
 const SUPERVISOR_RISK_STATUSES = new Set(['pending', 'assigned', 'in_progress']);
 const SUPERVISOR_PRIORITIES = ['critical', 'high', 'medium', 'low'];
-const SUPERVISOR_EDITABLE_STATUSES = ['pending', 'assigned', 'in_progress'];
+const SUPERVISOR_EDITABLE_STATUSES = ['pending', 'assigned', 'in_progress', 'cancelled'];
 const SUPERVISOR_PRIORITY_SCORE = { critical: 0, high: 1, medium: 2, low: 3 };
 const SUPERVISOR_SECTIONS = new Set(['overview', 'verification', 'responsibility', 'lines', 'audit']);
 

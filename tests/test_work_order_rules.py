@@ -14,10 +14,22 @@ import work_orders
         ("assigned", "verified", "must be completed"),
         ("verified", "assigned", "Verified work orders"),
         ("assigned", "in_progress", ""),
+        ("pending", "completed", "cannot transition"),
+        ("in_progress", "completed", ""),
+        ("pending", "cancelled", ""),
+        ("assigned", "cancelled", ""),
+        ("in_progress", "cancelled", ""),
+        ("cancelled", "pending", "Cancelled work orders"),
     ],
 )
 def test_work_order_status_transition_rules(previous, next_status, message):
     assert message in work_orders._status_transition_error(previous, next_status)
+
+
+def test_cancelled_is_a_supported_terminal_work_order_status():
+    assert "cancelled" in work_orders.STATUSES
+    assert work_orders.STATUS_LABELS["cancelled"] == "已取消"
+    assert work_orders.STATUS_TRANSITIONS["cancelled"] == set()
 
 
 def test_work_order_closure_and_direct_verification_rules():
