@@ -1,5 +1,5 @@
 -r requirements-postgresql.txt
-pytest==8.4.1
+pytest==9.1.1
 ruff==0.12.2
 mypy==1.16.1
 coverage==7.15.2
