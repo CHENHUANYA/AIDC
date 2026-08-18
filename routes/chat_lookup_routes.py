@@ -314,9 +314,9 @@ def save_rag_answer(
     created_by: str,
     tokenizer_version: str,
     answer_state: str,
-) -> None:
+) -> bool:
     try:
-        rag_answers.add({
+        saved = rag_answers.add({
             "answer_id": answer_id,
             "query": query,
             "collection": collection,
@@ -330,9 +330,13 @@ def save_rag_answer(
             "elapsed_ms": elapsed_ms,
             "created_by": created_by,
         })
+        if not saved:
+            logger.warning("RAG answer snapshot %s was not persisted", answer_id)
+        return saved
     except Exception as exc:
         # Persistence must be observable but must not turn an otherwise valid answer into a 500.
         logger.warning("Failed to persist RAG answer %s: %s", answer_id, exc)
+        return False
 
 
 def classify_answer_state(provider: str) -> str:
@@ -369,7 +373,18 @@ def record_chat_error(collection_name: str, user_query: str, docs: list[dict], e
         "rag_preview": build_rag_preview(docs),
     }
     error_log.append(entry)
-    append_jsonl(ERROR_LOG_PATH, entry)
+    try:
+        append_jsonl(ERROR_LOG_PATH, entry)
+    except Exception as persistence_exc:
+        logger.warning("Failed to persist chat error: %s", persistence_exc)
+
+
+def record_query(collection_name: str, user_query: str, *, source: str, elapsed_ms: int) -> None:
+    try:
+        log_query(collection_name, user_query, source=source, elapsed_ms=elapsed_ms)
+    except Exception as exc:
+        # Query telemetry is best-effort and must not break an otherwise valid response or SSE completion.
+        logger.warning("Failed to persist query telemetry: %s", exc)
 
 
 async def stream_chat_events(
@@ -424,7 +439,7 @@ async def stream_chat_events(
             provider = request_llm_source.get()
             yield make_sse_chunk(content, rag=rag_metadata, response_id=response_id)
             first_event = False
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, GeneratorExit):
         runtime_metrics.record_rag(
             retrieval_ms=retrieval_ms,
             model_ms=max((time.monotonic() - model_started) * 1000, 0.0),
@@ -455,7 +470,7 @@ async def stream_chat_events(
     answer = "".join(parts)
     if answer_state == "complete":
         answer_state = classify_answer_state(provider)
-    log_query(collection_name, user_query, source="api-stream", elapsed_ms=elapsed_ms)
+    record_query(collection_name, user_query, source="api-stream", elapsed_ms=elapsed_ms)
     model = SCHOOL_API_MODEL if provider == "school" else OLLAMA_MODEL if provider == "ollama" else ""
     save_rag_answer(
         answer_id=response_id,
@@ -536,7 +551,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
         tags = answer_source_tags(docs)
         content = f"{tags}\n{grounded_answer}" if tags else grounded_answer
         elapsed_ms = int((time.time() - start_ts) * 1000)
-        log_query(collection_name, user_query, source="api-grounded", elapsed_ms=elapsed_ms)
+        record_query(collection_name, user_query, source="api-grounded", elapsed_ms=elapsed_ms)
         save_rag_answer(
             answer_id=response_id,
             query=user_query,
@@ -609,7 +624,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
 
     elapsed_ms = int((time.time() - start_ts) * 1000)
     answer_state = classify_answer_state(provider)
-    log_query(collection_name, user_query, source="api", elapsed_ms=elapsed_ms)
+    record_query(collection_name, user_query, source="api", elapsed_ms=elapsed_ms)
 
     model = SCHOOL_API_MODEL if provider == "school" else OLLAMA_MODEL if provider == "ollama" else ""
     save_rag_answer(
@@ -711,7 +726,12 @@ async def retrieve_collection(
         {**citation, "text": str(doc.get("text") or "")}
         for citation, doc in zip(citations, docs, strict=True)
     ]
-    log_query(collection_name, clean_query, source="retrieve", elapsed_ms=int((time.time() - start_ts) * 1000))
+    record_query(
+        collection_name,
+        clean_query,
+        source="retrieve",
+        elapsed_ms=int((time.time() - start_ts) * 1000),
+    )
     return {
         "collection": collection_name,
         "query": clean_query,
@@ -767,7 +787,12 @@ async def lookup_alarm(collection_name: str, code: str, actor: dict = Depends(ge
     start_ts = time.time()
     code_clean = re.sub(r"\D", "", code)
     if not code_clean:
-        log_query(collection_name, code, source="lookup", elapsed_ms=int((time.time() - start_ts) * 1000))
+        record_query(
+            collection_name,
+            code,
+            source="lookup",
+            elapsed_ms=int((time.time() - start_ts) * 1000),
+        )
         return {"found": False, "error": "Invalid alarm code"}
 
     try:
@@ -777,7 +802,12 @@ async def lookup_alarm(collection_name: str, code: str, actor: dict = Depends(ge
             meta = result["meta"]
             alarm_code = str(meta.get("code", code_clean))
             alarm_info = classify_alarm(parse_alarm_code_int(alarm_code), collection_name)
-            log_query(collection_name, code_clean, source="lookup", elapsed_ms=int((time.time() - start_ts) * 1000))
+            record_query(
+                collection_name,
+                code_clean,
+                source="lookup",
+                elapsed_ms=int((time.time() - start_ts) * 1000),
+            )
             return {
                 "found": True,
                 "code": alarm_code,
@@ -799,17 +829,21 @@ async def lookup_alarm(collection_name: str, code: str, actor: dict = Depends(ge
                 "category": alarm_info["category"],
                 "severity": alarm_info["severity"],
             }
-        log_query(collection_name, code_clean, source="lookup", elapsed_ms=int((time.time() - start_ts) * 1000))
+        record_query(
+            collection_name,
+            code_clean,
+            source="lookup",
+            elapsed_ms=int((time.time() - start_ts) * 1000),
+        )
         return {"found": False, "error": f"Alarm {code_clean} not found in {collection_name}"}
     except Exception as exc:
-        error_log.append({
-            "time": datetime.now().isoformat(),
-            "collection": collection_name,
-            "query": code_clean,
-            "error": error_detail(exc),
-        })
-        append_jsonl(ERROR_LOG_PATH, error_log[-1])
-        log_query(collection_name, code_clean, source="lookup", elapsed_ms=int((time.time() - start_ts) * 1000))
+        record_chat_error(collection_name, code_clean, [], exc)
+        record_query(
+            collection_name,
+            code_clean,
+            source="lookup",
+            elapsed_ms=int((time.time() - start_ts) * 1000),
+        )
         return {"found": False, "error": str(exc)}
 
 

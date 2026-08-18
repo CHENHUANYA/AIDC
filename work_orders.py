@@ -12,6 +12,8 @@ import copy
 import json
 import logging
 import os
+import shutil
+import tempfile
 import zipfile
 from difflib import SequenceMatcher
 from io import BytesIO
@@ -19,7 +21,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from pydantic import BaseModel
 
 from api_schemas import (
@@ -43,6 +45,7 @@ from pagination import InvalidCursor, decode_cursor, encode_cursor, paginate_rec
 from repositories.postgres_workflow import PostgresWorkOrderRepository
 from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
+from services.json_file_store import write_json_atomic
 from services.transactions import postgres_transactional
 
 logger = logging.getLogger("alarm_rag.work_orders")
@@ -103,7 +106,6 @@ def upload_limit_bytes(env_name: str, default_mb: float) -> int:
 
 EXCEL_UPLOAD_MAX_BYTES = upload_limit_bytes("ALARM_RAG_EXCEL_UPLOAD_MAX_MB", 10)
 XLSX_MAGIC = b"PK\x03\x04"
-XLS_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 XLSX_MAX_UNCOMPRESSED_BYTES = upload_limit_bytes("ALARM_RAG_XLSX_UNCOMPRESSED_MAX_MB", 50)
 XLSX_MAX_SHARED_STRINGS_BYTES = upload_limit_bytes("ALARM_RAG_XLSX_SHARED_STRINGS_MAX_MB", 10)
 XLSX_MAX_ENTRIES = env_int("ALARM_RAG_XLSX_MAX_ENTRIES", 2000, minimum=1)
@@ -284,53 +286,42 @@ def _recent_day_keys(days: int) -> List[str]:
 # ----------------- Persistence helpers -----------------
 def _load_orders() -> List[dict]:
     if postgres_store_enabled():
-        orders = postgres_work_orders.load_all()
-        for order in orders:
-            try:
-                order["version"] = max(int(order.get("version") or 1), 1)
-            except (TypeError, ValueError):
-                order["version"] = 1
-            order.setdefault("kb_candidate", False)
-            order.setdefault("kb_review_status", "not_ready")
-            order.setdefault("kb_review_note", "")
-            order.setdefault("kb_reviewed_by", "")
-            order.setdefault("kb_reviewed_at", "")
-            order.setdefault("kb_ingested_at", "")
-            order.setdefault("kb_ingest_result", None)
-            order.setdefault("kb_duplicate_of", "")
-            _refresh_knowledge_review_state(order, [])
-        return orders
+        return _normalize_loaded_orders(postgres_work_orders.load_all())
     if not os.path.exists(WO_FILE):
         return []
     try:
         with open(WO_FILE, "r", encoding="utf-8") as f:
-            orders = json.load(f)
-        for order in orders:
-            try:
-                order["version"] = max(int(order.get("version") or 1), 1)
-            except (TypeError, ValueError):
-                order["version"] = 1
-            order.setdefault("kb_candidate", False)
-            order.setdefault("kb_review_status", "not_ready")
-            order.setdefault("kb_review_note", "")
-            order.setdefault("kb_reviewed_by", "")
-            order.setdefault("kb_reviewed_at", "")
-            order.setdefault("kb_ingested_at", "")
-            order.setdefault("kb_ingest_result", None)
-            order.setdefault("kb_duplicate_of", "")
-            _refresh_knowledge_review_state(order, [])
-        return orders
-    except (json.JSONDecodeError, IOError):
+            return _normalize_loaded_orders(json.load(f))
+    except (json.JSONDecodeError, OSError, UnicodeError):
         return []
+
+
+def _normalize_loaded_orders(payload: object) -> List[dict]:
+    if not isinstance(payload, list):
+        return []
+    orders = [order for order in payload if isinstance(order, dict)]
+    for order in orders:
+        try:
+            order["version"] = max(int(order.get("version") or 1), 1)
+        except (TypeError, ValueError):
+            order["version"] = 1
+        order.setdefault("kb_candidate", False)
+        order.setdefault("kb_review_status", "not_ready")
+        order.setdefault("kb_review_note", "")
+        order.setdefault("kb_reviewed_by", "")
+        order.setdefault("kb_reviewed_at", "")
+        order.setdefault("kb_ingested_at", "")
+        order.setdefault("kb_ingest_result", None)
+        order.setdefault("kb_duplicate_of", "")
+        _refresh_knowledge_review_state(order, [])
+    return orders
 
 
 def _save_orders(orders: List[dict]):
     if postgres_store_enabled():
         postgres_work_orders.save_all(orders)
         return
-    os.makedirs(DB_DIR, exist_ok=True)
-    with open(WO_FILE, "w", encoding="utf-8") as f:
-        json.dump(orders, f, ensure_ascii=False, indent=2)
+    write_json_atomic(WO_FILE, orders)
 
 
 def _find_order(order_id: str) -> Tuple[int, Optional[dict]]:
@@ -402,8 +393,13 @@ def _load_archived_orders() -> Tuple[List[dict], List[dict]]:
     if not os.path.isdir(ARCHIVE_DIR):
         return [], []
 
+    try:
+        archive_names = os.listdir(ARCHIVE_DIR)
+    except OSError as exc:
+        logger.warning("Work order archive listing failed: %s", exc)
+        return [], []
     archive_files = sorted(
-        (name for name in os.listdir(ARCHIVE_DIR) if name.startswith("work_orders_archive_") and name.endswith(".json")),
+        (name for name in archive_names if name.startswith("work_orders_archive_") and name.endswith(".json")),
         reverse=True,
     )
     archives: List[dict] = []
@@ -413,16 +409,21 @@ def _load_archived_orders() -> Tuple[List[dict], List[dict]]:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 archived = json.load(f)
-        except (json.JSONDecodeError, IOError):
+        except (json.JSONDecodeError, OSError, UnicodeError):
             archived = []
         if not isinstance(archived, list):
             archived = []
+        try:
+            updated_at = datetime.fromtimestamp(os.path.getmtime(path)).isoformat()
+        except OSError:
+            continue
+        valid_orders = [order for order in archived if isinstance(order, dict)]
         archives.append({
             "file": name,
-            "count": len(archived),
-            "updated_at": datetime.fromtimestamp(os.path.getmtime(path)).isoformat(),
+            "count": len(valid_orders),
+            "updated_at": updated_at,
         })
-        orders.extend({**order, "archive_file": name} for order in archived if isinstance(order, dict))
+        orders.extend({**order, "archive_file": name} for order in valid_orders)
     return archives, orders
 
 
@@ -471,8 +472,7 @@ class KnowledgeReviewRequest(BaseModel):
     version: Optional[int] = None
 
 
-# ----------------- Public helper -----------------
-def create_order_dict(
+def _build_order_dict(
     alarm_code: str,
     manual: str = "808d",
     machine_id: str = "",
@@ -485,7 +485,7 @@ def create_order_dict(
     issue_id: str = "",
     created_by: str = "",
 ) -> dict:
-    """Create and persist a new work order. Returns the order dict."""
+    """Build a new work order without publishing it."""
     now = datetime.now().isoformat()
     initial_status = "assigned" if _clean_text(assigned_to) else "pending"
     order = {
@@ -537,14 +537,49 @@ def create_order_dict(
             "created_at": now,
         }],
     }
+    return order
+
+
+def _persist_new_order(order: dict) -> dict:
     if postgres_store_enabled():
         order = postgres_work_orders.save_one(order)
     else:
         orders = _load_orders()
         orders.insert(0, order)
         _save_orders(orders)
-    logger.info("Created work order %s for alarm %s", order["id"], alarm_code)
+    logger.info("Created work order %s for alarm %s", order["id"], order.get("alarm_code", ""))
     return order
+
+
+# ----------------- Public helper -----------------
+def create_order_dict(
+    alarm_code: str,
+    manual: str = "808d",
+    machine_id: str = "",
+    priority: str = "medium",
+    description: str = "",
+    rag_suggestion: str = "",
+    rag_answer_id: str = "",
+    source: str = "auto",
+    assigned_to: str = "",
+    issue_id: str = "",
+    created_by: str = "",
+) -> dict:
+    """Create and persist a new work order. Returns the order dict."""
+    order = _build_order_dict(
+        alarm_code=alarm_code,
+        manual=manual,
+        machine_id=machine_id,
+        priority=priority,
+        description=description,
+        rag_suggestion=rag_suggestion,
+        rag_answer_id=rag_answer_id,
+        source=source,
+        assigned_to=assigned_to,
+        issue_id=issue_id,
+        created_by=created_by,
+    )
+    return _persist_new_order(order)
 
 
 def _append_order_history(
@@ -1361,9 +1396,6 @@ async def review_work_order_knowledge(
 
 
 # ----------------- Excel import -----------------
-from fastapi import UploadFile, File
-import tempfile, shutil
-
 # Expected Excel columns — order matters for positional fallback
 EXCEL_FIELD_MAP = {
     "警報代碼": "alarm_code", "alarm_code": "alarm_code", "代碼": "alarm_code", "code": "alarm_code",
@@ -1454,24 +1486,26 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
     - 否則按預設順序: alarm_code, machine_id, description, assigned_to, resolution, priority, status, manual
     """
     safe_filename = os.path.basename(file.filename or "")
-    if not safe_filename.lower().endswith((".xlsx", ".xls")):
-        return {"status": "error", "message": "僅支援 .xlsx 檔案"}
+    if not safe_filename.lower().endswith(".xlsx"):
+        return {"status": "error", "message": "Only .xlsx files are supported"}
 
-    tmp_dir = tempfile.mkdtemp(dir=DB_DIR)
+    try:
+        os.makedirs(DB_DIR, exist_ok=True)
+        tmp_dir = tempfile.mkdtemp(dir=DB_DIR)
+    except OSError as exc:
+        return {"status": "error", "message": f"Unable to stage Excel import: {exc}"}
     tmp_path = os.path.join(tmp_dir, safe_filename)
+    wb = None
     try:
         content = await file.read()
         if len(content) > EXCEL_UPLOAD_MAX_BYTES:
             max_mb = EXCEL_UPLOAD_MAX_BYTES / 1024 / 1024
             return {"status": "error", "message": f"Excel upload exceeds {max_mb:g} MB limit"}
-        if safe_filename.lower().endswith(".xlsx") and not content.startswith(XLSX_MAGIC):
+        if not content.startswith(XLSX_MAGIC):
             return {"status": "error", "message": "Invalid XLSX file signature"}
-        if safe_filename.lower().endswith(".xlsx"):
-            archive_error = _validate_xlsx_archive(content)
-            if archive_error:
-                return {"status": "error", "message": archive_error}
-        if safe_filename.lower().endswith(".xls") and not content.startswith(XLS_OLE_MAGIC):
-            return {"status": "error", "message": "Invalid XLS file signature"}
+        archive_error = _validate_xlsx_archive(content)
+        if archive_error:
+            return {"status": "error", "message": archive_error}
         with open(tmp_path, "wb") as f:
             f.write(content)
 
@@ -1484,8 +1518,10 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
             return {"status": "error", "message": "Excel 檔案為空"}
 
         # Detect header
-        col_map = _detect_columns(list(rows[0]))
-        if col_map:
+        detected_columns = _detect_columns(list(rows[0]))
+        has_header = detected_columns is not None
+        if detected_columns is not None:
+            col_map = detected_columns
             data_rows = rows[1:]  # skip header
         else:
             # Positional fallback
@@ -1497,7 +1533,7 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
         errors = []
         candidate_count = 0
 
-        for row_idx, row in enumerate(data_rows, start=2 if col_map else 1):
+        for row_idx, row in enumerate(data_rows, start=2 if has_header else 1):
             try:
                 fields = {}
                 for col_idx, field_name in col_map.items():
@@ -1517,7 +1553,7 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
                 if status not in STATUSES:
                     status = "pending"
 
-                order = create_order_dict(
+                order = _build_order_dict(
                     alarm_code=alarm_code,
                     manual=fields.get("manual", "808d"),
                     machine_id=fields.get("machine_id", ""),
@@ -1528,62 +1564,41 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
                     assigned_to=fields.get("assigned_to", ""),
                     created_by=actor_id(actor),
                 )
+                knowledge_candidate = False
 
                 if status != "pending":
-                    orders_all = _load_orders()
-                    closure_error = ""
-                    for o in orders_all:
-                        if o["id"] == order["id"]:
-                            before_order = dict(o)
-                            previous_status = o.get("status", "pending")
-                            o["status"] = status
-                            if fields.get("resolution"):
-                                o["resolution"] = fields["resolution"]
-                            if fields.get("notes"):
-                                o["notes"] = fields["notes"]
-                            if fields.get("root_cause"):
-                                o["root_cause"] = fields["root_cause"]
-                            if fields.get("repair_action"):
-                                o["repair_action"] = fields["repair_action"]
-                            if fields.get("verified_by"):
-                                o["verified_by"] = fields["verified_by"]
-                            closure_error = _closure_error(o)
-                            if closure_error:
-                                errors.append(f"Row {row_idx}: {closure_error}")
-                                skipped += 1
-                                orders_all = [current for current in orders_all if current["id"] != order["id"]]
-                                break
-                            if status in ("completed", "verified"):
-                                o["completed_at"] = o.get("completed_at") or datetime.now().isoformat()
-                            _refresh_knowledge_review_state(
-                                o,
-                                {"status", "resolution", "notes", "root_cause", "repair_action", "verified_by"},
-                            )
-                            if o.get("kb_review_status") == "pending_review":
-                                candidate_count += 1
-                            _append_order_history(
-                                o,
-                                "import_status_override",
-                                fields.get("verified_by", "") or fields.get("assigned_to", ""),
-                                ["status", "resolution", "notes", "root_cause", "repair_action", "verified_by"],
-                                previous_status,
-                                status,
-                                field_changes(
-                                    before_order,
-                                    o,
-                                    ["status", "resolution", "notes", "root_cause", "repair_action", "verified_by"],
-                                ),
-                            )
-                            break
-                    _save_orders(orders_all)
+                    before_order = dict(order)
+                    previous_status = order.get("status", "pending")
+                    order["status"] = status
+                    for field_name in ("resolution", "notes", "root_cause", "repair_action", "verified_by"):
+                        if fields.get(field_name):
+                            order[field_name] = fields[field_name]
+                    closure_error = _closure_error(order)
                     if closure_error:
+                        errors.append(f"Row {row_idx}: {closure_error}")
+                        skipped += 1
                         continue
+                    if status in ("completed", "verified"):
+                        order["completed_at"] = order.get("completed_at") or datetime.now().isoformat()
+                    changed_fields = ["status", "resolution", "notes", "root_cause", "repair_action", "verified_by"]
+                    _refresh_knowledge_review_state(order, changed_fields)
+                    knowledge_candidate = order.get("kb_review_status") == "pending_review"
+                    _append_order_history(
+                        order,
+                        "import_status_override",
+                        fields.get("verified_by", "") or fields.get("assigned_to", ""),
+                        changed_fields,
+                        previous_status,
+                        status,
+                        field_changes(before_order, order, changed_fields),
+                    )
 
+                _persist_new_order(order)
+                if knowledge_candidate:
+                    candidate_count += 1
                 imported += 1
             except Exception as e:
                 errors.append(f"Row {row_idx}: {str(e)}")
-
-        wb.close()
 
         return {
             "status": "ok",
@@ -1597,4 +1612,9 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
     except Exception as e:
         return {"status": "error", "message": str(e)}
     finally:
+        if wb is not None:
+            try:
+                wb.close()
+            except Exception as exc:
+                logger.warning("Failed to close imported workbook: %s", exc)
         shutil.rmtree(tmp_dir, ignore_errors=True)

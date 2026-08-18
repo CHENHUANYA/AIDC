@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -73,6 +74,92 @@ def document_revision(document: Dict[str, Any]) -> str:
     return hashlib.sha256("\0".join(fields).encode("utf-8")).hexdigest()
 
 
+def _normalize_collection(payload: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(payload, list):
+        payload = {"documents": payload}
+    if not isinstance(payload, dict):
+        return None
+    documents = payload.get("documents", [])
+    if not isinstance(documents, list) or not all(isinstance(document, dict) for document in documents):
+        return None
+    return {**payload, "documents": documents}
+
+
+def _normalize_manifest(payload: Any) -> Optional[Dict[str, Any]]:
+    """Return the canonical manifest shape, including supported legacy shapes."""
+    if isinstance(payload, list):
+        collections: Dict[str, Any] = {}
+        for item in payload:
+            if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                return None
+            name = item["name"]
+            collection = _normalize_collection({key: value for key, value in item.items() if key != "name"})
+            if collection is None:
+                return None
+            collections[name] = collection
+        return {"collections": collections}
+
+    if not isinstance(payload, dict):
+        return None
+
+    if "collections" in payload:
+        raw_collections = payload["collections"]
+        if isinstance(raw_collections, list):
+            normalized = _normalize_manifest(raw_collections)
+            if normalized is None:
+                return None
+            return {**payload, "collections": normalized["collections"]}
+        if not isinstance(raw_collections, dict):
+            return None
+    else:
+        # Legacy exports may store the collection mapping directly at the root.
+        raw_collections = payload
+
+    collections = {}
+    for name, raw_collection in raw_collections.items():
+        collection = _normalize_collection(raw_collection)
+        if not isinstance(name, str) or collection is None:
+            return None
+        collections[name] = collection
+    if "collections" in payload:
+        return {**payload, "collections": collections}
+    return {"collections": collections}
+
+
+def _read_manifest_file(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        with path.open("r", encoding="utf-8-sig") as manifest_file:
+            return _normalize_manifest(json.load(manifest_file))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+
+
+def _write_manifest_atomic(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(payload, output, ensure_ascii=False, indent=2)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        if _read_manifest_file(temporary_path) is None:
+            raise ValueError("Staged manifest verification failed")
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _manifest_backup_path() -> Path:
+    manifest_path = Path(MANIFEST_PATH)
+    return manifest_path.with_name(f"{manifest_path.name}.bak")
+
+
 def load_manifest() -> Dict[str, Any]:
     if postgres_store_enabled():
         collections = {}
@@ -84,13 +171,15 @@ def load_manifest() -> Dict[str, Any]:
             }
         return {"collections": collections}
     ensure_db_dir()
-    if not os.path.exists(MANIFEST_PATH):
-        return {"collections": {}}
-    try:
-        with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {"collections": {}}
+    manifest_path = Path(MANIFEST_PATH)
+    if not manifest_path.exists():
+        backup = _read_manifest_file(_manifest_backup_path())
+        return backup if backup is not None else {"collections": {}}
+    manifest = _read_manifest_file(manifest_path)
+    if manifest is not None:
+        return manifest
+    backup = _read_manifest_file(_manifest_backup_path())
+    return backup if backup is not None else {"collections": {}}
 
 
 def save_manifest(manifest: Dict[str, Any]):
@@ -99,9 +188,15 @@ def save_manifest(manifest: Dict[str, Any]):
             for document in payload.get("documents", []):
                 postgres_documents.upsert(str(collection), document)
         return
+    normalized = _normalize_manifest(manifest)
+    if normalized is None:
+        raise ValueError("Manifest must contain valid collections and document objects")
     ensure_db_dir()
-    with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, ensure_ascii=False, indent=2)
+    manifest_path = Path(MANIFEST_PATH)
+    current = _read_manifest_file(manifest_path) if manifest_path.exists() else None
+    if current is not None:
+        _write_manifest_atomic(_manifest_backup_path(), current)
+    _write_manifest_atomic(manifest_path, normalized)
 
 
 def upsert_document_entry(collection: str, doc_entry: Dict[str, Any]):
