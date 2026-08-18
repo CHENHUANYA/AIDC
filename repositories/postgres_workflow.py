@@ -187,7 +187,12 @@ class PostgresIssueRepository:
             if issue is None:
                 return None
             _, users_by_pk = user_maps(session)
-            order_no = session.scalar(select(WorkOrder.work_order_no).where(WorkOrder.issue_id == issue.id)) or ""
+            order_no = session.scalar(
+                select(WorkOrder.work_order_no).where(
+                    WorkOrder.issue_id == issue.id,
+                    WorkOrder.deleted_at.is_(None),
+                )
+            ) or ""
             return issue_dict(session, issue, users_by_pk, order_no)
 
     def load_all(self) -> List[dict]:
@@ -196,7 +201,10 @@ class PostgresIssueRepository:
             order_numbers = {
                 issue_id: order_no
                 for issue_id, order_no in session.execute(
-                    select(WorkOrder.issue_id, WorkOrder.work_order_no).where(WorkOrder.issue_id.is_not(None))
+                    select(WorkOrder.issue_id, WorkOrder.work_order_no).where(
+                        WorkOrder.issue_id.is_not(None),
+                        WorkOrder.deleted_at.is_(None),
+                    )
                 ).all()
             }
             records = session.scalars(select(Issue).order_by(Issue.created_at.desc(), Issue.id)).all()
@@ -264,7 +272,10 @@ class PostgresIssueRepository:
             order_numbers = {
                 issue_id: order_no
                 for issue_id, order_no in session.execute(
-                    select(WorkOrder.issue_id, WorkOrder.work_order_no).where(WorkOrder.issue_id.in_(record_ids or [None]))
+                    select(WorkOrder.issue_id, WorkOrder.work_order_no).where(
+                        WorkOrder.issue_id.in_(record_ids or [None]),
+                        WorkOrder.deleted_at.is_(None),
+                    )
                 ).all()
             }
             items = [issue_dict(session, issue, users_by_pk, order_numbers.get(issue.id, "")) for issue in records]

@@ -334,6 +334,61 @@ def set_issue_work_order(issue_id: str, work_order_id: str, status: str = "assig
     return None
 
 
+def unlink_issue_from_work_order(order: dict) -> Optional[dict]:
+    """Remove a soft-deleted work-order link while keeping issue history consistent."""
+    issue_id = str(order.get("issue_id") or "")
+    work_order_id = str(order.get("id") or "")
+    if not issue_id:
+        return None
+
+    use_postgres = postgres_store_enabled()
+    if use_postgres:
+        issue = postgres_issues.get_one(issue_id)
+        issues = [issue] if issue is not None else []
+    else:
+        issues = _load_issues()
+    for index, issue in enumerate(issues):
+        if issue.get("issue_id") != issue_id:
+            continue
+        current_link = str(issue.get("work_order_id") or "")
+        if current_link and current_link != work_order_id:
+            return issue
+
+        before_issue = copy.deepcopy(issue)
+        issue["work_order_id"] = ""
+        if issue.get("status") in ("assigned", "in_progress"):
+            issue["status"] = "open"
+            issue["completed_at"] = ""
+        changed_fields = ["work_order_id"]
+        if issue.get("status") != before_issue.get("status"):
+            changed_fields.append("status")
+        changes = field_changes(before_issue, issue, changed_fields)
+        if not changes:
+            return before_issue
+
+        issue["updated_at"] = datetime.now().isoformat()
+        issue["updated_by"] = str(order.get("updated_by") or "")
+        _append_issue_history(
+            issue,
+            "work_order_unlinked",
+            issue["updated_by"],
+            changed_fields,
+            str(before_issue.get("status") or "") if "status" in changed_fields else "",
+            str(issue.get("status") or "") if "status" in changed_fields else "",
+            changes,
+        )
+        if use_postgres:
+            return postgres_issues.save_one(issue)
+        try:
+            issue["version"] = int(before_issue.get("version") or 1) + 1
+        except (TypeError, ValueError):
+            issue["version"] = 2
+        issues[index] = issue
+        _save_issues(issues)
+        return issue
+    return None
+
+
 def sync_issue_from_work_order(order: dict) -> Optional[dict]:
     issue_id = str(order.get("issue_id") or "")
     if not issue_id:

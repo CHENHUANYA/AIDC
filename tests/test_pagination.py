@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -77,6 +78,44 @@ def test_json_issue_and_work_order_page_routes(monkeypatch):
     assert order_page["has_more"] is True
 
 
+def test_postgres_work_order_page_route_forwards_cursor_and_filters(monkeypatch):
+    cursor = encode_cursor("2026-07-11T10:00:00+00:00", "WO-CURSOR")
+    load_page = Mock(return_value=([{"id": "WO-NEXT"}], 4, ("2026-07-10T09:00:00+00:00", "WO-NEXT")))
+    monkeypatch.setattr(work_orders, "postgres_store_enabled", lambda: True)
+    monkeypatch.setattr(work_orders.postgres_work_orders, "load_page", load_page)
+
+    page = asyncio.run(work_orders.api_page_orders(
+        limit=1, cursor=cursor, status="pending", actor=ADMIN
+    ))
+
+    assert page["status"] == "ok"
+    assert page["orders"] == [{"id": "WO-NEXT"}]
+    assert page["total"] == 4
+    assert page["has_more"] is True
+    load_page.assert_called_once_with(
+        limit=1,
+        cursor_created_at="2026-07-11T10:00:00+00:00",
+        cursor_id="WO-CURSOR",
+        role="admin",
+        user_id="admin01",
+        line_scope=["*"],
+        status="pending",
+    )
+
+
+def test_work_order_page_route_reports_cursor_errors(monkeypatch):
+    load_page = Mock(side_effect=ValueError("Invalid pagination cursor"))
+    monkeypatch.setattr(work_orders, "postgres_store_enabled", lambda: True)
+    monkeypatch.setattr(work_orders.postgres_work_orders, "load_page", load_page)
+
+    malformed = asyncio.run(work_orders.api_page_orders(cursor="not-a-cursor", actor=ADMIN))
+    repository_error = asyncio.run(work_orders.api_page_orders(actor=ADMIN))
+
+    assert malformed["status"] == "error"
+    assert repository_error == {"status": "error", "message": "Invalid pagination cursor"}
+    load_page.assert_called_once()
+
+
 def test_postgres_issue_and_order_pages_use_database_cursor(monkeypatch):
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -132,3 +171,127 @@ def test_postgres_issue_and_order_pages_use_database_cursor(monkeypatch):
         assert order_total == 3
         assert len(orders) == 2
         assert order_key is not None
+        remaining_orders, remaining_total, final_order_key = PostgresWorkOrderRepository().load_page(
+            limit=2,
+            cursor_created_at=order_key[0],
+            cursor_id=order_key[1],
+            role="operator",
+            user_id="operator01",
+            line_scope=["LINE-A"],
+        )
+        assert remaining_total == 3
+        assert len(remaining_orders) == 1
+        assert final_order_key is None
+
+
+def test_postgres_work_order_page_enforces_role_and_status_filters(monkeypatch):
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session:
+        rows = [
+            ("WO-OPEN", "LINE-A", "pending", ""),
+            ("WO-OWN", "LINE-A", "in_progress", "maintenance01"),
+            ("WO-OTHER", "LINE-A", "assigned", "maintenance02"),
+            ("WO-DONE", "LINE-A", "completed", "maintenance01"),
+            ("WO-CANCELLED", "LINE-A", "cancelled", ""),
+            ("WO-LINE-B", "LINE-B", "pending", ""),
+        ]
+        for offset, (number, line_id, status, assignee) in enumerate(rows):
+            issue = Issue(
+                issue_no=f"ISS-{number}",
+                machine_id="M-1",
+                line_id=line_id,
+                description=f"filter {number}",
+                created_at=now - timedelta(seconds=offset),
+                updated_at=now - timedelta(seconds=offset),
+            )
+            session.add(issue)
+            session.flush()
+            session.add(WorkOrder(
+                work_order_no=number,
+                issue_id=issue.id,
+                alarm_code="3000",
+                status=status,
+                assigned_to_ref=assignee,
+                created_at=now - timedelta(seconds=offset),
+                updated_at=now - timedelta(seconds=offset),
+            ))
+        session.commit()
+        monkeypatch.setattr("repositories.postgres_workflow.session_scope", lambda: scoped_session(session))
+        repository = PostgresWorkOrderRepository()
+
+        maintenance, maintenance_total, _ = repository.load_page(
+            limit=20, role="maintenance", user_id="maintenance01", line_scope=["LINE-A"]
+        )
+        operator, operator_total, _ = repository.load_page(
+            limit=20, role="operator", user_id="operator01", line_scope=["LINE-A"]
+        )
+        completed, completed_total, _ = repository.load_page(
+            limit=20, role="admin", user_id="admin01", line_scope=["*"], status="completed"
+        )
+        unknown, unknown_total, _ = repository.load_page(
+            limit=20, role="viewer", user_id="viewer01", line_scope=[]
+        )
+
+        assert {item["id"] for item in maintenance} == {"WO-OPEN", "WO-OWN", "WO-LINE-B"}
+        assert maintenance_total == 3
+        assert operator_total == 5
+        assert all(item["issue_id"] != "ISS-WO-LINE-B" for item in operator)
+        assert completed_total == 1
+        assert completed[0]["id"] == "WO-DONE"
+        assert unknown == []
+        assert unknown_total == 0
+
+        try:
+            repository.load_page(
+                limit=2,
+                cursor_created_at=now.isoformat(),
+                cursor_id="not-a-uuid",
+                role="admin",
+                user_id="admin01",
+                line_scope=["*"],
+            )
+        except ValueError as exc:
+            assert str(exc) == "Invalid pagination cursor"
+        else:
+            raise AssertionError("invalid repository cursor must fail")
+
+
+def test_postgres_issue_pages_ignore_soft_deleted_work_order_links(monkeypatch):
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session:
+        issue = Issue(
+            issue_no="ISS-DELETED-LINK",
+            machine_id="M-1",
+            line_id="LINE-A",
+            description="deleted link test",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(issue)
+        session.flush()
+        session.add(WorkOrder(
+            work_order_no="WO-DELETED-LINK",
+            issue_id=issue.id,
+            alarm_code="3000",
+            deleted_at=now,
+            created_at=now,
+            updated_at=now,
+        ))
+        session.commit()
+        monkeypatch.setattr("repositories.postgres_workflow.session_scope", lambda: scoped_session(session))
+        repository = PostgresIssueRepository()
+
+        one = repository.get_one("ISS-DELETED-LINK")
+        all_items = repository.load_all()
+        page, total, _ = repository.load_page(
+            limit=10, role="admin", user_id="admin01", line_scope=["*"]
+        )
+
+        assert one["work_order_id"] == ""
+        assert all_items[0]["work_order_id"] == ""
+        assert total == 1
+        assert page[0]["work_order_id"] == ""

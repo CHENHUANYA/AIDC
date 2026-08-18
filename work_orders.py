@@ -468,6 +468,7 @@ class UpdateWorkOrder(BaseModel):
 class KnowledgeReviewRequest(BaseModel):
     action: str
     note: Optional[str] = ""
+    version: Optional[int] = None
 
 
 # ----------------- Public helper -----------------
@@ -1111,9 +1112,16 @@ async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
             continue
         now = datetime.now().isoformat()
         if not order.get("deleted_at"):
-            before_order = dict(order)
+            before_order = copy.deepcopy(order)
+            linked_issue_snapshot = None
+            if order.get("issue_id"):
+                from issues import get_issue_dict
+
+                linked_issue = get_issue_dict(str(order["issue_id"]))
+                linked_issue_snapshot = copy.deepcopy(linked_issue) if linked_issue is not None else None
             order["deleted_at"] = now
             order["updated_at"] = now
+            order["updated_by"] = actor_id(actor)
             _append_order_history(
                 order,
                 "deleted",
@@ -1124,10 +1132,32 @@ async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
                 field_changes(before_order, order, ["deleted_at"]),
             )
             if use_postgres:
-                postgres_work_orders.save_one(order)
+                order = postgres_work_orders.save_one(order)
             else:
+                try:
+                    order["version"] = int(before_order.get("version") or 1) + 1
+                except (TypeError, ValueError):
+                    order["version"] = 2
                 orders[index] = order
                 _save_orders(orders)
+            if linked_issue_snapshot is not None:
+                try:
+                    from issues import unlink_issue_from_work_order
+
+                    unlinked_issue = unlink_issue_from_work_order(order)
+                    if unlinked_issue is None:
+                        raise RuntimeError(f"Linked issue {order['issue_id']} was not unlinked")
+                except Exception as exc:
+                    logger.warning("Issue unlink failed for deleted work order %s: %s", order_id, exc)
+                    if use_postgres:
+                        raise
+                    orders[index] = before_order
+                    _save_orders(orders)
+                    _restore_json_issue(linked_issue_snapshot)
+                    return {
+                        "status": "error",
+                        "message": "Linked issue synchronization failed; work order deletion was rolled back.",
+                    }
         return {"status": "ok", "deleted": order_id, "soft_deleted": True}
     if not any(o.get("id") == order_id for o in orders):
         return {"status": "error", "message": f"Work order {order_id} not found"}
@@ -1210,6 +1240,7 @@ async def _auto_feedback_to_kb(order: dict) -> dict:
         400: {"model": KnowledgeReviewErrorResponse, "description": "Review or ingestion validation failed"},
     },
 )
+@postgres_transactional
 async def review_work_order_knowledge(
     order_id: str,
     req: KnowledgeReviewRequest,
@@ -1224,10 +1255,18 @@ async def review_work_order_knowledge(
     if action not in ("approve", "needs_revision", "reject"):
         return {"status": "error", "message": f"Invalid review action: {req.action}"}
 
+    use_postgres = postgres_store_enabled()
     orders = _load_orders()
     order = next((item for item in orders if item.get("id") == order_id and not item.get("deleted_at")), None)
     if order is None:
         return {"status": "error", "message": f"Work order {order_id} not found"}
+
+    try:
+        current_version = int(order.get("version") or 1)
+    except (TypeError, ValueError):
+        current_version = 1
+    if req.version is not None and req.version != current_version:
+        return {"status": "error", "message": WORK_ORDER_STALE_UPDATE_MESSAGE}
 
     _refresh_knowledge_review_state(order, [])
     if action == "approve" and not _knowledge_candidate_ready(order):
@@ -1236,9 +1275,26 @@ async def review_work_order_knowledge(
             "message": "Knowledge approval requires completed status, root_cause, repair_action, and resolution.",
         }
     duplicate_of = _find_duplicate_knowledge_order(order, orders)
+    before_duplicate_order = copy.deepcopy(order)
     order["kb_duplicate_of"] = duplicate_of
     if action == "approve" and duplicate_of:
-        _save_orders(orders)
+        now = datetime.now().isoformat()
+        order["updated_by"] = actor_id(actor)
+        order["updated_at"] = now
+        _append_order_history(
+            order,
+            "knowledge_duplicate_detected",
+            actor_id(actor),
+            ["kb_duplicate_of"],
+            "",
+            "",
+            field_changes(before_duplicate_order, order, ["kb_duplicate_of"]),
+        )
+        if use_postgres:
+            order = postgres_work_orders.save_one(order)
+        else:
+            order["version"] = current_version + 1
+            _save_orders(orders)
         return {
             "status": "error",
             "message": f"Potential duplicate of approved work order {duplicate_of}",
@@ -1288,7 +1344,11 @@ async def review_work_order_knowledge(
         "",
         field_changes(before_order, order, review_fields),
     )
-    _save_orders(orders)
+    if not use_postgres:
+        order["version"] = current_version + 1
+        _save_orders(orders)
+    else:
+        order = postgres_work_orders.save_one(order)
 
     if review_status == "validation_failed":
         return {

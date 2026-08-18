@@ -382,6 +382,7 @@ function normalizeAdminQualityItems(orders, feedbackEntries) {
       collection: order.manual || '',
       issue_id: order.issue_id || '',
       work_order_id: order.id || '',
+      version: order.version || 1,
       answer_id: order.rag_answer_id || '',
       query: order.description || '',
       feedback: '',
@@ -411,6 +412,7 @@ function normalizeAdminQualityItems(orders, feedbackEntries) {
       collection: entry.collection || '',
       issue_id: entry.issue_id || '',
       work_order_id: entry.work_order_id || '',
+      version: 0,
       answer_id: entry.answer_id || '',
       query: entry.query || '',
       feedback: entry.feedback || '',
@@ -508,9 +510,9 @@ function renderAdminQualityItem(app, item) {
   const detail = item.missing_info || item.expected_fix || item.query || '沒有詳細內容';
   const reviewActions = item.type === 'work_order' &&
     ['pending_review', 'needs_revision', 'validation_failed'].includes(item.kb_review_status)
-    ? `<button class="wo-btn" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;approve&quot;]">核准寫入</button>
-       <button class="wo-btn alt" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;needs_revision&quot;]">退回補充</button>
-       <button class="wo-btn danger" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;reject&quot;]">不採用</button>`
+    ? `<button class="wo-btn" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;approve&quot;, ${Number(item.version) || 1}]">核准寫入</button>
+       <button class="wo-btn alt" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;needs_revision&quot;, ${Number(item.version) || 1}]">退回補充</button>
+       <button class="wo-btn danger" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;reject&quot;, ${Number(item.version) || 1}]">不採用</button>`
     : '';
   const action = reviewActions || (item.work_order_id
     ? `<button class="wo-btn alt" type="button" data-on-click="selectAdminSection" data-action-args="[&quot;data&quot;]">查看工單</button>`
@@ -605,7 +607,7 @@ function exportAdminQualityCsv() {
   ]);
 }
 
-async function reviewAdminKnowledge(workOrderId, action) {
+async function reviewAdminKnowledge(workOrderId, action, version) {
   const app = adminApp();
   if (!app) {
     return;
@@ -629,7 +631,7 @@ async function reviewAdminKnowledge(workOrderId, action) {
     const data = await adminJson(`/work-orders/${encodeURIComponent(workOrderId)}/knowledge-review`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, note }),
+      body: JSON.stringify({ action, note, version }),
     }, '知識審核失敗');
     const messages = {
       approve: '已核准並寫入知識庫',
