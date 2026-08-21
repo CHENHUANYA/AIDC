@@ -45,6 +45,8 @@ from repositories.runtime import postgres_store_enabled
 from services.json_file_store import write_json_atomic
 from services.transactions import postgres_transactional
 from services import work_order_lifecycle
+from services import work_order_mutations
+from services import work_order_knowledge
 from services.work_order_import import (
     XlsxArchiveLimits,
     detect_columns,
@@ -915,103 +917,34 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
     field_permission_error = _work_order_patch_permission_error(actor, req)
     if field_permission_error:
         return {"status": "error", "message": field_permission_error}
-    try:
-        current_version = int(order.get("version") or 1)
-    except (TypeError, ValueError):
-        current_version = 1
+    current_version = work_order_mutations.normalized_version(order)
     if req.version is not None and req.version != current_version:
         return {"status": "error", "message": WORK_ORDER_STALE_UPDATE_MESSAGE}
 
     now = datetime.now().isoformat()
-    before_order = copy.deepcopy(order)
     linked_issue_snapshot = copy.deepcopy(linked_issue) if linked_issue is not None else None
-    previous_status = order.get("status", "pending")
-    changed_fields = []
     updated_by = actor_id(actor)
-
-    if req.status is not None:
-        if req.status not in STATUSES:
-            return {"status": "error", "message": f"Invalid status: {req.status}"}
-        transition_error = _status_transition_error(previous_status, req.status)
-        if transition_error:
-            return {"status": "error", "message": transition_error}
-        order["status"] = req.status
-        if req.status != previous_status:
-            changed_fields.append("status")
-        if req.status in ("completed", "verified"):
-            order["completed_at"] = order.get("completed_at") or now
-        else:
-            order["completed_at"] = ""
-
-    for field in ["priority", "assigned_to", "machine_id", "description", "resolution", "notes"]:
-        value = getattr(req, field)
-        if value is None:
-            continue
-        if order.get(field) != value:
-            changed_fields.append(field)
-        order[field] = value
-        if field == "assigned_to" and order["status"] == "pending" and value:
-            order["status"] = "assigned"
-            if previous_status != "assigned" and "status" not in changed_fields:
-                changed_fields.append("status")
-    for field in [
-        "accepted_by",
-        "completed_by",
-        "verified_by",
-        "root_cause",
-        "repair_action",
-        "failure_category",
-        "llm_correctness",
-        "llm_coverage",
-        "llm_missing_info",
-        "llm_expected_fix",
-        "llm_answer_used",
-        "kb_candidate",
-    ]:
-        value = getattr(req, field)
-        if value is not None:
-            if order.get(field) != value:
-                changed_fields.append(field)
-            order[field] = value
-
-    closure_error = _closure_error(order)
-    if closure_error:
-        return {"status": "error", "message": closure_error}
-    verification_error = _direct_verification_error(order, updated_by)
-    if verification_error:
-        return {"status": "error", "message": verification_error}
-
-    previous_review_status = order.get("kb_review_status", "not_ready")
-    _refresh_knowledge_review_state(order, changed_fields)
-    duplicate_orders = _load_orders() if order.get("kb_candidate") else [order]
-    duplicate_of = _find_duplicate_knowledge_order(order, duplicate_orders) if order.get("kb_candidate") else ""
-    if order.get("kb_duplicate_of", "") != duplicate_of:
-        order["kb_duplicate_of"] = duplicate_of
-        changed_fields.append("kb_duplicate_of")
-    if order.get("kb_review_status") != previous_review_status:
-        changed_fields.append("kb_review_status")
-    if order.get("kb_candidate") != before_order.get("kb_candidate", False):
-        changed_fields.append("kb_candidate")
-
-    order["updated_at"] = now
-    order["updated_by"] = updated_by
-    if changed_fields:
-        action = "status_changed" if "status" in changed_fields and order.get("status") != previous_status else "updated"
-        from_status = previous_status if action == "status_changed" else ""
-        to_status = order.get("status", previous_status) if action == "status_changed" else ""
-        _append_order_history(
-            order,
-            action,
-            updated_by,
-            sorted(set(changed_fields)),
-            from_status,
-            to_status,
-            field_changes(before_order, order, changed_fields),
-        )
-    if req.version is None and changed_fields:
-        return {"status": "error", "message": WORK_ORDER_STALE_UPDATE_MESSAGE}
-    if changed_fields and not use_postgres:
-        order["version"] = current_version + 1
+    mutation = work_order_mutations.apply_order_update(
+        order,
+        req,
+        updated_by=updated_by,
+        now=now,
+        valid_statuses=STATUSES,
+        stale_message=WORK_ORDER_STALE_UPDATE_MESSAGE,
+        status_transition_error=_status_transition_error,
+        closure_error=_closure_error,
+        direct_verification_error=_direct_verification_error,
+        refresh_knowledge_state=_refresh_knowledge_review_state,
+        load_duplicate_orders=_load_orders,
+        find_duplicate_order=_find_duplicate_knowledge_order,
+        append_history=_append_order_history,
+        calculate_field_changes=field_changes,
+        increment_version=not use_postgres,
+    )
+    if mutation.error:
+        return {"status": "error", "message": mutation.error}
+    order = mutation.order
+    before_order = mutation.before_order
     if use_postgres:
         order = postgres_work_orders.save_one(order)
     else:
@@ -1066,32 +999,23 @@ async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
             continue
         now = datetime.now().isoformat()
         if not order.get("deleted_at"):
-            before_order = copy.deepcopy(order)
             linked_issue_snapshot = None
             if order.get("issue_id"):
                 from issues import get_issue_dict
 
                 linked_issue = get_issue_dict(str(order["issue_id"]))
                 linked_issue_snapshot = copy.deepcopy(linked_issue) if linked_issue is not None else None
-            order["deleted_at"] = now
-            order["updated_at"] = now
-            order["updated_by"] = actor_id(actor)
-            _append_order_history(
+            before_order = work_order_mutations.apply_soft_delete(
                 order,
-                "deleted",
-                actor_id(actor),
-                ["deleted_at"],
-                "",
-                "",
-                field_changes(before_order, order, ["deleted_at"]),
+                deleted_by=actor_id(actor),
+                now=now,
+                append_history=_append_order_history,
+                calculate_field_changes=field_changes,
+                increment_version=not use_postgres,
             )
             if use_postgres:
                 order = postgres_work_orders.save_one(order)
             else:
-                try:
-                    order["version"] = int(before_order.get("version") or 1) + 1
-                except (TypeError, ValueError):
-                    order["version"] = 2
                 orders[index] = order
                 _save_orders(orders)
             if linked_issue_snapshot is not None:
@@ -1205,113 +1129,27 @@ async def review_work_order_knowledge(
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
 
-    action = _clean_text(req.action).lower()
-    if action not in ("approve", "needs_revision", "reject"):
-        return {"status": "error", "message": f"Invalid review action: {req.action}"}
-
     use_postgres = postgres_store_enabled()
     orders = _load_orders()
-    order = next((item for item in orders if item.get("id") == order_id and not item.get("deleted_at")), None)
-    if order is None:
-        return {"status": "error", "message": f"Work order {order_id} not found"}
-
-    try:
-        current_version = int(order.get("version") or 1)
-    except (TypeError, ValueError):
-        current_version = 1
-    if req.version is not None and req.version != current_version:
-        return {"status": "error", "message": WORK_ORDER_STALE_UPDATE_MESSAGE}
-
-    _refresh_knowledge_review_state(order, [])
-    if action == "approve" and not _knowledge_candidate_ready(order):
-        return {
-            "status": "error",
-            "message": "Knowledge approval requires completed status, root_cause, repair_action, and resolution.",
-        }
-    duplicate_of = _find_duplicate_knowledge_order(order, orders)
-    before_duplicate_order = copy.deepcopy(order)
-    order["kb_duplicate_of"] = duplicate_of
-    if action == "approve" and duplicate_of:
-        now = datetime.now().isoformat()
-        order["updated_by"] = actor_id(actor)
-        order["updated_at"] = now
-        _append_order_history(
-            order,
-            "knowledge_duplicate_detected",
-            actor_id(actor),
-            ["kb_duplicate_of"],
-            "",
-            "",
-            field_changes(before_duplicate_order, order, ["kb_duplicate_of"]),
-        )
-        if use_postgres:
-            order = postgres_work_orders.save_one(order)
-        else:
-            order["version"] = current_version + 1
-            _save_orders(orders)
-        return {
-            "status": "error",
-            "message": f"Potential duplicate of approved work order {duplicate_of}",
-            "duplicate_of": duplicate_of,
-        }
-    if action == "needs_revision" and not _clean_text(req.note):
-        return {"status": "error", "message": "Revision note is required"}
-
-    now = datetime.now().isoformat()
-    before_order = dict(order)
-    review_status = {
-        "needs_revision": "needs_revision",
-        "reject": "rejected",
-    }.get(action, "pending_review")
-    ingest_result = None
-
-    if action == "approve":
-        ingest_result = await _auto_feedback_to_kb(order)
-        review_status = "ingested" if ingest_result.get("auto_ingested") else "validation_failed"
-        order["kb_ingested_at"] = now if review_status == "ingested" else ""
-        order["kb_ingest_result"] = ingest_result
-
-    order["kb_candidate"] = _knowledge_candidate_ready(order)
-    order["kb_review_status"] = review_status
-    order["kb_review_note"] = _clean_text(req.note)
-    order["kb_reviewed_by"] = actor_id(actor)
-    order["kb_reviewed_at"] = now
-    order["updated_by"] = actor_id(actor)
-    order["updated_at"] = now
-
-    review_fields = [
-        "kb_candidate",
-        "kb_review_status",
-        "kb_review_note",
-        "kb_reviewed_by",
-        "kb_reviewed_at",
-        "kb_ingested_at",
-        "kb_ingest_result",
-        "kb_duplicate_of",
-    ]
-    _append_order_history(
-        order,
-        f"knowledge_{action}",
-        actor_id(actor),
-        review_fields,
-        "",
-        "",
-        field_changes(before_order, order, review_fields),
+    return await work_order_knowledge.review_order_knowledge(
+        order_id,
+        req,
+        reviewer_id=actor_id(actor),
+        orders=orders,
+        use_postgres=use_postgres,
+        dependencies=work_order_knowledge.ReviewDependencies(
+            clean_text=_clean_text,
+            refresh_review_state=_refresh_knowledge_review_state,
+            candidate_ready=_knowledge_candidate_ready,
+            find_duplicate=_find_duplicate_knowledge_order,
+            append_history=_append_order_history,
+            calculate_field_changes=field_changes,
+            auto_feedback=_auto_feedback_to_kb,
+            save_one=postgres_work_orders.save_one,
+            save_all=_save_orders,
+            stale_message=WORK_ORDER_STALE_UPDATE_MESSAGE,
+        ),
     )
-    if not use_postgres:
-        order["version"] = current_version + 1
-        _save_orders(orders)
-    else:
-        order = postgres_work_orders.save_one(order)
-
-    if review_status == "validation_failed":
-        return {
-            "status": "error",
-            "message": (ingest_result or {}).get("error") or "Knowledge ingestion failed",
-            "order": order,
-            "ingest": ingest_result,
-        }
-    return {"status": "ok", "order": order, "ingest": ingest_result}
 
 
 # ----------------- Excel import -----------------

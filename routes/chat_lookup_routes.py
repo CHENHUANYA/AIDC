@@ -62,6 +62,7 @@ from services.llm_clients import (
     stream_ollama as stream_ollama_client,
 )
 from services.chat_streaming import StreamDependencies, stream_chat_events as assemble_stream_chat_events
+from services.chat_completion import CompletionDependencies, complete_non_streaming_chat
 
 
 logger = logging.getLogger("alarm_rag.chat")
@@ -530,55 +531,35 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
             media_type="text/event-stream",
             headers=SSE_HEADERS,
         )
-    model_started = time.monotonic()
-    try:
-        content = await call_llm_with_retrieval_guard(
-            messages=augmented,
-            docs=docs,
-            user_query=user_query,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        if not content:
-            raise RuntimeError("LLM returned empty response")
-
-        tags = answer_source_tags(docs)
-        if tags:
-            content = tags + "\n" + content
-        provider = request_llm_source.get()
-    except Exception as exc:
-        content = build_llm_unavailable_message(exc, docs)
-        provider = "unavailable"
-        record_chat_error(collection_name, user_query, docs, exc)
-
-    elapsed_ms = int((time.time() - start_ts) * 1000)
-    answer_state = classify_answer_state(provider)
-    record_query(collection_name, user_query, source="api", elapsed_ms=elapsed_ms)
-
-    model = SCHOOL_API_MODEL if provider == "school" else OLLAMA_MODEL if provider == "ollama" else ""
-    save_rag_answer(
-        answer_id=response_id,
-        query=user_query,
-        collection=collection_name,
-        answer=content,
+    return await complete_non_streaming_chat(
+        messages=augmented,
+        docs=docs,
         rag_metadata=rag_metadata,
-        provider=provider,
-        model=model,
-        elapsed_ms=elapsed_ms,
+        response_id=response_id,
+        collection_name=collection_name,
+        user_query=user_query,
+        temperature=temperature,
+        max_tokens=max_tokens,
         created_by=actor_id(actor),
         tokenizer_version=getattr(engine, "tokenizer_version", "legacy-whitespace-v0"),
-        answer_state=answer_state,
-    )
-    runtime_metrics.record_rag(
+        request_started=request_started,
+        start_ts=start_ts,
         retrieval_ms=retrieval_ms,
-        model_ms=(time.monotonic() - model_started) * 1000,
-        total_ms=(time.monotonic() - request_started) * 1000,
-        provider=provider,
-        outcome=answer_state,
-        streaming=False,
+        dependencies=CompletionDependencies(
+            call_with_retrieval_guard=call_llm_with_retrieval_guard,
+            answer_source_tags=answer_source_tags,
+            provider_source=request_llm_source.get,
+            unavailable_message=build_llm_unavailable_message,
+            record_error=record_chat_error,
+            classify_answer_state=classify_answer_state,
+            record_query=record_query,
+            save_answer=save_rag_answer,
+            record_metric=runtime_metrics.record_rag,
+            make_response=make_openai_response,
+            ollama_model=OLLAMA_MODEL,
+            school_model=SCHOOL_API_MODEL,
+        ),
     )
-
-    return make_openai_response(content, rag=rag_metadata, response_id=response_id)
 
 
 @router.post("/v1/chat/completions", responses=CHAT_RESPONSES)
