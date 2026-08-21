@@ -159,10 +159,11 @@ def test_serialization_failure_removes_temporary_file(local_storage):
 
 def test_jsonl_helpers_create_directory_skip_bad_lines_and_apply_limit(local_storage):
     db_path, _ = local_storage
-    log_path = db_path / "events.jsonl"
+    log_path = db_path / "nested" / "events.jsonl"
     storage.append_jsonl(str(log_path), {"id": 1, "message": "正常"})
     with log_path.open("a", encoding="utf-8") as output:
         output.write("not-json\n\n")
+        output.write(json.dumps(["not", "an", "object"]) + "\n")
         output.write(json.dumps({"id": 2}) + "\n")
 
     assert storage.read_jsonl(str(log_path)) == [

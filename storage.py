@@ -314,9 +314,10 @@ def apply_doc_meta(sections: List[dict], doc_meta: Dict[str, Any]) -> List[dict]
 
 
 def append_jsonl(path: str, entry: Dict[str, Any]):
-    ensure_db_dir()
+    serialized = json.dumps(entry, ensure_ascii=False)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        f.write(serialized + "\n")
 
 
 def read_jsonl(path: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -329,9 +330,11 @@ def read_jsonl(path: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
             if not line:
                 continue
             try:
-                entries.append(json.loads(line))
+                entry = json.loads(line)
             except Exception:
                 continue
+            if isinstance(entry, dict):
+                entries.append(entry)
     if limit:
         return entries[-limit:]
     return entries

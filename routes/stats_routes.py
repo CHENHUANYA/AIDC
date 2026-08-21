@@ -1,4 +1,5 @@
-import json
+import logging
+import math
 import os
 import re
 from datetime import datetime, timezone
@@ -40,11 +41,12 @@ from rag_engine import model_cache_status
 from repositories.postgres_content import PostgresAlarmRepository, PostgresFeedbackRepository
 from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
-from storage import ALARM_LOG_PATH, QUERY_LOG_PATH, read_jsonl
+from storage import ALARM_LOG_PATH, QUERY_LOG_PATH, append_jsonl, read_jsonl
 from vector_store import get_store
 
 
 router = APIRouter()
+logger = logging.getLogger("alarm_rag.stats")
 postgres_alarms = PostgresAlarmRepository()
 postgres_feedback = PostgresFeedbackRepository()
 rag_answers = RagAnswerRepository()
@@ -59,16 +61,23 @@ async def alarm_stats(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
-    alarms = postgres_alarms.load_all() if postgres_store_enabled() else alarm_history
+    try:
+        alarms = await run_in_threadpool(_load_alarm_entries)
+    except Exception:
+        logger.exception("Failed to load alarm statistics")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "message": "Alarm statistics are unavailable"},
+        )
     today = datetime.now().strftime("%Y-%m-%d")
     today_alarms = [alarm for alarm in alarms if alarm.get("date") == today]
     by_manual: Dict[str, int] = {}
     by_source: Dict[str, int] = {}
     by_day: Dict[str, int] = {}
     for alarm in alarms:
-        manual = alarm.get("manual") or "unknown"
-        source = alarm.get("source") or "unknown"
-        alarm_date = alarm.get("date") or ""
+        manual = str(alarm.get("manual") or "unknown")
+        source = str(alarm.get("source") or "unknown")
+        alarm_date = str(alarm.get("date") or "")
         by_manual[manual] = by_manual.get(manual, 0) + 1
         by_source[source] = by_source.get(source, 0) + 1
         if alarm_date:
@@ -86,6 +95,11 @@ async def alarm_stats(actor: dict = Depends(get_actor)):
     }
 
 
+def _load_alarm_entries() -> list[dict]:
+    entries = postgres_alarms.load_all() if postgres_store_enabled() else alarm_history
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
 @router.delete(
     "/stats/alarms",
     responses={200: {"model": StatusOkResponse}, **API_ERROR_RESPONSES},
@@ -95,16 +109,23 @@ async def clear_alarm_stats(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
+    try:
+        await run_in_threadpool(_clear_persisted_alarm_stats)
+    except Exception:
+        logger.exception("Failed to clear alarm statistics")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "message": "Failed to clear alarm statistics"},
+        )
     alarm_history.clear()
+    return {"status": "ok"}
+
+
+def _clear_persisted_alarm_stats() -> None:
     if postgres_store_enabled():
         postgres_alarms.clear()
-        return {"status": "ok"}
-    try:
-        if os.path.exists(ALARM_LOG_PATH):
-            os.remove(ALARM_LOG_PATH)
-    except OSError as exc:
-        return {"status": "error", "message": f"Failed to clear alarm log: {exc}"}
-    return {"status": "ok"}
+    elif os.path.exists(ALARM_LOG_PATH):
+        os.remove(ALARM_LOG_PATH)
 
 
 @router.post(
@@ -140,13 +161,22 @@ async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
         "expected_fix": req.expected_fix,
         "kb_candidate": req.kb_candidate,
     }
+    try:
+        await run_in_threadpool(_persist_feedback, entry)
+    except Exception:
+        logger.exception("Failed to persist feedback")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "message": "Feedback storage is unavailable"},
+        )
+    return {"status": "ok"}
+
+
+def _persist_feedback(entry: dict) -> None:
     if postgres_store_enabled():
         postgres_feedback.add(entry)
     else:
-        os.makedirs(os.path.dirname(FEEDBACK_LOG), exist_ok=True)
-        with open(FEEDBACK_LOG, "a", encoding="utf-8") as file:
-            file.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    return {"status": "ok"}
+        append_jsonl(FEEDBACK_LOG, entry)
 
 
 @router.get(
@@ -158,19 +188,14 @@ async def feedback_stats(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
-    entries = []
-    if postgres_store_enabled():
-        entries = postgres_feedback.load_all()
-    elif os.path.exists(FEEDBACK_LOG):
-        with open(FEEDBACK_LOG, "r", encoding="utf-8") as file:
-            for line in file:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entries.append(json.loads(line))
-                except Exception:
-                    pass
+    try:
+        entries = await run_in_threadpool(_load_feedback_entries)
+    except Exception:
+        logger.exception("Failed to load feedback statistics")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "message": "Feedback statistics are unavailable"},
+        )
     good = sum(1 for entry in entries if entry.get("feedback") == "good")
     bad = sum(1 for entry in entries if entry.get("feedback") == "bad")
     evaluated = [
@@ -200,6 +225,14 @@ async def feedback_stats(actor: dict = Depends(get_actor)):
     }
 
 
+def _load_feedback_entries() -> list[dict]:
+    if postgres_store_enabled():
+        entries = postgres_feedback.load_all()
+    else:
+        entries = read_jsonl(FEEDBACK_LOG)
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
 @router.get(
     "/stats/queries",
     responses={200: {"model": QueryStatsResponse}, **API_ERROR_RESPONSES},
@@ -209,14 +242,21 @@ async def query_stats(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
-    return await run_in_threadpool(_query_stats_payload)
+    try:
+        return await run_in_threadpool(_query_stats_payload)
+    except Exception:
+        logger.exception("Failed to load query statistics")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "message": "Query statistics are unavailable"},
+        )
 
 
 def _query_stats_payload() -> dict:
-    queries = read_jsonl(QUERY_LOG_PATH)
+    queries = [entry for entry in read_jsonl(QUERY_LOG_PATH) if isinstance(entry, dict)]
     today = datetime.now().strftime("%Y-%m-%d")
     today_queries = [query for query in queries if query.get("date") == today]
-    times = [query.get("elapsed_ms", 0) for query in queries if query.get("elapsed_ms", 0) > 0]
+    times = [elapsed for query in queries if (elapsed := _positive_elapsed_ms(query.get("elapsed_ms"))) is not None]
     avg_ms = round(sum(times) / len(times)) if times else 0
     p95 = np.percentile(times, 95) if times else 0
     p99 = np.percentile(times, 99) if times else 0
@@ -245,6 +285,16 @@ def _query_stats_payload() -> dict:
     }
 
 
+def _positive_elapsed_ms(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    try:
+        elapsed = float(value or 0)
+    except (TypeError, ValueError):
+        return None
+    return elapsed if elapsed > 0 and math.isfinite(elapsed) else None
+
+
 @router.get(
     "/stats/errors",
     responses={200: {"model": ErrorStatsResponse}, **API_ERROR_RESPONSES},
@@ -254,7 +304,8 @@ async def error_stats(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
-    return {"recent": error_log[-50:], "total": len(error_log)}
+    entries = [entry for entry in error_log if isinstance(entry, dict)]
+    return {"recent": entries[-50:], "total": len(entries)}
 
 
 @router.get(

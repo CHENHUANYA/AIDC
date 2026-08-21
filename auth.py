@@ -6,7 +6,6 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from math import ceil
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Cookie, Depends, Header, Request, Response
@@ -37,6 +36,16 @@ from repositories.postgres_auth import (
 )
 from repositories.runtime import postgres_store_enabled
 from secret_values import secret_value
+from services import account_management, auth_sessions
+from services.login_throttle import (
+    LoginThrottleLimits,
+    LoginThrottleState,
+    discard_key,
+    normalize_login_key,
+    prune_state,
+    record_failure as record_local_login_failure,
+    retry_after as local_login_retry_after,
+)
 
 
 BOOTSTRAP_USERS: Dict[str, dict] = {
@@ -201,70 +210,41 @@ def list_users(actor: Optional[dict] = None) -> List[dict]:
 
 
 def active_admin_count(users: Dict[str, dict]) -> int:
-    return sum(
-        1
-        for user in users.values()
-        if is_active_admin(user)
-    )
+    return account_management.active_admin_count(users)
 
 
 def is_active_admin(user: dict) -> bool:
-    return user.get("active", True) and user.get("role") == "admin"
+    return account_management.is_active_admin(user)
 
 
 def is_last_active_admin(user: dict, users: Dict[str, dict]) -> bool:
-    return is_active_admin(user) and active_admin_count(users) <= 1
+    return account_management.is_last_active_admin(user, users)
 
 
 def valid_password(password: str) -> bool:
-    normalized = password.strip()
-    if len(normalized) < 8:
-        return False
-    return normalized.lower() not in {"password", "password1", "12345678", "change-me-now"}
+    return account_management.valid_password(password)
 
 
 def normalize_line_scope(line_scope: Optional[List[str]]) -> List[str]:
-    return [str(item).strip() for item in (line_scope or []) if str(item).strip()]
+    return account_management.normalize_line_scope(line_scope)
 
 
 def is_valid_user_id(user_id: str) -> bool:
-    return bool(user_id) and user_id.replace("-", "").replace("_", "").isalnum()
+    return account_management.is_valid_user_id(user_id)
 
 
 def build_user(req: CreateUserRequest, user_id: str, password: str) -> dict:
-    role = req.role or "operator"
-    now = datetime.now(timezone.utc).isoformat()
-    return {
-        "user_id": user_id,
-        "name": (req.name or user_id).strip(),
-        "role": role,
-        "line_scope": normalize_line_scope(req.line_scope),
-        "team": (req.team or "").strip(),
-        "active": True,
-        "password_hash": hash_password(password),
-        "created_at": now,
-        "updated_at": now,
-    }
+    return account_management.build_user(req, user_id, password, password_hasher=hash_password)
 
 
 def validate_create_user(req: CreateUserRequest, existing_users: Dict[str, dict]) -> Optional[str]:
-    user_id = req.user_id.strip()
-    role = req.role or "operator"
-    if not user_id:
-        return "user_id is required"
-    if not is_valid_user_id(user_id):
-        return "user_id may only contain letters, numbers, dash, or underscore"
-    if role not in VALID_ROLES:
-        return "Invalid role"
-    if user_id in existing_users:
-        return f"User {user_id} already exists"
-    if not req.password:
-        password_error = implicit_initial_password_error()
-        if password_error:
-            return password_error
-    if not valid_password(req.password or configured_initial_password()):
-        return "Password must be at least 8 characters and not use a common placeholder"
-    return None
+    return account_management.validate_create_user(
+        req,
+        existing_users,
+        valid_roles=VALID_ROLES,
+        default_password=configured_initial_password,
+        missing_password_error=implicit_initial_password_error,
+    )
 
 
 def validate_admin_role_change(
@@ -274,19 +254,14 @@ def validate_admin_role_change(
     actor: dict,
     users: Dict[str, dict],
 ) -> Optional[str]:
-    if user_id == actor_id(actor) and req.active is False:
-        return "The current admin account cannot deactivate itself"
-    if req.role is not None and req.role not in VALID_ROLES:
-        return "Invalid role"
-    if user_id == actor_id(actor) and req.role is not None and req.role != "admin":
-        return "The current admin account cannot change its own admin role"
-    if not is_last_active_admin(user, users):
-        return None
-    if req.active is False:
-        return "Cannot deactivate the last active admin"
-    if req.role is not None and req.role != "admin":
-        return "Cannot demote the last active admin"
-    return None
+    return account_management.validate_admin_role_change(
+        user_id,
+        user,
+        req,
+        actor_id(actor),
+        users,
+        valid_roles=VALID_ROLES,
+    )
 
 
 def api_ok(**payload: object) -> dict:
@@ -314,45 +289,37 @@ def login_rate_limit_error(retry_after: int) -> JSONResponse:
 
 
 def _login_rate_key(username: str) -> str:
-    return username.strip().casefold() or "<empty>"
+    return normalize_login_key(username)
+
+
+def _login_rate_state() -> LoginThrottleState:
+    return LoginThrottleState(
+        failures=_login_failures,
+        lockouts=_login_lockouts,
+        last_seen=_login_last_seen,
+        last_pruned_at=_login_last_pruned_at,
+    )
+
+
+def _login_rate_limits() -> LoginThrottleLimits:
+    return LoginThrottleLimits(
+        failure_limit=LOGIN_FAILURE_LIMIT,
+        failure_window_seconds=LOGIN_FAILURE_WINDOW_SECONDS,
+        lockout_seconds=LOGIN_LOCKOUT_SECONDS,
+        max_keys=LOGIN_RATE_MAX_KEYS,
+        prune_interval_seconds=LOGIN_RATE_PRUNE_INTERVAL_SECONDS,
+    )
 
 
 def _discard_login_rate_key(key: str) -> None:
-    _login_failures.pop(key, None)
-    _login_lockouts.pop(key, None)
-    _login_last_seen.pop(key, None)
+    discard_key(_login_rate_state(), key)
 
 
 def _prune_login_rate_state(current: float, *, incoming_key: str | None = None) -> None:
     global _login_last_pruned_at
-
-    known_keys = set(_login_failures) | set(_login_lockouts)
-    should_prune = (
-        current - _login_last_pruned_at >= LOGIN_RATE_PRUNE_INTERVAL_SECONDS
-        or (incoming_key not in known_keys and len(known_keys) >= LOGIN_RATE_MAX_KEYS)
-    )
-    if not should_prune:
-        return
-
-    cutoff = current - LOGIN_FAILURE_WINDOW_SECONDS
-    for key, failures in list(_login_failures.items()):
-        while failures and failures[0] <= cutoff:
-            failures.popleft()
-        if not failures:
-            _login_failures.pop(key, None)
-    for key, locked_until in list(_login_lockouts.items()):
-        if locked_until <= current:
-            _login_lockouts.pop(key, None)
-
-    active_keys = set(_login_failures) | set(_login_lockouts)
-    for key in list(_login_last_seen):
-        if key not in active_keys:
-            _login_last_seen.pop(key, None)
-
-    if incoming_key not in active_keys and len(active_keys) >= LOGIN_RATE_MAX_KEYS:
-        oldest_key = min(active_keys, key=lambda key: _login_last_seen.get(key, 0.0))
-        _discard_login_rate_key(oldest_key)
-    _login_last_pruned_at = current
+    state = _login_rate_state()
+    prune_state(state, _login_rate_limits(), current, incoming_key=incoming_key)
+    _login_last_pruned_at = state.last_pruned_at
 
 
 def login_retry_after(username: str, *, now: float | None = None) -> int:
@@ -361,24 +328,11 @@ def login_retry_after(username: str, *, now: float | None = None) -> int:
         return postgres_login_throttles.retry_after(key, LOGIN_FAILURE_WINDOW_SECONDS)
     current = time.monotonic() if now is None else now
     with _login_rate_lock:
-        _prune_login_rate_state(current)
-        locked_until = _login_lockouts.get(key, 0.0)
-        if locked_until > current:
-            _login_last_seen[key] = current
-            return max(ceil(locked_until - current), 1)
-        _login_lockouts.pop(key, None)
-        failures = _login_failures.get(key)
-        if failures is None:
-            _login_last_seen.pop(key, None)
-            return 0
-        cutoff = current - LOGIN_FAILURE_WINDOW_SECONDS
-        while failures and failures[0] <= cutoff:
-            failures.popleft()
-        if not failures:
-            _discard_login_rate_key(key)
-        else:
-            _login_last_seen[key] = current
-        return 0
+        global _login_last_pruned_at
+        state = _login_rate_state()
+        result = local_login_retry_after(state, _login_rate_limits(), key, current)
+        _login_last_pruned_at = state.last_pruned_at
+        return result
 
 
 def record_login_failure(username: str, *, now: float | None = None) -> int:
@@ -392,19 +346,11 @@ def record_login_failure(username: str, *, now: float | None = None) -> int:
         )
     current = time.monotonic() if now is None else now
     with _login_rate_lock:
-        _prune_login_rate_state(current, incoming_key=key)
-        failures = _login_failures.setdefault(key, deque())
-        _login_last_seen[key] = current
-        cutoff = current - LOGIN_FAILURE_WINDOW_SECONDS
-        while failures and failures[0] <= cutoff:
-            failures.popleft()
-        failures.append(current)
-        if len(failures) < LOGIN_FAILURE_LIMIT:
-            return 0
-        locked_until = current + LOGIN_LOCKOUT_SECONDS
-        _login_lockouts[key] = locked_until
-        failures.clear()
-        return LOGIN_LOCKOUT_SECONDS
+        global _login_last_pruned_at
+        state = _login_rate_state()
+        result = record_local_login_failure(state, _login_rate_limits(), key, current)
+        _login_last_pruned_at = state.last_pruned_at
+        return result
 
 
 def clear_login_failures(username: str) -> None:
@@ -417,13 +363,11 @@ def clear_login_failures(username: str) -> None:
 
 
 def session_cookie_secure(request: Request) -> bool:
-    configured = os.getenv("SESSION_COOKIE_SECURE", "auto").strip().lower()
-    if configured in {"1", "true", "yes", "on"}:
-        return True
-    if configured in {"0", "false", "no", "off"}:
-        return False
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
-    return request.url.scheme == "https" or forwarded_proto == "https"
+    return auth_sessions.session_cookie_secure(
+        os.getenv("SESSION_COOKIE_SECURE", "auto"),
+        request.url.scheme,
+        request.headers.get("x-forwarded-proto", ""),
+    )
 
 
 def set_session_cookie(response: Response, request: Request, token: str, expires_at: datetime) -> None:
@@ -827,34 +771,11 @@ def save_user(user_id: str, user: dict, expected_updated_at: Optional[str] = Non
 
 
 def load_sessions() -> Dict[str, dict]:
-    os.makedirs(DB_DIR, exist_ok=True)
-    if not os.path.exists(SESSION_FILE):
-        return {}
-    try:
-        with open(SESSION_FILE, "r", encoding="utf-8") as file:
-            payload = json.load(file)
-    except (json.JSONDecodeError, OSError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    normalized: Dict[str, dict] = {}
-    migrated = False
-    for stored_token, session in payload.items():
-        key = str(stored_token)
-        if len(key) != 64 or any(character not in "0123456789abcdef" for character in key.lower()):
-            key = session_token_digest(key)
-            migrated = True
-        if isinstance(session, dict):
-            normalized[key] = session
-    if migrated:
-        save_sessions(normalized)
-    return normalized
+    return auth_sessions.load_sessions(SESSION_FILE, save_migrated=save_sessions)
 
 
 def save_sessions(sessions: Dict[str, dict]) -> None:
-    os.makedirs(DB_DIR, exist_ok=True)
-    with open(SESSION_FILE, "w", encoding="utf-8") as file:
-        json.dump(sessions, file, ensure_ascii=False, indent=2)
+    auth_sessions.save_sessions(SESSION_FILE, sessions)
 
 
 def revoke_user_sessions(user_id: str) -> int:
@@ -862,88 +783,44 @@ def revoke_user_sessions(user_id: str) -> int:
         return postgres_sessions.revoke_user(user_id)
     sessions = load_sessions()
     before = len(sessions)
-    sessions = {
-        token: session
-        for token, session in sessions.items()
-        if str(session.get("user_id") or "") != user_id
-    }
+    sessions = auth_sessions.revoke_user_sessions(sessions, user_id)
     save_sessions(sessions)
     return before - len(sessions)
 
 
 def prune_expired_sessions(sessions: Dict[str, dict]) -> Dict[str, dict]:
-    now = datetime.now(timezone.utc)
-    return {
-        token: session
-        for token, session in sessions.items()
-        if _parse_session_expiry(session) > now
-    }
+    return auth_sessions.prune_expired_sessions(sessions)
 
 
 def _parse_session_expiry(session: dict) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(str(session.get("expires_at") or "").replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            return parsed.astimezone(timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except ValueError:
-        return datetime.now(timezone.utc) - timedelta(seconds=1)
+    return auth_sessions.parse_session_expiry(session)
 
 
 def session_hours() -> int:
-    env_value = os.getenv("SESSION_TTL_HOURS", "").strip()
-    if env_value:
-        try:
-            return min(max(int(env_value), 1), 72)
-        except ValueError:
-            pass
-    try:
-        with open(os.path.join(DB_DIR, "system_settings.json"), "r", encoding="utf-8") as file:
-            payload = json.load(file)
-    except (json.JSONDecodeError, OSError):
-        return 12
-    value = payload.get("session_hours") if isinstance(payload, dict) else 12
-    if not isinstance(value, int):
-        return 12
-    return min(max(value, 1), 72)
+    return auth_sessions.session_hours(
+        os.getenv("SESSION_TTL_HOURS", ""),
+        os.path.join(DB_DIR, "system_settings.json"),
+    )
 
 
 def hash_password(password: str, salt: Optional[str] = None) -> str:
-    password_salt = salt or secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), password_salt.encode("utf-8"), 120_000)
-    return f"pbkdf2_sha256${password_salt}${digest.hex()}"
+    return auth_sessions.hash_password(password, salt)
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    parts = password_hash.split("$")
-    if len(parts) != 3 or parts[0] != "pbkdf2_sha256":
-        return False
-    expected = hash_password(password, parts[1])
-    return secrets.compare_digest(expected, password_hash)
+    return auth_sessions.verify_password(password, password_hash)
 
 
 def public_user(user: dict) -> dict:
-    return {
-        "user_id": str(user.get("user_id") or ""),
-        "name": str(user.get("name") or ""),
-        "role": str(user.get("role") or ""),
-        "line_scope": user.get("line_scope") if isinstance(user.get("line_scope"), list) else [],
-        "team": str(user.get("team") or ""),
-        "active": bool(user.get("active", True)),
-        "created_at": str(user.get("created_at") or ""),
-        "updated_at": str(user.get("updated_at") or ""),
-    }
+    return account_management.public_user(user)
 
 
 def bearer_token(authorization: Optional[str]) -> str:
-    value = (authorization or "").strip()
-    if not value.lower().startswith("bearer "):
-        return ""
-    return value[7:].strip()
+    return auth_sessions.bearer_token(authorization)
 
 
 def session_token_digest(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return auth_sessions.session_token_digest(token)
 
 
 def actor_from_credentials(authorization: Optional[str], session_cookie: Optional[str]) -> Optional[dict]:

@@ -14,9 +14,6 @@ import logging
 import os
 import shutil
 import tempfile
-import zipfile
-from difflib import SequenceMatcher
-from io import BytesIO
 import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
@@ -47,6 +44,13 @@ from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
 from services.json_file_store import write_json_atomic
 from services.transactions import postgres_transactional
+from services import work_order_lifecycle
+from services.work_order_import import (
+    XlsxArchiveLimits,
+    detect_columns,
+    import_workbook_rows,
+    validate_xlsx_archive,
+)
 
 logger = logging.getLogger("alarm_rag.work_orders")
 router = APIRouter()
@@ -129,7 +133,7 @@ PRIORITY_LABELS = {
 
 
 def _clean_text(value: Optional[str]) -> str:
-    return (value or "").strip()
+    return work_order_lifecycle.clean_text(value)
 
 
 def _is_operator_or_supervisor(user_id: str) -> bool:
@@ -139,129 +143,44 @@ def _is_operator_or_supervisor(user_id: str) -> bool:
 
 
 def _status_transition_error(previous_status: str, next_status: str) -> str:
-    if previous_status == next_status:
-        return ""
-    if previous_status == "completed" and next_status != "verified":
-        return "Completed work orders can only be verified or reopened from an operator follow-up."
-    if next_status == "verified" and previous_status != "completed":
-        return "Work orders must be completed before verification."
-    if previous_status == "verified":
-        return "Verified work orders can only be reopened from an operator follow-up."
-    if previous_status == "cancelled":
-        return "Cancelled work orders cannot transition to another status."
-    if next_status not in STATUS_TRANSITIONS.get(previous_status, set()):
-        return f"Work order status cannot transition from {previous_status} to {next_status}."
-    return ""
+    return work_order_lifecycle.status_transition_error(previous_status, next_status, STATUS_TRANSITIONS)
 
 
 def _closure_error(order: dict) -> str:
-    if order.get("status") in ("completed", "verified") and not (
-        _clean_text(order.get("root_cause")) and _clean_text(order.get("repair_action"))
-    ):
-        return "Completing or verifying a work order requires root_cause and repair_action."
-    if order.get("status") == "verified" and not _clean_text(order.get("verified_by")):
-        return "Verifying a work order requires verified_by from an operator or supervisor."
-    if order.get("status") == "verified" and not _is_operator_or_supervisor(str(order.get("verified_by") or "")):
-        return "Verifying a work order requires an operator or supervisor verifier."
-    return ""
+    return work_order_lifecycle.closure_error(order, _is_operator_or_supervisor)
 
 
 def _direct_verification_error(order: dict, user_id: str) -> str:
-    if order.get("status") != "verified":
-        return ""
-    verifier = _clean_text(str(order.get("verified_by") or ""))
-    actor = _clean_text(user_id)
-    if not _is_operator_or_supervisor(actor):
-        return "Only an operator or supervisor can verify a work order."
-    if verifier != actor:
-        return "The verifier must match the user performing verification."
-    return ""
+    return work_order_lifecycle.direct_verification_error(order, user_id, _is_operator_or_supervisor)
 
 
 def _knowledge_candidate_ready(order: dict) -> bool:
-    return order.get("status") in ("completed", "verified") and all(
-        _clean_text(str(order.get(field) or ""))
-        for field in ("root_cause", "repair_action", "resolution")
-    )
+    return work_order_lifecycle.knowledge_candidate_ready(order)
 
 
 def _refresh_knowledge_review_state(order: dict, changed_fields: set[str] | list[str]) -> None:
-    changed = set(changed_fields)
-    review_fields = {
-        "manual",
-        "alarm_code",
-        "machine_id",
-        "description",
-        "root_cause",
-        "repair_action",
-        "resolution",
-        "notes",
-        "llm_correctness",
-        "llm_coverage",
-        "llm_missing_info",
-        "llm_expected_fix",
-    }
-    ready = _knowledge_candidate_ready(order)
-    order["kb_candidate"] = ready
-    current = str(order.get("kb_review_status") or "not_ready")
-    if not ready:
-        if current != "ingested":
-            order["kb_review_status"] = "not_ready"
-        return
-    relevant_change = bool(changed & review_fields)
-    if current in ("ingested", "needs_revision", "rejected", "validation_failed") and not relevant_change:
-        return
-    if current == "not_ready" or relevant_change:
-        order["kb_review_status"] = "pending_review"
-        order["kb_reviewed_by"] = ""
-        order["kb_reviewed_at"] = ""
+    work_order_lifecycle.refresh_knowledge_review_state(order, changed_fields)
 
 
 def _knowledge_comparison_text(order: dict) -> str:
-    return " ".join(
-        _clean_text(str(order.get(field) or "")).lower()
-        for field in ("manual", "alarm_code", "root_cause", "repair_action", "resolution")
-    )
+    return work_order_lifecycle.knowledge_comparison_text(order)
 
 
 def _find_duplicate_knowledge_order(order: dict, orders: List[dict]) -> str:
-    candidate_text = _knowledge_comparison_text(order)
-    if not candidate_text.strip():
-        return ""
-    for existing in orders:
-        if existing.get("id") == order.get("id"):
-            continue
-        if existing.get("kb_review_status") != "ingested":
-            continue
-        if str(existing.get("manual") or "") != str(order.get("manual") or ""):
-            continue
-        if str(existing.get("alarm_code") or "") != str(order.get("alarm_code") or ""):
-            continue
-        similarity = SequenceMatcher(None, candidate_text, _knowledge_comparison_text(existing)).ratio()
-        if similarity >= 0.94:
-            return str(existing.get("id") or "")
-    return ""
+    return work_order_lifecycle.find_duplicate_knowledge_order(order, orders)
 
 
 def _request_fields(req: BaseModel) -> set[str]:
-    fields = getattr(req, "model_fields_set", None)
-    if fields is None:
-        fields = getattr(req, "__fields_set__", set())
-    return set(fields or set())
+    return work_order_lifecycle.request_fields(req)
 
 
 def _work_order_patch_permission_error(actor: dict, req: BaseModel) -> str:
-    role = actor_role(actor)
-    if role == "operator":
-        allowed_fields = OPERATOR_WORK_ORDER_PATCH_FIELDS
-    elif role == "maintenance":
-        allowed_fields = MAINTENANCE_WORK_ORDER_PATCH_FIELDS
-    else:
-        return ""
-    disallowed = _request_fields(req) - allowed_fields
-    if disallowed:
-        return f"Permission denied for work order fields: {', '.join(sorted(disallowed))}"
-    return ""
+    return work_order_lifecycle.patch_permission_error(
+        actor_role(actor),
+        req,
+        operator_fields=OPERATOR_WORK_ORDER_PATCH_FIELDS,
+        maintenance_fields=MAINTENANCE_WORK_ORDER_PATCH_FIELDS,
+    )
 
 
 def _parse_iso(value: str) -> Optional[datetime]:
@@ -1429,44 +1348,19 @@ POSITIONAL_FIELDS = [
 
 def _detect_columns(header_row: list) -> dict | None:
     """Try to map header cells to field names. Returns None if no match."""
-    mapping = {}
-    for idx, cell in enumerate(header_row):
-        if cell is None:
-            continue
-        key = str(cell).strip()
-        if key in EXCEL_FIELD_MAP:
-            mapping[idx] = EXCEL_FIELD_MAP[key]
-    return mapping if len(mapping) >= 1 else None
+    return detect_columns(header_row, EXCEL_FIELD_MAP)
 
 
 def _validate_xlsx_archive(content: bytes) -> str:
-    try:
-        with zipfile.ZipFile(BytesIO(content), "r") as archive:
-            infos = archive.infolist()
-            if len(infos) > XLSX_MAX_ENTRIES:
-                return f"XLSX archive has too many entries ({len(infos)} > {XLSX_MAX_ENTRIES})"
-
-            total_uncompressed = 0
-            for info in infos:
-                if info.file_size < 0 or info.compress_size < 0:
-                    return "Invalid XLSX archive member size"
-                total_uncompressed += info.file_size
-                if total_uncompressed > XLSX_MAX_UNCOMPRESSED_BYTES:
-                    max_mb = XLSX_MAX_UNCOMPRESSED_BYTES / 1024 / 1024
-                    return f"XLSX uncompressed content exceeds {max_mb:g} MB limit"
-                if info.filename == "xl/sharedStrings.xml" and info.file_size > XLSX_MAX_SHARED_STRINGS_BYTES:
-                    max_mb = XLSX_MAX_SHARED_STRINGS_BYTES / 1024 / 1024
-                    return f"XLSX shared strings exceed {max_mb:g} MB limit"
-                if info.compress_size > 0:
-                    ratio = info.file_size / info.compress_size
-                    if ratio > XLSX_MAX_COMPRESSION_RATIO:
-                        return "XLSX archive compression ratio is too high"
-
-            if "[Content_Types].xml" not in archive.namelist():
-                return "Invalid XLSX archive structure"
-    except zipfile.BadZipFile:
-        return "Invalid XLSX archive"
-    return ""
+    return validate_xlsx_archive(
+        content,
+        XlsxArchiveLimits(
+            max_entries=XLSX_MAX_ENTRIES,
+            max_uncompressed_bytes=XLSX_MAX_UNCOMPRESSED_BYTES,
+            max_shared_strings_bytes=XLSX_MAX_SHARED_STRINGS_BYTES,
+            max_compression_ratio=XLSX_MAX_COMPRESSION_RATIO,
+        ),
+    )
 
 
 @router.post(
@@ -1517,96 +1411,28 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
         if not rows:
             return {"status": "error", "message": "Excel 檔案為空"}
 
-        # Detect header
-        detected_columns = _detect_columns(list(rows[0]))
-        has_header = detected_columns is not None
-        if detected_columns is not None:
-            col_map = detected_columns
-            data_rows = rows[1:]  # skip header
-        else:
-            # Positional fallback
-            col_map = {i: f for i, f in enumerate(POSITIONAL_FIELDS)}
-            data_rows = rows
-
-        imported = 0
-        skipped = 0
-        errors = []
-        candidate_count = 0
-
-        for row_idx, row in enumerate(data_rows, start=2 if has_header else 1):
-            try:
-                fields = {}
-                for col_idx, field_name in col_map.items():
-                    if col_idx < len(row) and row[col_idx] is not None:
-                        fields[field_name] = str(row[col_idx]).strip()
-
-                alarm_code = fields.get("alarm_code", "").strip()
-                if not alarm_code:
-                    skipped += 1
-                    continue
-
-                # Validate priority/status
-                priority = fields.get("priority", "medium").lower()
-                if priority not in PRIORITIES:
-                    priority = "medium"
-                status = fields.get("status", "pending").lower()
-                if status not in STATUSES:
-                    status = "pending"
-
-                order = _build_order_dict(
-                    alarm_code=alarm_code,
-                    manual=fields.get("manual", "808d"),
-                    machine_id=fields.get("machine_id", ""),
-                    priority=priority,
-                    description=fields.get("description", ""),
-                    rag_suggestion="",
-                    source=fields.get("source", "excel"),
-                    assigned_to=fields.get("assigned_to", ""),
-                    created_by=actor_id(actor),
-                )
-                knowledge_candidate = False
-
-                if status != "pending":
-                    before_order = dict(order)
-                    previous_status = order.get("status", "pending")
-                    order["status"] = status
-                    for field_name in ("resolution", "notes", "root_cause", "repair_action", "verified_by"):
-                        if fields.get(field_name):
-                            order[field_name] = fields[field_name]
-                    closure_error = _closure_error(order)
-                    if closure_error:
-                        errors.append(f"Row {row_idx}: {closure_error}")
-                        skipped += 1
-                        continue
-                    if status in ("completed", "verified"):
-                        order["completed_at"] = order.get("completed_at") or datetime.now().isoformat()
-                    changed_fields = ["status", "resolution", "notes", "root_cause", "repair_action", "verified_by"]
-                    _refresh_knowledge_review_state(order, changed_fields)
-                    knowledge_candidate = order.get("kb_review_status") == "pending_review"
-                    _append_order_history(
-                        order,
-                        "import_status_override",
-                        fields.get("verified_by", "") or fields.get("assigned_to", ""),
-                        changed_fields,
-                        previous_status,
-                        status,
-                        field_changes(before_order, order, changed_fields),
-                    )
-
-                _persist_new_order(order)
-                if knowledge_candidate:
-                    candidate_count += 1
-                imported += 1
-            except Exception as e:
-                errors.append(f"Row {row_idx}: {str(e)}")
+        summary = import_workbook_rows(
+            rows,
+            field_map=EXCEL_FIELD_MAP,
+            positional_fields=POSITIONAL_FIELDS,
+            priorities=PRIORITIES,
+            statuses=STATUSES,
+            created_by=actor_id(actor),
+            build_order=_build_order_dict,
+            closure_error=_closure_error,
+            refresh_knowledge_state=_refresh_knowledge_review_state,
+            append_order_history=_append_order_history,
+            calculate_field_changes=field_changes,
+            persist_order=_persist_new_order,
+        )
 
         return {
             "status": "ok",
             "filename": safe_filename,
-            "imported": imported,
-            "skipped": skipped,
-            "errors": errors[:10],
-            "candidate_count": candidate_count,
+            "imported": summary.imported,
+            "skipped": summary.skipped,
+            "errors": summary.errors[:10],
+            "candidate_count": summary.candidate_count,
             "feedback_count": 0,
         }
     except Exception as e:

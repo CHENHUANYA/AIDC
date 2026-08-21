@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
@@ -13,6 +14,7 @@ from auth import actor_id, get_actor
 
 
 router = APIRouter()
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def require_authenticated(actor: dict) -> dict | None:
@@ -22,7 +24,7 @@ def require_authenticated(actor: dict) -> dict | None:
 
 
 def _read_html(path: str) -> str:
-    with open(path, "r", encoding="utf-8") as file:
+    with (PROJECT_ROOT / path).open("r", encoding="utf-8") as file:
         return file.read()
 
 

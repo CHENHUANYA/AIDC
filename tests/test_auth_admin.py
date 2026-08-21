@@ -11,6 +11,7 @@ from auth import can_view_work_order
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 AUTH_PATH = os.path.join(ROOT, "auth.py")
+ACCOUNT_SERVICE_PATH = os.path.join(ROOT, "services", "account_management.py")
 ADMIN_JS_PATH = os.path.join(ROOT, "static", "js", "pages", "admin.js")
 LOGIN_JS_PATH = os.path.join(ROOT, "static", "js", "pages", "login.js")
 TEST_TMP = Path(ROOT) / "tests_tmp" / "auth_admin"
@@ -47,6 +48,7 @@ class AuthAdminStaticTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.auth_source = read_text(AUTH_PATH)
+        cls.account_service_source = read_text(ACCOUNT_SERVICE_PATH)
         cls.admin_source = read_text(ADMIN_JS_PATH)
         cls.login_source = read_text(LOGIN_JS_PATH)
         cls.auth_tree = ast.parse(cls.auth_source)
@@ -83,8 +85,8 @@ class AuthAdminStaticTests(unittest.TestCase):
         self.assertTrue(expected.issubset(self.auth_functions))
 
     def test_last_admin_and_ambiguous_token_guards_are_kept(self):
-        self.assertIn("Cannot deactivate the last active admin", self.auth_source)
-        self.assertIn("Cannot demote the last active admin", self.auth_source)
+        self.assertIn("Cannot deactivate the last active admin", self.account_service_source)
+        self.assertIn("Cannot demote the last active admin", self.account_service_source)
         self.assertIn("Ambiguous token prefix", self.auth_source)
         self.assertIn("SESSION_TOKEN_PREFIX_LENGTH", self.auth_source)
 

@@ -359,7 +359,7 @@ def validate_collection_name(collection_name: str) -> str:
     return collection_name
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf",           required=True,  help="Path to the PDF")
     parser.add_argument("--name",          required=True,  help="Collection name e.g. 808d")
@@ -370,16 +370,17 @@ if __name__ == "__main__":
     parser.add_argument("--chunk-overlap", type=int, default=8,
                         help="Overlap lines between chunks (default: 8)")
     parser.add_argument("--force", action="store_true", help="Rebuild even if same hash already ingested")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     try:
         args.name = validate_collection_name(args.name)
     except ValueError as exc:
         print(f"ERROR: {exc}")
-        exit(1)
+        return 1
 
     if not os.path.exists(args.pdf):
-        print(f"ERROR: File not found: {args.pdf}"); exit(1)
+        print(f"ERROR: File not found: {args.pdf}")
+        return 1
 
     ensure_db_dir()
     with open(args.pdf, "rb") as f:
@@ -390,7 +391,7 @@ if __name__ == "__main__":
     existing = find_document_by_hash(args.name, source_hash)
     if existing and not args.force:
         print(f"Document with same hash already ingested as {existing.get('doc_id')}. Use --force to rebuild.")
-        exit(0)
+        return 0
     doc_meta = {
         "doc_id": doc_id,
         "filename": os.path.basename(args.pdf),
@@ -403,7 +404,8 @@ if __name__ == "__main__":
     # Always extract alarm sections
     alarm_sections = extract_alarm_sections(args.pdf)
     if not alarm_sections:
-        print("ERROR: No alarm codes found."); exit(1)
+        print("ERROR: No alarm codes found.")
+        return 1
 
     # Optionally extract general content chunks
     general_chunks = []
@@ -424,3 +426,8 @@ if __name__ == "__main__":
     doc_entry["sections"] = len(all_sections)
     upsert_document_entry(args.name, doc_entry)
     print(f"\nManifest updated: collection '{args.name}' now includes {doc_entry['doc_id']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

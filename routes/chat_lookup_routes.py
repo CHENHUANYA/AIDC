@@ -1,5 +1,3 @@
-import asyncio
-import json
 import logging
 import re
 import time
@@ -56,6 +54,14 @@ from observability import runtime_metrics
 from repositories.rag_answers import RagAnswerRepository
 from rag_engine import extract_alarm_codes
 from storage import ERROR_LOG_PATH, append_jsonl
+from services.llm_clients import (
+    OllamaClientConfig,
+    SchoolClientConfig,
+    call_ollama as call_ollama_client,
+    call_school_api as call_school_api_client,
+    stream_ollama as stream_ollama_client,
+)
+from services.chat_streaming import StreamDependencies, stream_chat_events as assemble_stream_chat_events
 
 
 logger = logging.getLogger("alarm_rag.chat")
@@ -117,75 +123,61 @@ def build_llm_unavailable_message(exc: Exception, docs: list[dict]) -> str:
 
 
 async def call_ollama(messages: list[dict], temperature: float, max_tokens: int) -> str:
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": messages,
-        "stream": False,
-        "keep_alive": OLLAMA_KEEP_ALIVE,
-        "options": {
-            "temperature": temperature,
-            "num_predict": min(max_tokens, RAG_MAX_OUTPUT_TOKENS),
-            "num_ctx": RAG_OLLAMA_NUM_CTX,
-        },
-    }
-    async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS) as client:
-        response = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
-        response.raise_for_status()
-        data = response.json()
-    return data.get("message", {}).get("content", "")
+    return await call_ollama_client(
+        messages,
+        temperature,
+        max_tokens,
+        OllamaClientConfig(
+            url=OLLAMA_URL,
+            model=OLLAMA_MODEL,
+            keep_alive=OLLAMA_KEEP_ALIVE,
+            timeout_seconds=LLM_TIMEOUT_SECONDS,
+            max_output_tokens=RAG_MAX_OUTPUT_TOKENS,
+            context_tokens=RAG_OLLAMA_NUM_CTX,
+        ),
+    )
 
 
 async def stream_ollama(messages: list[dict], temperature: float, max_tokens: int) -> AsyncIterator[str]:
     global last_llm_source
     request_llm_source.set("none")
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": messages,
-        "stream": True,
-        "keep_alive": OLLAMA_KEEP_ALIVE,
-        "options": {
-            "temperature": temperature,
-            "num_predict": min(max_tokens, RAG_MAX_OUTPUT_TOKENS),
-            "num_ctx": RAG_OLLAMA_NUM_CTX,
-        },
-    }
-    async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS) as client:
-        async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload) as response:
-            response.raise_for_status()
-            last_llm_source = "ollama"
-            request_llm_source.set("ollama")
-            async for line in response.aiter_lines():
-                if not line.strip():
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise RuntimeError("Ollama returned invalid streaming JSON") from exc
-                if event.get("error"):
-                    raise RuntimeError(str(event["error"]))
-                content = str(event.get("message", {}).get("content") or "")
-                if content:
-                    yield content
+
+    def mark_connected() -> None:
+        global last_llm_source
+        last_llm_source = "ollama"
+        request_llm_source.set("ollama")
+
+    config = OllamaClientConfig(
+        url=OLLAMA_URL,
+        model=OLLAMA_MODEL,
+        keep_alive=OLLAMA_KEEP_ALIVE,
+        timeout_seconds=LLM_TIMEOUT_SECONDS,
+        max_output_tokens=RAG_MAX_OUTPUT_TOKENS,
+        context_tokens=RAG_OLLAMA_NUM_CTX,
+    )
+    async for content in stream_ollama_client(
+        messages,
+        temperature,
+        max_tokens,
+        config,
+        on_connected=mark_connected,
+    ):
+        yield content
 
 
 async def call_school_api(messages: list[dict], temperature: float, max_tokens: int) -> str:
-    if not SCHOOL_API_BASE_URL:
-        raise RuntimeError("SCHOOL_API_BASE_URL is required when LLM_PROVIDER=school")
-    headers = {"Content-Type": "application/json"}
-    if SCHOOL_API_KEY:
-        headers["Authorization"] = f"Bearer {SCHOOL_API_KEY}"
-    payload = {
-        "model": SCHOOL_API_MODEL,
-        "messages": messages,
-        "stream": False,
-        "temperature": temperature,
-        "max_tokens": min(max_tokens, RAG_MAX_OUTPUT_TOKENS),
-    }
-    async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS) as client:
-        response = await client.post(f"{SCHOOL_API_BASE_URL}/chat/completions", headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    return await call_school_api_client(
+        messages,
+        temperature,
+        max_tokens,
+        SchoolClientConfig(
+            base_url=SCHOOL_API_BASE_URL,
+            api_key=SCHOOL_API_KEY,
+            model=SCHOOL_API_MODEL,
+            timeout_seconds=LLM_TIMEOUT_SECONDS,
+            max_output_tokens=RAG_MAX_OUTPUT_TOKENS,
+        ),
+    )
 
 
 async def call_llm(messages: list[dict], temperature: float, max_tokens: int) -> str:
@@ -387,7 +379,7 @@ def record_query(collection_name: str, user_query: str, *, source: str, elapsed_
         logger.warning("Failed to persist query telemetry: %s", exc)
 
 
-async def stream_chat_events(
+def stream_chat_events(
     *,
     messages: list[dict],
     docs: list[dict],
@@ -402,100 +394,37 @@ async def stream_chat_events(
     start_ts: float,
     retrieval_ms: float,
 ) -> AsyncIterator[str]:
-    model_started = time.monotonic()
-    parts: list[str] = []
-    first_event = True
-    provider = "unavailable"
-    answer_state = "complete"
-    tags = answer_source_tags(docs)
-    try:
-        if LLM_PROVIDER == "ollama" and not is_troubleshooting_query(user_query):
-            async for content_part in stream_ollama(messages, temperature, max_tokens):
-                if first_event and tags:
-                    content_part = f"{tags}\n{content_part}"
-                parts.append(content_part)
-                yield make_sse_chunk(
-                    content_part,
-                    rag=rag_metadata if first_event else None,
-                    response_id=response_id,
-                )
-                first_event = False
-            if not parts:
-                raise RuntimeError("LLM returned empty streaming response")
-            provider = request_llm_source.get()
-        else:
-            content = await call_llm_with_retrieval_guard(
-                messages,
-                docs,
-                user_query,
-                temperature,
-                max_tokens,
-            )
-            if not content:
-                raise RuntimeError("LLM returned empty response")
-            if tags:
-                content = f"{tags}\n{content}"
-            parts.append(content)
-            provider = request_llm_source.get()
-            yield make_sse_chunk(content, rag=rag_metadata, response_id=response_id)
-            first_event = False
-    except (asyncio.CancelledError, GeneratorExit):
-        runtime_metrics.record_rag(
-            retrieval_ms=retrieval_ms,
-            model_ms=max((time.monotonic() - model_started) * 1000, 0.0),
-            total_ms=max((time.time() - start_ts) * 1000, 0.0),
-            provider=request_llm_source.get(),
-            outcome="interrupted",
-            streaming=True,
-        )
-        raise
-    except Exception as exc:
-        record_chat_error(collection_name, user_query, docs, exc)
-        if parts and request_llm_source.get() in {"ollama", "school"}:
-            provider = request_llm_source.get()
-            answer_state = "fallback"
-        else:
-            answer_state = "unavailable"
-        fallback = build_llm_unavailable_message(exc, docs)
-        if parts:
-            fallback = f"\n\n{fallback}"
-        parts.append(fallback)
-        yield make_sse_chunk(
-            fallback,
-            rag=rag_metadata if first_event else None,
-            response_id=response_id,
-        )
-
-    elapsed_ms = int((time.time() - start_ts) * 1000)
-    answer = "".join(parts)
-    if answer_state == "complete":
-        answer_state = classify_answer_state(provider)
-    record_query(collection_name, user_query, source="api-stream", elapsed_ms=elapsed_ms)
-    model = SCHOOL_API_MODEL if provider == "school" else OLLAMA_MODEL if provider == "ollama" else ""
-    save_rag_answer(
-        answer_id=response_id,
-        query=user_query,
-        collection=collection_name,
-        answer=answer,
+    return assemble_stream_chat_events(
+        messages=messages,
+        docs=docs,
         rag_metadata=rag_metadata,
-        provider=provider,
-        model=model,
-        elapsed_ms=elapsed_ms,
+        response_id=response_id,
+        collection_name=collection_name,
+        user_query=user_query,
+        temperature=temperature,
+        max_tokens=max_tokens,
         created_by=created_by,
         tokenizer_version=tokenizer_version,
-        answer_state=answer_state,
-    )
-    total_ms = max((time.time() - start_ts) * 1000, 0.0)
-    runtime_metrics.record_rag(
+        start_ts=start_ts,
         retrieval_ms=retrieval_ms,
-        model_ms=max((time.monotonic() - model_started) * 1000, 0.0),
-        total_ms=total_ms,
-        provider=provider,
-        outcome=answer_state,
-        streaming=True,
+        dependencies=StreamDependencies(
+            provider_name=LLM_PROVIDER,
+            ollama_model=OLLAMA_MODEL,
+            school_model=SCHOOL_API_MODEL,
+            is_troubleshooting_query=is_troubleshooting_query,
+            stream_ollama=stream_ollama,
+            call_with_retrieval_guard=call_llm_with_retrieval_guard,
+            answer_source_tags=answer_source_tags,
+            make_sse_chunk=make_sse_chunk,
+            unavailable_message=build_llm_unavailable_message,
+            record_error=record_chat_error,
+            provider_source=request_llm_source.get,
+            classify_answer_state=classify_answer_state,
+            record_query=record_query,
+            save_answer=save_rag_answer,
+            record_metric=runtime_metrics.record_rag,
+        ),
     )
-    yield make_sse_chunk("", finish=True, response_id=response_id)
-    yield "data: [DONE]\n\n"
 
 
 async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None = None):
