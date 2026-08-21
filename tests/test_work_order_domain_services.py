@@ -1,8 +1,16 @@
 import json
 import logging
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
-from services import work_order_issue_sync, work_order_reporting
+import pytest
+
+from services import (
+    work_order_issue_sync,
+    work_order_operations,
+    work_order_queries,
+    work_order_reporting,
+)
 
 
 def apply_issue_update(order, issue, *, validation_error="", transition_error="", note=""):
@@ -183,3 +191,132 @@ def test_work_order_reporting_handles_missing_and_non_list_archives(tmp_path):
     assert archives[0]["file"] == non_list.name
     assert archives[0]["count"] == 0
     assert orders == []
+
+
+def query_dependencies(order, *, linked_issue=None, issue_error=None):
+    get_issue = MagicMock(return_value=linked_issue, side_effect=issue_error)
+    logger = MagicMock()
+    dependencies = work_order_queries.QueryDependencies(
+        find_order=lambda _order_id: (-1, order),
+        get_issue=get_issue,
+        can_view=lambda actor, _order, issue: actor.get("role") == "admin" or issue is not None,
+        history_list=lambda payload, field: list((payload or {}).get(field, [])),
+        logger=logger,
+    )
+    return dependencies, get_issue, logger
+
+
+def test_work_order_queries_return_detail_and_combined_history():
+    order = {
+        "id": "WO-1",
+        "issue_id": "ISS-1",
+        "work_order_history": [{"action": "created"}],
+    }
+    issue = {"issue_id": "ISS-1", "issue_history": [{"action": "linked"}]}
+    dependencies, get_issue, _logger = query_dependencies(order, linked_issue=issue)
+
+    detail = work_order_queries.get_order_response("WO-1", {"role": "operator"}, dependencies)
+    history = work_order_queries.get_history_response("WO-1", {"role": "admin"}, dependencies)
+
+    assert detail == {"status": "ok", "order": order}
+    assert history["work_order_history"] == [{"action": "created"}]
+    assert history["issue_history"] == [{"action": "linked"}]
+    assert get_issue.call_count == 2
+
+
+def test_work_order_queries_fail_closed_when_linked_issue_lookup_fails():
+    order = {"id": "WO-1", "issue_id": "ISS-1", "work_order_history": []}
+    dependencies, _get_issue, logger = query_dependencies(
+        order,
+        issue_error=OSError("issue store unavailable"),
+    )
+
+    denied = work_order_queries.get_order_response(
+        "WO-1",
+        {"role": "operator"},
+        dependencies,
+    )
+    admin_history = work_order_queries.get_history_response(
+        "WO-1",
+        {"role": "admin"},
+        dependencies,
+    )
+
+    assert denied == {"status": "error", "message": "Permission denied"}
+    assert admin_history["status"] == "ok"
+    assert admin_history["issue_history"] == []
+    assert logger.warning.call_count == 2
+
+
+def test_work_order_queries_report_missing_order():
+    dependencies, get_issue, _logger = query_dependencies(None)
+
+    detail = work_order_queries.get_order_response("WO-X", {"role": "admin"}, dependencies)
+    history = work_order_queries.get_history_response("WO-X", {"role": "admin"}, dependencies)
+
+    assert detail["message"] == "Work order WO-X not found"
+    assert history["message"] == "Work order WO-X not found"
+    get_issue.assert_not_called()
+
+
+def test_work_order_history_query_enforces_visibility():
+    order = {"id": "WO-1", "work_order_history": []}
+    dependencies, _get_issue, _logger = query_dependencies(order)
+
+    result = work_order_queries.get_history_response(
+        "WO-1",
+        {"role": "operator"},
+        dependencies,
+    )
+
+    assert result == {"status": "error", "message": "Permission denied"}
+
+
+def operation_dependencies(order, *, sync_issue=None, unlink_issue=None, get_issue=None):
+    return work_order_operations.OperationDependencies(
+        get_one=lambda _order_id: order,
+        save_one=lambda payload: payload,
+        load_all=lambda: [order],
+        save_all=lambda _orders: None,
+        get_issue=get_issue or (lambda _issue_id: None),
+        sync_issue=sync_issue or (lambda _order: {"issue_id": "ISS-1"}),
+        unlink_issue=unlink_issue or (lambda _order: {"issue_id": "ISS-1"}),
+        restore_issue=lambda _issue: None,
+        append_history=lambda *_args: None,
+        calculate_field_changes=lambda _before, _after, fields: list(fields),
+        apply_soft_delete=lambda payload, **_kwargs: dict(payload),
+        logger=MagicMock(),
+    )
+
+
+def test_postgres_update_propagates_missing_linked_issue_sync():
+    order = {"id": "WO-1", "issue_id": "ISS-1"}
+    dependencies = operation_dependencies(order, sync_issue=lambda _order: None)
+
+    with pytest.raises(RuntimeError, match="was not synchronized"):
+        work_order_operations.persist_update_and_sync_issue(
+            order,
+            dict(order),
+            orders=[order],
+            index=-1,
+            use_postgres=True,
+            linked_issue_snapshot=None,
+            dependencies=dependencies,
+        )
+
+
+def test_postgres_delete_propagates_missing_linked_issue_unlink():
+    order = {"id": "WO-1", "issue_id": "ISS-1"}
+    dependencies = operation_dependencies(
+        order,
+        get_issue=lambda _issue_id: {"issue_id": "ISS-1"},
+        unlink_issue=lambda _order: None,
+    )
+
+    with pytest.raises(RuntimeError, match="was not unlinked"):
+        work_order_operations.soft_delete_order(
+            "WO-1",
+            deleted_by="admin01",
+            use_postgres=True,
+            dependencies=dependencies,
+        )

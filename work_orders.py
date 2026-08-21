@@ -48,6 +48,8 @@ from services import work_order_lifecycle
 from services import work_order_issue_sync
 from services import work_order_mutations
 from services import work_order_knowledge
+from services import work_order_operations
+from services import work_order_queries
 from services import work_order_reporting
 from services.work_order_import import (
     XlsxArchiveLimits,
@@ -276,6 +278,37 @@ def _restore_json_issue(snapshot: dict) -> None:
             issues[index] = copy.deepcopy(snapshot)
             _save_issues(issues)
             return
+
+
+def _operation_dependencies() -> work_order_operations.OperationDependencies:
+    from issues import get_issue_dict, sync_issue_from_work_order, unlink_issue_from_work_order
+
+    return work_order_operations.OperationDependencies(
+        get_one=postgres_work_orders.get_one,
+        save_one=postgres_work_orders.save_one,
+        load_all=_load_orders,
+        save_all=_save_orders,
+        get_issue=get_issue_dict,
+        sync_issue=sync_issue_from_work_order,
+        unlink_issue=unlink_issue_from_work_order,
+        restore_issue=_restore_json_issue,
+        append_history=_append_order_history,
+        calculate_field_changes=field_changes,
+        apply_soft_delete=work_order_mutations.apply_soft_delete,
+        logger=logger,
+    )
+
+
+def _query_dependencies() -> work_order_queries.QueryDependencies:
+    from issues import get_issue_dict
+
+    return work_order_queries.QueryDependencies(
+        find_order=_find_order,
+        get_issue=get_issue_dict,
+        can_view=can_view_work_order,
+        history_list=history_list,
+        logger=logger,
+    )
 
 
 def _visible_orders(actor: dict) -> List[dict]:
@@ -657,17 +690,11 @@ async def api_work_order_archive(actor: dict = Depends(get_actor)):
 async def api_get_order(order_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
-    _, order = _find_order(order_id)
-    if order is None:
-        return {"status": "error", "message": f"Work order {order_id} not found"}
-    linked_issue = None
-    issue_id = str(order.get("issue_id") or "")
-    if issue_id:
-        from issues import get_issue_dict
-        linked_issue = get_issue_dict(issue_id)
-    if not can_view_work_order(actor, order, linked_issue):
-        return {"status": "error", "message": "Permission denied"}
-    return {"status": "ok", "order": order}
+    return work_order_queries.get_order_response(
+        order_id,
+        actor,
+        _query_dependencies(),
+    )
 
 
 @router.get(
@@ -677,33 +704,11 @@ async def api_get_order(order_id: str, actor: dict = Depends(get_actor)):
 async def api_get_order_history(order_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
-    _, order = _find_order(order_id)
-    if order is None:
-        return {"status": "error", "message": f"Work order {order_id} not found"}
-    linked_issue = None
-    issue_id = str(order.get("issue_id") or "")
-    if issue_id:
-        from issues import get_issue_dict
-        linked_issue = get_issue_dict(issue_id)
-    if not can_view_work_order(actor, order, linked_issue):
-        return {"status": "error", "message": "Permission denied"}
-
-    linked_issue = None
-    issue_id = str(order.get("issue_id") or "")
-    if issue_id:
-        try:
-            from issues import get_issue_dict
-            linked_issue = get_issue_dict(issue_id)
-        except Exception as exc:
-            logger.warning("Issue history lookup failed for %s: %s", order_id, exc)
-
-    return {
-        "status": "ok",
-        "work_order_id": order_id,
-        "work_order_history": history_list(order, "work_order_history"),
-        "issue_id": issue_id,
-        "issue_history": history_list(linked_issue, "issue_history"),
-    }
+    return work_order_queries.get_history_response(
+        order_id,
+        actor,
+        _query_dependencies(),
+    )
 
 
 @router.patch(
@@ -715,13 +720,13 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
     use_postgres = postgres_store_enabled()
-    orders = [] if use_postgres else _load_orders()
-    idx, order = -1, postgres_work_orders.get_one(order_id) if use_postgres else None
-    if not use_postgres:
-        for i, current_order in enumerate(orders):
-            if current_order["id"] == order_id:
-                idx, order = i, current_order
-                break
+    operation_dependencies = _operation_dependencies()
+    loaded = work_order_operations.load_order(
+        order_id,
+        use_postgres=use_postgres,
+        dependencies=operation_dependencies,
+    )
+    orders, idx, order = loaded.orders, loaded.index, loaded.order
     if order is None:
         return {"status": "error", "message": f"Work order {order_id} not found"}
     if order.get("deleted_at"):
@@ -729,8 +734,7 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
     linked_issue = None
     linked_issue_id = str(order.get("issue_id") or "")
     if linked_issue_id:
-        from issues import get_issue_dict
-        linked_issue = get_issue_dict(linked_issue_id)
+        linked_issue = operation_dependencies.get_issue(linked_issue_id)
     if not can_view_work_order(actor, order, linked_issue):
         return {"status": "error", "message": "Permission denied"}
     if not can_update_work_order(actor, order, req.status):
@@ -766,37 +770,29 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
         return {"status": "error", "message": mutation.error}
     order = mutation.order
     before_order = mutation.before_order
-    if use_postgres:
-        order = postgres_work_orders.save_one(order)
-    else:
-        orders[idx] = order
-        _save_orders(orders)
-
-    synced_issue = None
-    if order.get("issue_id"):
-        try:
-            from issues import sync_issue_from_work_order
-            synced_issue = sync_issue_from_work_order(order)
-            if synced_issue is None:
-                raise RuntimeError(f"Linked issue {order['issue_id']} was not synchronized")
-        except Exception as exc:
-            logger.warning("Issue sync failed for %s: %s", order["id"], exc)
-            if use_postgres:
-                raise
-            orders[idx] = before_order
-            _save_orders(orders)
-            if linked_issue_snapshot is not None:
-                _restore_json_issue(linked_issue_snapshot)
-            return {
-                "status": "error",
-                "message": "Linked issue synchronization failed; work order update was rolled back.",
-            }
+    persisted = work_order_operations.persist_update_and_sync_issue(
+        order,
+        before_order,
+        orders=orders,
+        index=idx,
+        use_postgres=use_postgres,
+        linked_issue_snapshot=linked_issue_snapshot,
+        dependencies=operation_dependencies,
+    )
+    if persisted.error:
+        return {"status": "error", "message": persisted.error}
+    order = persisted.order
 
     review_result = {
         "candidate": bool(order.get("kb_candidate")),
         "review_status": order.get("kb_review_status", "not_ready"),
     }
-    return {"status": "ok", "order": order, "knowledge_review": review_result, "issue": synced_issue}
+    return {
+        "status": "ok",
+        "order": order,
+        "knowledge_review": review_result,
+        "issue": persisted.synced_issue,
+    }
 
 
 @router.delete(
@@ -810,57 +806,12 @@ async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
     use_postgres = postgres_store_enabled()
-    if use_postgres:
-        order = postgres_work_orders.get_one(order_id)
-        orders = [order] if order is not None else []
-    else:
-        orders = _load_orders()
-    for index, order in enumerate(orders):
-        if order.get("id") != order_id:
-            continue
-        now = datetime.now().isoformat()
-        if not order.get("deleted_at"):
-            linked_issue_snapshot = None
-            if order.get("issue_id"):
-                from issues import get_issue_dict
-
-                linked_issue = get_issue_dict(str(order["issue_id"]))
-                linked_issue_snapshot = copy.deepcopy(linked_issue) if linked_issue is not None else None
-            before_order = work_order_mutations.apply_soft_delete(
-                order,
-                deleted_by=actor_id(actor),
-                now=now,
-                append_history=_append_order_history,
-                calculate_field_changes=field_changes,
-                increment_version=not use_postgres,
-            )
-            if use_postgres:
-                order = postgres_work_orders.save_one(order)
-            else:
-                orders[index] = order
-                _save_orders(orders)
-            if linked_issue_snapshot is not None:
-                try:
-                    from issues import unlink_issue_from_work_order
-
-                    unlinked_issue = unlink_issue_from_work_order(order)
-                    if unlinked_issue is None:
-                        raise RuntimeError(f"Linked issue {order['issue_id']} was not unlinked")
-                except Exception as exc:
-                    logger.warning("Issue unlink failed for deleted work order %s: %s", order_id, exc)
-                    if use_postgres:
-                        raise
-                    orders[index] = before_order
-                    _save_orders(orders)
-                    _restore_json_issue(linked_issue_snapshot)
-                    return {
-                        "status": "error",
-                        "message": "Linked issue synchronization failed; work order deletion was rolled back.",
-                    }
-        return {"status": "ok", "deleted": order_id, "soft_deleted": True}
-    if not any(o.get("id") == order_id for o in orders):
-        return {"status": "error", "message": f"Work order {order_id} not found"}
-    return {"status": "ok", "deleted": order_id, "soft_deleted": True}
+    return work_order_operations.soft_delete_order(
+        order_id,
+        deleted_by=actor_id(actor),
+        use_postgres=use_postgres,
+        dependencies=_operation_dependencies(),
+    )
 
 
 # ----------------- KB feedback -----------------
