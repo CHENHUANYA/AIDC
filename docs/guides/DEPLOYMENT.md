@@ -148,10 +148,10 @@ python scripts/smoke_test.py \
 
 Confirm that `alembic current` reports the expected head revision, including
 the login-throttle migration, before smoke testing multiple replicas. Do not
-run the isolated `browser_e2e_responsive.py` against staging: it intentionally
-starts a disposable local service. Use the boundary and API smoke runners for
-the deployed environment, then perform the approved browser check against the
-staging URL. Confirm that browser pages make no requests to third-party static
+run the default `browser_e2e_responsive.py` mode against staging: it starts a
+disposable local service and includes mutation flows. Use
+`python scripts/browser_e2e_responsive.py --remote-base-url https://staging.example.com`
+for a read-only deployed-environment scan. Confirm that browser pages make no requests to third-party static
 hosts and that CSP contains `script-src 'self'`, `style-src 'self'`, and
 `font-src 'self'` without `unsafe-inline` or hash exceptions.
 Also verify cache behavior through the deployment proxy:
@@ -208,14 +208,30 @@ python scripts/runtime_soak.py --base-url http://localhost:8100 --qdrant-url htt
 For a longer handoff soak, raise the duration, for example:
 
 ```bash
-python scripts/runtime_soak.py --base-url http://localhost:8100 --qdrant-url http://localhost:6333 --manual 808d --alarm-code 3000 --duration-seconds 14400 --interval-seconds 30 --max-failures 0 --include-stream
+python scripts/runtime_soak.py --base-url http://localhost:8100 --qdrant-url http://localhost:6333 --manual 808d --alarm-code 3000 --duration-seconds 14400 --interval-seconds 30 --max-failures 0 --include-stream --chat-p95-slo-ms 30000
 ```
 
 The soak command always writes aggregate JSON and Markdown evidence, including
 per-check failure counts and min/average/P50/P95/max latency. Chat and streaming
-checks also read the immutable Answer snapshot back, while vector coverage is
-checked periodically for `808d`, `840d`, and `840dsl`. Override the default
+checks also read the immutable Answer snapshot back. When
+`--chat-p95-slo-ms` is nonzero, both observed chat and stream-chat P95 latency
+must remain at or below the configured threshold. The pilot default is 30,000
+ms, based on the observed 24,961 ms baseline with delivery headroom. Vector
+coverage is checked periodically for `808d`, `840d`, and `840dsl`. Override the default
 paths with `--report-json` and `--report-md` when CI collects artifacts.
+
+### GitHub pilot live gate
+
+The manual `Live RAG Gate` workflow requires a Linux self-hosted runner with
+the `alarm-rag-pilot` label and a `rag-pilot` environment containing
+`ADMIN_INITIAL_PASSWORD`, `QDRANT_API_KEY`, and `ALARM_RAG_TRIGGER_TOKEN`.
+Enter the real HTTPS URL and the absolute deployed checkout path for every
+dispatch. The gate refuses to proceed unless the deployed Git revision matches
+the dispatched revision, then runs strict standalone acceptance, HTTPS/HSTS
+boundary validation, read-only responsive browser E2E, RAG runtime checks, a
+four-hour soak with the 30-second P95 SLO, and optional restart recovery. It deliberately does not pass
+`--check-school-api`, so the School API success path remains outside the pilot
+release gate.
 
 For a controlled local Compose restart-recovery drill after the soak:
 
@@ -239,6 +255,17 @@ and screenshots under `tests_tmp/browser_e2e/`. Require all eight entries in
 the report's `accessibility` section to contain an empty `violations` list.
 Manually confirm that Tab reveals the “跳至主要內容” link, focus remains visible,
 and Escape closes an open modal before approving the staging UI.
+
+For a read-only responsive pass against the deployed pilot URL, provide the
+rotated bootstrap password through `ADMIN_INITIAL_PASSWORD` and run:
+
+```bash
+python scripts/browser_e2e_responsive.py --remote-base-url https://alarm-rag.example.com
+```
+
+Remote mode does not run issue/work-order creation or account password-reset
+flows. It still creates authenticated sessions and screenshots, so retain the
+report only in the ignored `tests_tmp/browser_e2e/` evidence directory.
 
 For a public domain or reverse-proxy boundary check, run the production URL with
 the expected browser origin:

@@ -6,15 +6,25 @@ on:
       base_url:
         description: Deployed Alarm RAG URL reachable from the runner
         required: true
-        default: http://127.0.0.1:8100
+      browser_origin:
+        description: Browser origin for CORS validation; leave empty for same-origin deployments
+        required: false
+        default: ""
       qdrant_url:
         description: Qdrant URL reachable from the runner
         required: true
         default: http://127.0.0.1:6333
+      deployment_dir:
+        description: Absolute path to the deployed checkout on the pilot runner
+        required: true
       soak_seconds:
         description: Runtime soak duration in seconds (14400 = 4 hours)
         required: true
         default: "14400"
+      chat_p95_slo_ms:
+        description: Maximum allowed Ollama chat and stream-chat P95 latency in milliseconds
+        required: true
+        default: "30000"
       run_restart_recovery:
         description: Restart app and Qdrant after soak, then verify recovery
         required: true
@@ -23,13 +33,19 @@ on:
 
 jobs:
   live-rag:
-    runs-on: [self-hosted, alarm-rag-pilot]
+    runs-on: [self-hosted, linux, alarm-rag-pilot]
     environment: rag-pilot
     timeout-minutes: 360
     env:
       ADMIN_INITIAL_PASSWORD: ${{ secrets.ADMIN_INITIAL_PASSWORD }}
       QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
       ALARM_RAG_TRIGGER_TOKEN: ${{ secrets.ALARM_RAG_TRIGGER_TOKEN }}
+      BASE_URL: ${{ inputs.base_url }}
+      BROWSER_ORIGIN: ${{ inputs.browser_origin }}
+      QDRANT_URL: ${{ inputs.qdrant_url }}
+      DEPLOYMENT_DIR: ${{ inputs.deployment_dir }}
+      SOAK_SECONDS: ${{ inputs.soak_seconds }}
+      CHAT_P95_SLO_MS: ${{ inputs.chat_p95_slo_ms }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,6 +56,9 @@ jobs:
 
       - run: python -m pip install -r requirements-dev.txt
 
+      - name: Install browser runtime
+        run: python -m playwright install chromium
+
       - name: Validate required environment secrets
         shell: bash
         run: |
@@ -47,11 +66,41 @@ jobs:
           test -n "$QDRANT_API_KEY"
           test -n "$ALARM_RAG_TRIGGER_TOKEN"
 
+      - name: Verify deployed revision and local prerequisites
+        shell: bash
+        run: |
+          set -o pipefail
+          test -d "$DEPLOYMENT_DIR/.git"
+          test "$(git -C "$DEPLOYMENT_DIR" rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$GITHUB_WORKSPACE/tests_tmp/rag-live-ci"
+          (
+            cd "$DEPLOYMENT_DIR"
+            python scripts/standalone_acceptance.py \
+              --base-url "$BASE_URL" \
+              --manual 808d \
+              --alarm-code 3000
+          ) 2>&1 | tee "$GITHUB_WORKSPACE/tests_tmp/rag-live-ci/standalone-acceptance.log"
+
+      - name: Validate HTTPS reverse-proxy boundary
+        shell: bash
+        run: |
+          set -o pipefail
+          python scripts/production_boundary_check.py \
+            --base-url "$BASE_URL" \
+            --origin "$BROWSER_ORIGIN" \
+            --manual 808d \
+            --alarm-code 3000 \
+            --require-hsts \
+            2>&1 | tee tests_tmp/rag-live-ci/production-boundary.log
+
+      - name: Run read-only responsive browser E2E
+        run: python scripts/browser_e2e_responsive.py --remote-base-url "$BASE_URL"
+
       - name: Run structured live RAG gate
         run: >
           python scripts/rag_runtime_check.py
-          --base-url "${{ inputs.base_url }}"
-          --qdrant-url "${{ inputs.qdrant_url }}"
+          --base-url "$BASE_URL"
+          --qdrant-url "$QDRANT_URL"
           --require-vector-coverage
           --require-reranker
           --report-json tests_tmp/rag-live-ci/report.json
@@ -60,15 +109,16 @@ jobs:
       - name: Run soak and restart-sensitive runtime probes
         run: >
           python scripts/runtime_soak.py
-          --base-url "${{ inputs.base_url }}"
-          --qdrant-url "${{ inputs.qdrant_url }}"
+          --base-url "$BASE_URL"
+          --qdrant-url "$QDRANT_URL"
           --manual 808d
           --alarm-code 3000
-          --duration-seconds "${{ inputs.soak_seconds }}"
+          --duration-seconds "$SOAK_SECONDS"
           --interval-seconds 30
           --max-failures 0
           --include-stream
           --coverage-every 10
+          --chat-p95-slo-ms "$CHAT_P95_SLO_MS"
           --report-json tests_tmp/rag-live-ci/soak-report.json
           --report-md tests_tmp/rag-live-ci/soak-report.md
 
@@ -76,8 +126,9 @@ jobs:
         if: ${{ inputs.run_restart_recovery }}
         run: >
           python scripts/runtime_restart_recovery.py
-          --base-url "${{ inputs.base_url }}"
-          --qdrant-url "${{ inputs.qdrant_url }}"
+          --base-url "$BASE_URL"
+          --qdrant-url "$QDRANT_URL"
+          --project-dir "$DEPLOYMENT_DIR"
           --report-json tests_tmp/rag-live-ci/restart-recovery-report.json
 
       - name: Upload live evidence
@@ -85,4 +136,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rag-live-gate-${{ github.run_id }}
-          path: tests_tmp/rag-live-ci/
+          path: |
+            tests_tmp/rag-live-ci/
+            tests_tmp/browser_e2e/

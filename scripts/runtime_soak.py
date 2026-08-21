@@ -252,6 +252,7 @@ def build_report(
     finished_at: str,
     configured_duration_seconds: int,
     max_failures: int,
+    latency_slos_ms: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     grouped: dict[str, list[SoakResult]] = {}
     for _, result in results:
@@ -269,8 +270,20 @@ def build_report(
             "max_ms": max(elapsed, default=0),
         }
     failures = sum(not result.ok for _, result in results)
+    latency_slos = {}
+    for name, threshold_ms in sorted((latency_slos_ms or {}).items()):
+        metrics = checks.get(name)
+        actual_ms = metrics.get("p95_ms") if metrics else None
+        met = isinstance(actual_ms, int) and actual_ms <= threshold_ms
+        latency_slos[name] = {
+            "metric": "p95_ms",
+            "threshold_ms": threshold_ms,
+            "actual_ms": actual_ms,
+            "met": met,
+        }
+    slo_failures = [name for name, result in latency_slos.items() if not result["met"]]
     return {
-        "status": "pass" if failures <= max_failures else "fail",
+        "status": "pass" if failures <= max_failures and not slo_failures else "fail",
         "started_at": started_at,
         "finished_at": finished_at,
         "base_url": base_url,
@@ -282,6 +295,8 @@ def build_report(
         "failures": failures,
         "max_failures": max_failures,
         "checks": checks,
+        "latency_slos": latency_slos,
+        "slo_failures": slo_failures,
         "failure_details": [
             {"iteration": iteration, "name": result.name, "detail": result.detail, "elapsed_ms": result.elapsed_ms}
             for iteration, result in results
@@ -311,6 +326,20 @@ def markdown_report(report: dict[str, Any]) -> str:
             f"| {name} | {metrics['count']} | {metrics['failures']} | {metrics['min_ms']} | "
             f"{metrics['avg_ms']} | {metrics['p50_ms']} | {metrics['p95_ms']} | {metrics['max_ms']} |"
         )
+    if report.get("latency_slos"):
+        lines.extend([
+            "",
+            "## Latency SLOs",
+            "",
+            "| Check | Metric | Actual ms | Threshold ms | Met |",
+            "|---|---|---:|---:|---|",
+        ])
+        for name, slo in report["latency_slos"].items():
+            actual = slo["actual_ms"] if slo["actual_ms"] is not None else "not observed"
+            lines.append(
+                f"| {name} | {slo['metric']} | {actual} | {slo['threshold_ms']} | "
+                f"{'yes' if slo['met'] else 'no'} |"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -338,6 +367,12 @@ def main() -> int:
     parser.add_argument("--coverage-collections", default="808d,840d,840dsl")
     parser.add_argument("--coverage-every", type=int, default=10, help="check vector coverage every N iterations")
     parser.add_argument("--skip-vector-coverage", action="store_true")
+    parser.add_argument(
+        "--chat-p95-slo-ms",
+        type=int,
+        default=0,
+        help="fail when chat P95 latency exceeds this threshold; 0 disables the SLO",
+    )
     parser.add_argument("--report-json", type=Path, default=Path("tests_tmp/runtime-soak/report.json"))
     parser.add_argument("--report-md", type=Path, default=Path("tests_tmp/runtime-soak/report.md"))
     args = parser.parse_args()
@@ -349,6 +384,8 @@ def main() -> int:
         parser.error("--max-failures cannot be negative")
     if args.coverage_every <= 0:
         parser.error("--coverage-every must be positive")
+    if args.chat_p95_slo_ms < 0:
+        parser.error("--chat-p95-slo-ms cannot be negative")
 
     run_started = time.monotonic()
     started_at = datetime.now(timezone.utc).isoformat()
@@ -356,6 +393,12 @@ def main() -> int:
     coverage_collections = [] if args.skip_vector_coverage else [
         value.strip() for value in args.coverage_collections.split(",") if value.strip()
     ]
+    latency_slos_ms = {}
+    if args.chat_p95_slo_ms:
+        if not args.skip_chat:
+            latency_slos_ms["chat"] = args.chat_p95_slo_ms
+        if args.include_stream:
+            latency_slos_ms["stream-chat"] = args.chat_p95_slo_ms
     login, login_attempts = wait_for_login(client, args.startup_wait_seconds, args.interval_seconds)
     login.detail = f"{login.detail}, attempts={login_attempts}"
     print_result(0, login)
@@ -370,6 +413,7 @@ def main() -> int:
             finished_at=datetime.now(timezone.utc).isoformat(),
             configured_duration_seconds=args.duration_seconds,
             max_failures=args.max_failures,
+            latency_slos_ms=latency_slos_ms,
         )
         report["elapsed_seconds"] = round(time.monotonic() - run_started, 3)
         write_reports(report, args.report_json, args.report_md)
@@ -414,6 +458,7 @@ def main() -> int:
         finished_at=datetime.now(timezone.utc).isoformat(),
         configured_duration_seconds=args.duration_seconds,
         max_failures=args.max_failures,
+        latency_slos_ms=latency_slos_ms,
     )
     report["elapsed_seconds"] = round(time.monotonic() - run_started, 3)
     write_reports(report, args.report_json, args.report_md)
