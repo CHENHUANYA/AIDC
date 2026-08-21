@@ -15,7 +15,7 @@ import os
 import shutil
 import tempfile
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
@@ -45,8 +45,10 @@ from repositories.runtime import postgres_store_enabled
 from services.json_file_store import write_json_atomic
 from services.transactions import postgres_transactional
 from services import work_order_lifecycle
+from services import work_order_issue_sync
 from services import work_order_mutations
 from services import work_order_knowledge
+from services import work_order_reporting
 from services.work_order_import import (
     XlsxArchiveLimits,
     detect_columns,
@@ -186,22 +188,13 @@ def _work_order_patch_permission_error(actor: dict, req: BaseModel) -> str:
 
 
 def _parse_iso(value: str) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except (ValueError, TypeError):
-        return None
+    return work_order_reporting.parse_iso(value)
 
 def _now_like(value: datetime) -> datetime:
-    return datetime.now(value.tzinfo) if value.tzinfo else datetime.now()
+    return work_order_reporting.now_like(value)
 
 def _recent_day_keys(days: int) -> List[str]:
-    now = datetime.now()
-    return [
-        (now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=offset)).strftime("%Y-%m-%d")
-        for offset in range(days - 1, -1, -1)
-    ]
+    return work_order_reporting.recent_day_keys(days)
 
 
 # ----------------- Persistence helpers -----------------
@@ -287,11 +280,12 @@ def _restore_json_issue(snapshot: dict) -> None:
 
 def _visible_orders(actor: dict) -> List[dict]:
     issues_by_id = _issue_map_by_id()
-    return [
-        order
-        for order in _load_orders()
-        if not order.get("deleted_at") and can_view_work_order(actor, order, issues_by_id.get(str(order.get("issue_id") or "")))
-    ]
+    return work_order_reporting.filter_visible_orders(
+        _load_orders(),
+        actor,
+        issues_by_id,
+        can_view_work_order,
+    )
 
 
 def validate_issue_verification(work_order_id: str, user_id: str) -> str:
@@ -311,41 +305,7 @@ def validate_issue_verification(work_order_id: str, user_id: str) -> str:
 
 
 def _load_archived_orders() -> Tuple[List[dict], List[dict]]:
-    if not os.path.isdir(ARCHIVE_DIR):
-        return [], []
-
-    try:
-        archive_names = os.listdir(ARCHIVE_DIR)
-    except OSError as exc:
-        logger.warning("Work order archive listing failed: %s", exc)
-        return [], []
-    archive_files = sorted(
-        (name for name in archive_names if name.startswith("work_orders_archive_") and name.endswith(".json")),
-        reverse=True,
-    )
-    archives: List[dict] = []
-    orders: List[dict] = []
-    for name in archive_files:
-        path = os.path.join(ARCHIVE_DIR, name)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                archived = json.load(f)
-        except (json.JSONDecodeError, OSError, UnicodeError):
-            archived = []
-        if not isinstance(archived, list):
-            archived = []
-        try:
-            updated_at = datetime.fromtimestamp(os.path.getmtime(path)).isoformat()
-        except OSError:
-            continue
-        valid_orders = [order for order in archived if isinstance(order, dict)]
-        archives.append({
-            "file": name,
-            "count": len(valid_orders),
-            "updated_at": updated_at,
-        })
-        orders.extend({**order, "archive_file": name} for order in valid_orders)
-    return archives, orders
+    return work_order_reporting.load_archived_orders(ARCHIVE_DIR, logger)
 
 
 # ----------------- Models -----------------
@@ -526,68 +486,21 @@ def sync_work_order_from_issue(issue: dict, user_id: str = "", note: str = "") -
     else:
         orders = _load_orders()
     synced_order = None
-    now = datetime.now().isoformat()
-    for index, order in enumerate(orders):
+    for order in orders:
         if order.get("id") != work_order_id:
             continue
-
-        before_order = dict(order)
-        previous_status = order.get("status", "pending")
-        issue_status = str(issue.get("status") or "")
-        next_status = previous_status
-        changed_fields = []
-
-        if issue_status == "verified":
-            validation_error = validate_issue_verification(work_order_id, user_id)
-            if validation_error:
-                return None
-            next_status = "verified"
-            if order.get("verified_by") != user_id:
-                order["verified_by"] = user_id
-                changed_fields.append("verified_by")
-        elif issue_status == "cancelled":
-            if _status_transition_error(previous_status, "cancelled"):
-                return None
-            next_status = "cancelled"
-        elif issue_status == "open" and previous_status in ("completed", "verified"):
-            next_status = "assigned" if order.get("assigned_to") else "pending"
-            for field in ["verified_by", "completed_at"]:
-                if order.get(field):
-                    order[field] = ""
-                    changed_fields.append(field)
-
-        if next_status != previous_status:
-            order["status"] = next_status
-            changed_fields.append("status")
-            if next_status in ("completed", "verified"):
-                order["completed_at"] = order.get("completed_at") or now
-            else:
-                order["completed_at"] = ""
-
-        clean_note = note.strip()
-        if clean_note:
-            existing_notes = str(order.get("notes") or "").strip()
-            note_line = f"[Operator follow-up] {clean_note}"
-            order["notes"] = f"{existing_notes}\n{note_line}".strip() if existing_notes else note_line
-            changed_fields.append("notes")
-
-        if not changed_fields:
-            synced_order = order
-            break
-
-        order["updated_at"] = now
-        order["updated_by"] = user_id
-        _append_order_history(
+        synced_order = work_order_issue_sync.apply_issue_update(
             order,
-            "issue_synced",
-            user_id,
-            sorted(set(changed_fields)),
-            previous_status,
-            order.get("status", previous_status),
-            field_changes(before_order, order, changed_fields),
+            issue,
+            work_order_id=work_order_id,
+            user_id=user_id,
+            note=note,
+            now=datetime.now().isoformat(),
+            validate_verification=validate_issue_verification,
+            status_transition_error=_status_transition_error,
+            append_history=_append_order_history,
+            calculate_field_changes=field_changes,
         )
-        orders[index] = order
-        synced_order = order
         break
 
     if synced_order is not None:
@@ -709,101 +622,14 @@ async def api_page_orders(
 async def api_order_stats(actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
-    orders = _visible_orders(actor)
-    today = datetime.now().strftime("%Y-%m-%d")
-    recent_days = _recent_day_keys(7)
-
-    by_status = {s: 0 for s in STATUSES}
-    by_priority = {p: 0 for p in PRIORITIES}
-    by_manual: dict[str, int] = {}
-    by_source: dict[str, int] = {}
-    by_machine: dict[str, int] = {}
-    created_daily = {day: 0 for day in recent_days}
-    completed_daily = {day: 0 for day in recent_days}
-    open_orders = 0
-    assigned_orders = 0
-    unassigned_open = 0
-    overdue_open = 0
-    by_kb_review_status: dict[str, int] = {status: 0 for status in KB_REVIEW_STATUSES}
-    for o in orders:
-        by_status[o["status"]] = by_status.get(o["status"], 0) + 1
-        by_priority[o["priority"]] = by_priority.get(o["priority"], 0) + 1
-        manual = o.get("manual") or "unknown"
-        source = o.get("source") or "unknown"
-        machine = (o.get("machine_id") or "").strip() or "Unspecified"
-        by_manual[manual] = by_manual.get(manual, 0) + 1
-        by_source[source] = by_source.get(source, 0) + 1
-        by_machine[machine] = by_machine.get(machine, 0) + 1
-        review_status = str(o.get("kb_review_status") or "not_ready")
-        by_kb_review_status[review_status] = by_kb_review_status.get(review_status, 0) + 1
-
-        created_at = _parse_iso(o.get("created_at", ""))
-        completed_at = _parse_iso(o.get("completed_at", ""))
-        if created_at:
-            created_key = created_at.strftime("%Y-%m-%d")
-            if created_key in created_daily:
-                created_daily[created_key] += 1
-        if completed_at and o["status"] in ("completed", "verified"):
-            completed_key = completed_at.strftime("%Y-%m-%d")
-            if completed_key in completed_daily:
-                completed_daily[completed_key] += 1
-
-        if o["status"] not in ("completed", "verified", "cancelled"):
-            open_orders += 1
-            if not (o.get("assigned_to") or "").strip():
-                unassigned_open += 1
-            if created_at and (_now_like(created_at) - created_at) > timedelta(hours=24):
-                overdue_open += 1
-        if o["status"] in ("assigned", "in_progress"):
-            assigned_orders += 1
-
-    completion_times = []
-    for o in orders:
-        if o["status"] in ("completed", "verified") and o.get("completed_at"):
-            created = _parse_iso(o.get("created_at", ""))
-            completed = _parse_iso(o.get("completed_at", ""))
-            if created and completed:
-                completion_times.append((completed - created).total_seconds() / 3600)
-
-    avg_hours = round(sum(completion_times) / len(completion_times), 1) if completion_times else 0
-    median_hours = round(sorted(completion_times)[len(completion_times) // 2], 1) if completion_times else 0
-    today_created = sum(1 for o in orders if o.get("created_at", "").startswith(today))
-    today_completed = sum(
-        1
-        for o in orders
-        if o.get("completed_at", "").startswith(today) and o["status"] in ("completed", "verified")
+    return work_order_reporting.build_order_stats(
+        _visible_orders(actor),
+        statuses=STATUSES,
+        priorities=PRIORITIES,
+        knowledge_review_statuses=KB_REVIEW_STATUSES,
+        status_labels=STATUS_LABELS,
+        priority_labels=PRIORITY_LABELS,
     )
-    pending_verification = by_status.get("completed", 0)
-    verified_orders = by_status.get("verified", 0)
-    closed_orders = verified_orders + by_status.get("cancelled", 0)
-    completion_rate = round((verified_orders / len(orders)) * 100, 1) if orders else 0
-    top_machines = sorted(by_machine.items(), key=lambda item: (-item[1], item[0]))[:5]
-
-    return {
-        "total": len(orders),
-        "by_status": by_status,
-        "by_priority": by_priority,
-        "by_manual": by_manual,
-        "by_source": by_source,
-        "avg_hours": avg_hours,
-        "median_hours": median_hours,
-        "today_created": today_created,
-        "today_completed": today_completed,
-        "open_orders": open_orders,
-        "assigned_orders": assigned_orders,
-        "unassigned_open": unassigned_open,
-        "overdue_open": overdue_open,
-        "closed_orders": closed_orders,
-        "pending_verification": pending_verification,
-        "completion_rate": completion_rate,
-        "daily_created": [{"date": day, "count": created_daily[day]} for day in recent_days],
-        "daily_completed": [{"date": day, "count": completed_daily[day]} for day in recent_days],
-        "top_machines": [{"machine_id": machine, "count": count} for machine, count in top_machines],
-        "by_kb_review_status": by_kb_review_status,
-        "pending_knowledge_review": by_kb_review_status.get("pending_review", 0),
-        "status_labels": STATUS_LABELS,
-        "priority_labels": PRIORITY_LABELS,
-    }
 
 
 @router.get(
@@ -815,18 +641,13 @@ async def api_work_order_archive(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     archives, orders = _load_archived_orders()
     issues_by_id = _issue_map_by_id()
-    orders = [
-        order
-        for order in orders
-        if can_view_work_order(actor, order, issues_by_id.get(str(order.get("issue_id") or "")))
-    ]
-    orders = sorted(orders, key=lambda order: order.get("completed_at") or order.get("updated_at") or "", reverse=True)
-    return {
-        "status": "ok",
-        "archives": archives,
-        "orders": orders,
-        "total": len(orders),
-    }
+    return work_order_reporting.build_archive_response(
+        archives,
+        orders,
+        actor=actor,
+        issues_by_id=issues_by_id,
+        can_view=can_view_work_order,
+    )
 
 
 @router.get(
