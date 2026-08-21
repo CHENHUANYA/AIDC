@@ -21,6 +21,7 @@ RUNTIME_IGNORE_ENTRIES = {
 GENERATED_WORK_ENTRIES = {
     "docx_work/",
     "outputs/",
+    "deliverables/",
 }
 NON_RUNTIME_IMAGE_ENTRIES = {
     ".git/",
@@ -53,14 +54,12 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertTrue(RUNTIME_IGNORE_ENTRIES <= gitignore)
         self.assertTrue(RUNTIME_IGNORE_ENTRIES <= dockerignore)
 
-    def test_generated_document_work_is_ignored_but_deliverables_remain_explicit(self):
+    def test_generated_document_work_and_deliverables_are_ignored(self):
         gitignore = ignore_entries(ROOT / ".gitignore")
         dockerignore = ignore_entries(ROOT / ".dockerignore")
 
         self.assertTrue(GENERATED_WORK_ENTRIES <= gitignore)
         self.assertTrue(GENERATED_WORK_ENTRIES <= dockerignore)
-        self.assertNotIn("deliverables/", gitignore)
-        self.assertIn("deliverables/", dockerignore)
 
     def test_source_control_and_validation_assets_are_not_packaged(self):
         dockerignore = ignore_entries(ROOT / ".dockerignore")
