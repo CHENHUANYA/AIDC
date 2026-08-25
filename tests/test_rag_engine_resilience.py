@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import rag_engine
+from signed_pickle import dump_signed_pickle
 
 
 class Embedder:
@@ -29,6 +30,7 @@ def bare_engine() -> rag_engine.AlarmRAGEngine:
     engine.store = MagicMock()
     engine.sections = []
     engine.bm25 = None
+    engine.title_bm25 = None
     engine.embedder = None
     engine.reranker = None
     engine.model_error = "model unavailable"
@@ -38,6 +40,7 @@ def bare_engine() -> rag_engine.AlarmRAGEngine:
     engine.reranker_calls = 0
     engine.last_reranker_error = ""
     engine.last_retrieval_mode = "none"
+    engine.retrieval_strategy = "hybrid"
     return engine
 
 
@@ -66,6 +69,13 @@ def test_model_cache_policy_and_resolution(tmp_path, monkeypatch):
     os.utime(second, (2, 2))
     assert rag_engine._latest_snapshot_path("remote/model") == str(second)
     assert rag_engine._resolve_model_path("remote/model", True) == str(second)
+
+
+def test_retrieval_strategy_configuration_is_explicit_and_safe(monkeypatch):
+    monkeypatch.setenv("RAG_RETRIEVAL_STRATEGY", "title_bm25")
+    assert rag_engine.configured_retrieval_strategy() == "title_bm25"
+    monkeypatch.setenv("RAG_RETRIEVAL_STRATEGY", "unsupported")
+    assert rag_engine.configured_retrieval_strategy() == "hybrid"
 
 
 def test_model_loaders_cache_instances_and_degrade_on_failure(monkeypatch):
@@ -110,8 +120,7 @@ def test_engine_initialization_and_index_loading(tmp_path, monkeypatch):
     assert missing.model_error == rag_engine.OFFLINE_MODEL_ERROR
 
     payload = {"bm25": "index", "sections": [{"text": "alpha"}]}
-    with (tmp_path / "bm25_demo.pkl").open("wb") as file:
-        pickle.dump(payload, file)
+    dump_signed_pickle(tmp_path / "bm25_demo.pkl", payload)
     loaded = rag_engine.AlarmRAGEngine("demo")
     assert loaded.ready is True
     assert loaded.next_id == 1
@@ -135,6 +144,28 @@ def test_vector_coverage_handles_success_empty_and_store_failure():
     assert failed["vector_error"] == "offline"
     engine.sections = []
     assert engine.vector_coverage()["vector_coverage_percent"] == 100
+
+
+def test_traceability_coverage_requires_stable_source_and_section_locators():
+    engine = object.__new__(rag_engine.AlarmRAGEngine)
+    engine.sections = [
+        {
+            "source_id": "manual-v1",
+            "source_file": "manual.pdf",
+            "section_id": "manual-v1:s1",
+            "locator": "p.58#alarm-3000",
+            "official_source": True,
+        },
+        {"source_id": "workorder-1", "source_file": "workorder", "section_id": "workorder-1:s1"},
+    ]
+
+    coverage = engine.traceability_coverage()
+
+    assert coverage["traceable_sections"] == 1
+    assert coverage["traceability_coverage_percent"] == 50
+    assert coverage["official_source_sections"] == 1
+    assert coverage["other_source_sections"] == 1
+    assert coverage["traceability_ready"] is False
 
 
 def test_vector_replacement_batches_progress_and_honors_cancellation():

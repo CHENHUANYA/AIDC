@@ -286,16 +286,24 @@ def test_health_reports_each_engine_without_exposing_internal_state() -> None:
         ready=True,
         sections=[{"private": "content"}],
         retrieval_runtime_status=Mock(return_value={"backend": "bm25"}),
+        traceability_coverage=Mock(
+            return_value={"traceable_sections": 1, "traceability_ready": True}
+        ),
     )
     with (
         patch.object(stats_routes, "engines", {"808d": engine}),
         patch.object(stats_routes, "_last_llm_source", return_value="ollama"),
         patch.object(stats_routes, "_public_model_cache_status", return_value={"ready": True}),
     ):
-        result = asyncio.run(stats_routes.health())
+        result = asyncio.run(stats_routes.health_details({"user_id": "admin01", "role": "admin"}))
 
     assert result["collections"] == {
-        "808d": {"ready": True, "alarms_indexed": 1, "retrieval_runtime": {"backend": "bm25"}}
+        "808d": {
+            "ready": True,
+            "alarms_indexed": 1,
+            "retrieval_runtime": {"backend": "bm25"},
+            "traceability": {"traceable_sections": 1, "traceability_ready": True},
+        }
     }
 
 

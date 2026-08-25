@@ -59,14 +59,46 @@ class BaseVectorStore:
 
 
 def get_store():
-    backend = os.getenv("VECTOR_STORE", "chroma").lower()
+    backend = os.getenv("VECTOR_STORE", "qdrant").strip().lower()
     if backend == "qdrant":
         try:
             import qdrant_client  # noqa: F401
         except Exception as e:
             raise RuntimeError("VECTOR_STORE=qdrant but qdrant-client not installed") from e
         return QdrantStore()
-    return ChromaStore()
+    if backend in {"none", "disabled"}:
+        return DisabledVectorStore()
+    if backend == "chroma":
+        raise RuntimeError(
+            "VECTOR_STORE=chroma is disabled because the bundled Chroma dependency has known code-execution "
+            "vulnerabilities; use VECTOR_STORE=qdrant"
+        )
+    raise RuntimeError(f"Unsupported VECTOR_STORE backend: {backend}")
+
+
+class DisabledVectorStore(BaseVectorStore):
+    """BM25-only backend used by offline checks without a vector service."""
+
+    def ping(self) -> None:
+        return None
+
+    def ensure_collection(self, collection: str) -> None:
+        return None
+
+    def delete_collection(self, collection: str) -> None:
+        return None
+
+    def add(self, collection: str, texts: List[str], embeddings: List[list], metadatas: List[dict], ids: List[str]):
+        _validate_batch_inputs(texts, embeddings, metadatas, ids)
+
+    def query(self, collection: str, query_embeddings: List[list], n_results: int, where: Optional[dict] = None) -> dict:
+        return {"documents": [[]], "ids": [[]], "metadatas": [[]]}
+
+    def delete(self, collection: str, where: Optional[dict] = None) -> None:
+        return None
+
+    def count(self, collection: str) -> int:
+        return 0
 
 
 class ChromaStore(BaseVectorStore):
@@ -117,6 +149,7 @@ class QdrantStore(BaseVectorStore):
         from qdrant_client.http import models as qm
         host = os.getenv("QDRANT_HOST", "localhost")
         port = env_int("QDRANT_PORT", 6333, minimum=1, maximum=65535)
+        timeout = env_int("QDRANT_CLIENT_TIMEOUT_SECONDS", 5, minimum=1)
         use_https = os.getenv("QDRANT_HTTPS", "false").strip().lower() in {"1", "true", "yes", "on"}
         api_key = secret_value("QDRANT_API_KEY")
         if not api_key:
@@ -145,9 +178,21 @@ class QdrantStore(BaseVectorStore):
                     category=UserWarning,
                     module=r"qdrant_client\..*",
                 )
-                self.client = QdrantClient(host=host, port=port, api_key=api_key, https=False)
+                self.client = QdrantClient(
+                    host=host,
+                    port=port,
+                    api_key=api_key,
+                    https=False,
+                    timeout=timeout,
+                )
         else:
-            self.client = QdrantClient(host=host, port=port, api_key=api_key, https=True)
+            self.client = QdrantClient(
+                host=host,
+                port=port,
+                api_key=api_key,
+                https=True,
+                timeout=timeout,
+            )
         self.qm = qm
 
     def ping(self) -> None:

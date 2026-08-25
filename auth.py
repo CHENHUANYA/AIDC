@@ -288,8 +288,18 @@ def login_rate_limit_error(retry_after: int) -> JSONResponse:
     )
 
 
-def _login_rate_key(username: str) -> str:
-    return normalize_login_key(username)
+def login_client_identity(request: Request) -> str:
+    """Use the ASGI peer identity so one source cannot lock an account for everyone."""
+    host = str(request.client.host if request.client else "").strip().casefold()
+    return host or "unknown"
+
+
+def _login_rate_key(username: str, client_identity: str | None = None) -> str:
+    normalized_username = normalize_login_key(username)
+    if client_identity is None:
+        return normalized_username
+    identity_digest = hashlib.sha256(client_identity.encode("utf-8")).hexdigest()[:16]
+    return f"{normalized_username}:{identity_digest}"
 
 
 def _login_rate_state() -> LoginThrottleState:
@@ -322,8 +332,13 @@ def _prune_login_rate_state(current: float, *, incoming_key: str | None = None) 
     _login_last_pruned_at = state.last_pruned_at
 
 
-def login_retry_after(username: str, *, now: float | None = None) -> int:
-    key = _login_rate_key(username)
+def login_retry_after(
+    username: str,
+    *,
+    client_identity: str | None = None,
+    now: float | None = None,
+) -> int:
+    key = _login_rate_key(username, client_identity)
     if postgres_store_enabled() and now is None:
         return postgres_login_throttles.retry_after(key, LOGIN_FAILURE_WINDOW_SECONDS)
     current = time.monotonic() if now is None else now
@@ -335,8 +350,13 @@ def login_retry_after(username: str, *, now: float | None = None) -> int:
         return result
 
 
-def record_login_failure(username: str, *, now: float | None = None) -> int:
-    key = _login_rate_key(username)
+def record_login_failure(
+    username: str,
+    *,
+    client_identity: str | None = None,
+    now: float | None = None,
+) -> int:
+    key = _login_rate_key(username, client_identity)
     if postgres_store_enabled() and now is None:
         return postgres_login_throttles.record_failure(
             key,
@@ -353,8 +373,8 @@ def record_login_failure(username: str, *, now: float | None = None) -> int:
         return result
 
 
-def clear_login_failures(username: str) -> None:
-    key = _login_rate_key(username)
+def clear_login_failures(username: str, *, client_identity: str | None = None) -> None:
+    key = _login_rate_key(username, client_identity)
     if postgres_store_enabled():
         postgres_login_throttles.clear(key)
         return
@@ -617,7 +637,8 @@ async def api_revoke_session(token_prefix: str, actor: dict = Depends(get_actor)
     },
 )
 async def login(req: LoginRequest, request: Request, response: Response):
-    retry_after = login_retry_after(req.username)
+    client_identity = login_client_identity(request)
+    retry_after = login_retry_after(req.username, client_identity=client_identity)
     if retry_after:
         runtime_metrics.record_auth("throttled")
         return login_rate_limit_error(retry_after)
@@ -625,21 +646,21 @@ async def login(req: LoginRequest, request: Request, response: Response):
     users = load_users()
     user = users.get(req.username.strip())
     if not user or not user.get("active", True):
-        retry_after = record_login_failure(req.username)
+        retry_after = record_login_failure(req.username, client_identity=client_identity)
         if retry_after:
             runtime_metrics.record_auth("throttled")
             return login_rate_limit_error(retry_after)
         runtime_metrics.record_auth("failure")
         return authentication_error("Invalid username or password")
     if not verify_password(req.password, str(user.get("password_hash") or "")):
-        retry_after = record_login_failure(req.username)
+        retry_after = record_login_failure(req.username, client_identity=client_identity)
         if retry_after:
             runtime_metrics.record_auth("throttled")
             return login_rate_limit_error(retry_after)
         runtime_metrics.record_auth("failure")
         return authentication_error("Invalid username or password")
 
-    clear_login_failures(req.username)
+    clear_login_failures(req.username, client_identity=client_identity)
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     created_at = now.isoformat()
@@ -666,7 +687,8 @@ async def login_config():
         "status": "ok",
         "production": production_mode(),
         "initial_password_configured": not initial_password_is_placeholder(),
-        "bootstrap_users": bootstrap_user_summaries(),
+        # Keep the response shape stable without publishing valid account IDs.
+        "bootstrap_users": [],
     }
 
 

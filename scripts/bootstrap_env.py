@@ -16,6 +16,7 @@ EXAMPLE_PATH = ROOT / ".env.example"
 PLACEHOLDERS = {
     "ADMIN_INITIAL_PASSWORD": "change-me-now",
     "ALARM_RAG_TRIGGER_TOKEN": "replace-with-a-random-trigger-token",
+    "ALARM_RAG_INDEX_SIGNING_KEY": "replace-with-a-long-random-index-signing-key",
     "N8N_ENCRYPTION_KEY": "replace-with-a-long-random-string",
     "QDRANT_API_KEY": "replace-with-a-long-random-qdrant-api-key",
 }

@@ -33,6 +33,7 @@ NON_RUNTIME_IMAGE_ENTRIES = {
 SECRET_PLACEHOLDERS = {
     "ADMIN_INITIAL_PASSWORD": "change-me-now",
     "ALARM_RAG_TRIGGER_TOKEN": "replace-with-a-random-trigger-token",
+    "ALARM_RAG_INDEX_SIGNING_KEY": "replace-with-a-long-random-index-signing-key",
     "N8N_ENCRYPTION_KEY": "replace-with-a-long-random-string",
     "QDRANT_API_KEY": "replace-with-a-long-random-qdrant-api-key",
 }
@@ -119,7 +120,7 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertIn("actions/setup-node@v4", text)
         self.assertIn("node --test", text)
         self.assertIn("python -m pip_audit", text)
-        self.assertIn("--ignore-vuln PYSEC-2026-311", text)
+        self.assertNotIn("--ignore-vuln", text)
         self.assertIn("docker compose --env-file .env config --quiet", text)
         self.assertIn("docker-compose.postgresql-secrets.yml", text)
 

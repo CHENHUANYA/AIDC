@@ -71,7 +71,7 @@ def test_answer_lookup_rejects_other_non_privileged_user():
 def test_handle_chat_persists_answer_snapshot(tmp_path):
     class Engine:
         ready = True
-        tokenizer_version = "unicode-domain-v1"
+        tokenizer_version = "unicode-domain-v2"
 
         def retrieve(self, _query, top_k=4):
             del top_k

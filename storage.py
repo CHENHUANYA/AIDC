@@ -60,6 +60,31 @@ def generate_doc_id(filename: str, source_hash: str) -> str:
     return f"{slugify(filename)}-{source_hash[:8]}"
 
 
+def source_locator(section: Dict[str, Any], ordinal: int) -> str:
+    """Return a compact, human-readable locator within one source document."""
+    page = str(section.get("page") or "").strip()
+    code = str(section.get("code") or "").strip()
+    parts = [f"p.{page}" if page and page != "0" else ""]
+    parts.append(f"alarm-{code}" if code else f"section-{ordinal + 1}")
+    return "#".join(part for part in parts if part)
+
+
+def generate_section_id(source_id: str, section: Dict[str, Any], ordinal: int) -> str:
+    """Generate a deterministic section identity for one version of a source."""
+    identity = "\x1f".join(
+        [
+            source_id,
+            str(ordinal),
+            str(section.get("code") or ""),
+            str(section.get("page") or ""),
+            str(section.get("title") or ""),
+            str(section.get("text") or ""),
+        ]
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    return f"{source_id}:s{ordinal + 1:05d}-{digest}"
+
+
 def document_revision(document: Dict[str, Any]) -> str:
     existing = str(document.get("revision") or "")
     if existing:
@@ -300,13 +325,26 @@ def list_collections_summary() -> List[Dict[str, Any]]:
 
 def apply_doc_meta(sections: List[dict], doc_meta: Dict[str, Any]) -> List[dict]:
     enriched = []
-    for s in sections:
+    source_id = str(doc_meta.get("source_id") or doc_meta["doc_id"])
+    source_file = str(doc_meta.get("filename") or "")
+    for ordinal, s in enumerate(sections):
         meta = dict(s)
         meta["doc_id"] = doc_meta["doc_id"]
-        meta["source_file"] = doc_meta.get("filename")
+        meta["source_id"] = source_id
+        meta["source_file"] = source_file
+        meta.setdefault("source", source_file)
         meta["source_hash"] = doc_meta.get("source_hash")
         meta["imported_at"] = doc_meta.get("imported_at", now_iso())
         meta["version"] = doc_meta.get("version", 1)
+        meta["section_id"] = generate_section_id(source_id, meta, ordinal)
+        meta["locator"] = source_locator(meta, ordinal)
+        meta["official_source"] = bool(doc_meta.get("official_source", False))
+        if doc_meta.get("publisher"):
+            meta["publisher"] = str(doc_meta["publisher"])
+        if doc_meta.get("document_title"):
+            meta["document_title"] = str(doc_meta["document_title"])
+        if doc_meta.get("edition"):
+            meta["edition"] = str(doc_meta["edition"])
         if "type" not in meta:
             meta["type"] = "alarm" if meta.get("code") else "general"
         enriched.append(meta)

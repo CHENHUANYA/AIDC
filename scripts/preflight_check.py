@@ -19,6 +19,7 @@ load_project_env()
 PLACEHOLDER_VALUES = {
     "change-me-now",
     "replace-with-a-random-trigger-token",
+    "replace-with-a-long-random-index-signing-key",
     "replace-with-a-long-random-string",
     "replace-with-a-long-random-qdrant-api-key",
 }
@@ -43,7 +44,13 @@ def env_value(name: str) -> str:
 def check_env(results: list[Check]) -> None:
     env_path = ROOT / ".env"
     record(results, "env:file", env_path.exists(), ".env exists" if env_path.exists() else ".env is missing")
-    required = ["ADMIN_INITIAL_PASSWORD", "ALARM_RAG_TRIGGER_TOKEN", "N8N_ENCRYPTION_KEY", "QDRANT_API_KEY"]
+    required = [
+        "ADMIN_INITIAL_PASSWORD",
+        "ALARM_RAG_TRIGGER_TOKEN",
+        "ALARM_RAG_INDEX_SIGNING_KEY",
+        "N8N_ENCRYPTION_KEY",
+        "QDRANT_API_KEY",
+    ]
     for key in required:
         value = env_value(key)
         if not value:
@@ -117,6 +124,28 @@ def check_paths(results: list[Check]) -> None:
         record(results, f"path:{name}", path.exists(), str(path))
 
 
+def check_index_signatures(results: list[Check]) -> None:
+    from signed_pickle import SignedPickleError, verify_signed_pickle
+
+    index_dir = ROOT / "alarm_db"
+    paths = sorted(index_dir.glob("bm25_*.pkl")) if index_dir.is_dir() else []
+    if not paths:
+        record(results, "index-signatures", True, "no local BM25 indexes")
+        return
+    failures = []
+    for path in paths:
+        try:
+            verify_signed_pickle(path)
+        except (OSError, SignedPickleError) as exc:
+            failures.append(f"{path.name}: {exc}")
+    record(
+        results,
+        "index-signatures",
+        not failures,
+        f"verified {len(paths)} index(es)" if not failures else "; ".join(failures),
+    )
+
+
 def check_compose(results: list[Check]) -> None:
     compose_file = ROOT / "docker-compose.yml"
     record(results, "compose:file", compose_file.exists(), "docker-compose.yml exists" if compose_file.exists() else "missing")
@@ -127,6 +156,7 @@ def check_compose(results: list[Check]) -> None:
         "ALARM_RAG_ENV",
         "ADMIN_INITIAL_PASSWORD",
         "ALARM_RAG_TRIGGER_TOKEN",
+        "ALARM_RAG_INDEX_SIGNING_KEY",
         "DB_PATH: /app/alarm_db",
         "HF_HOME: /app/hf_cache",
         "VECTOR_STORE",
@@ -163,7 +193,13 @@ def check_compose(results: list[Check]) -> None:
             expected in compose_text,
             "configured" if expected in compose_text else "missing",
         )
-    for key in ["N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", "N8N_RUNNERS_ENABLED"]:
+    for key in [
+        "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS",
+        "N8N_RUNNERS_ENABLED",
+        "DB_SQLITE_POOL_SIZE",
+        "N8N_BLOCK_ENV_ACCESS_IN_NODE",
+        "N8N_GIT_NODE_DISABLE_BARE_REPOS",
+    ]:
         record(
             results,
             f"compose:{key}",
@@ -234,6 +270,7 @@ def main() -> int:
     check_bind_addresses(results)
     check_qdrant_transport(results)
     check_paths(results)
+    check_index_signatures(results)
     check_compose(results)
     check_n8n_workflow(results)
     check_model_cache(results, args.require_model_cache)

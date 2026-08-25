@@ -99,20 +99,15 @@ def check_page(runner: RoleSmoke, path: str, expected: str | list[str]) -> None:
 def check_login_config(runner: RoleSmoke) -> None:
     code, data = runner.request("/auth/login-config")
     users = data.get("bootstrap_users") if isinstance(data, dict) else None
-    has_roles = {
-        user.get("role")
-        for user in users or []
-        if isinstance(user, dict)
-    }
     ok = (
         code == 200
         and isinstance(data, dict)
         and data.get("status") == "ok"
         and isinstance(data.get("production"), bool)
         and isinstance(data.get("initial_password_configured"), bool)
-        and {"supervisor", "admin"}.issubset(has_roles)
+        and users == []
     )
-    detail = f"HTTP {code}, roles={','.join(sorted(has_roles)) if has_roles else '-'}"
+    detail = f"HTTP {code}, account_ids_disclosed={bool(users)}"
     runner.record("login:config", ok, detail)
 
 

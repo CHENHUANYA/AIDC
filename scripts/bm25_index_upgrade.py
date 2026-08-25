@@ -3,12 +3,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
-import pickle
 import shutil
 import subprocess
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
+from signed_pickle import dump_signed_pickle, load_signed_pickle, signature_path
 
 
 DEFAULT_INDEX_DIR = ROOT / "alarm_db"
@@ -62,10 +60,9 @@ def report_path(path: Path) -> str:
 
 
 def load_trusted_index(path: Path) -> dict[str, Any]:
-    """Load a locally generated trusted pickle. Never pass an untrusted file."""
+    """Load an authenticated, locally generated pickle index."""
     try:
-        with path.open("rb") as file:
-            payload = pickle.load(file)
+        payload = load_signed_pickle(path)
     except Exception as exc:
         raise IndexUpgradeError(f"cannot load trusted index: {exc}") from exc
     if not isinstance(payload, dict):
@@ -96,22 +93,11 @@ def upgraded_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def write_pickle_atomic(path: Path, payload: dict[str, Any]) -> str:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    temp_path = Path(temp_name)
-    try:
-        with os.fdopen(descriptor, "wb") as file:
-            pickle.dump(payload, file)
-            file.flush()
-            os.fsync(file.fileno())
-        verified = load_trusted_index(temp_path)
-        if verified.get("tokenizer_version") != BM25_TOKENIZER_VERSION:
-            raise IndexUpgradeError("staged index tokenizer version verification failed")
-        new_hash = sha256_file(temp_path)
-        os.replace(temp_path, path)
-        return new_hash
-    finally:
-        temp_path.unlink(missing_ok=True)
+    dump_signed_pickle(path, payload)
+    verified = load_trusted_index(path)
+    if verified.get("tokenizer_version") != BM25_TOKENIZER_VERSION:
+        raise IndexUpgradeError("staged index tokenizer version verification failed")
+    return sha256_file(path)
 
 
 def allocate_backup_dir(backup_root: Path) -> Path:
@@ -177,6 +163,7 @@ def upgrade_indexes(
         backup_dir = allocate_backup_dir(backup_root)
         for path, _, _ in inspected:
             shutil.copy2(path, backup_dir / path.name)
+            shutil.copy2(signature_path(path), backup_dir / signature_path(path).name)
         try:
             for path, payload, base in inspected:
                 new_hash = write_pickle_atomic(path, upgraded_payload(payload))
@@ -184,6 +171,7 @@ def upgrade_indexes(
         except Exception as exc:
             for path, _, _ in inspected:
                 shutil.copy2(backup_dir / path.name, path)
+                shutil.copy2(backup_dir / signature_path(path).name, signature_path(path))
             raise IndexUpgradeError(f"upgrade failed; all indexes restored from backup: {exc}") from exc
 
         manifest = {
@@ -234,7 +222,7 @@ def markdown_report(report: dict[str, Any]) -> str:
         lines.extend(["", f"Error: `{report['error']}`"])
     lines.extend([
         "",
-        "> This tool only accepts trusted, locally generated pickle indexes. Never use it with an untrusted pickle file.",
+        "> This tool accepts only HMAC-authenticated, locally generated pickle indexes.",
         "",
     ])
     return "\n".join(lines)

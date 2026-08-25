@@ -608,7 +608,7 @@ def retrieval_citations(collection: str, docs: list[dict]) -> list[dict]:
         text = str(doc.get("text") or "")
         identity = "\x1f".join([
             collection,
-            str(meta.get("doc_id") or ""),
+            str(meta.get("section_id") or meta.get("doc_id") or ""),
             str(meta.get("source") or meta.get("source_file") or ""),
             str(meta.get("code") or ""),
             str(meta.get("page") or ""),
@@ -622,7 +622,15 @@ def retrieval_citations(collection: str, docs: list[dict]) -> list[dict]:
             "page": meta.get("page", ""),
             "source": str(meta.get("source") or ""),
             "source_file": str(meta.get("source_file") or ""),
+            "source_hash": str(meta.get("source_hash") or ""),
             "doc_id": str(meta.get("doc_id") or ""),
+            "source_id": str(meta.get("source_id") or meta.get("doc_id") or ""),
+            "section_id": str(meta.get("section_id") or ""),
+            "locator": str(meta.get("locator") or ""),
+            "official_source": bool(meta.get("official_source", False)),
+            "publisher": str(meta.get("publisher") or ""),
+            "document_title": str(meta.get("document_title") or ""),
+            "edition": str(meta.get("edition") or ""),
             "kind": str(meta.get("kind") or meta.get("type") or ""),
             "excerpt": re.sub(r"\s+", " ", text).strip()[:300],
         })

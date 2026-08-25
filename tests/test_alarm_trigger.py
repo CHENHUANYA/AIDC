@@ -130,6 +130,21 @@ class AlarmTriggerRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("WO-NEW", logs[0]["work_order_id"])
         self.assertEqual("evt-new", pending[0]["external_event_id"])
 
+    async def test_pending_alarms_are_consumed_once_per_user(self):
+        pending = [{"alarm_code": "3000", "manual": "808d"}]
+        with (
+            patch.object(alarm_routes, "pending_alarms", pending),
+            patch.object(alarm_routes, "_pending_alarm_cursors", {}),
+            patch.object(alarm_routes, "_pending_alarm_sequence", 0),
+        ):
+            first_user = await alarm_routes.get_pending_alarms({"user_id": "operator01", "role": "operator"})
+            first_user_again = await alarm_routes.get_pending_alarms({"user_id": "operator01", "role": "operator"})
+            second_user = await alarm_routes.get_pending_alarms({"user_id": "supervisor01", "role": "supervisor"})
+
+        self.assertEqual([{"alarm_code": "3000", "manual": "808d"}], first_user["alarms"])
+        self.assertEqual([], first_user_again["alarms"])
+        self.assertEqual(first_user["alarms"], second_user["alarms"])
+
 
 if __name__ == "__main__":
     unittest.main()

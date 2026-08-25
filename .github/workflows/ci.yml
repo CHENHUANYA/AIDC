@@ -63,6 +63,7 @@ jobs:
           cp .env.postgresql.example .env.postgresql
           sed -i 's/^ADMIN_INITIAL_PASSWORD=.*/ADMIN_INITIAL_PASSWORD=ci-admin-password-change-me-1234567890/' .env
           sed -i 's/^ALARM_RAG_TRIGGER_TOKEN=.*/ALARM_RAG_TRIGGER_TOKEN=ci-trigger-token-change-me-1234567890/' .env
+          sed -i 's/^ALARM_RAG_INDEX_SIGNING_KEY=.*/ALARM_RAG_INDEX_SIGNING_KEY=ci-index-signing-key-change-me-1234567890/' .env
           sed -i 's/^N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=ci-n8n-encryption-key-change-me-1234567890/' .env
           sed -i 's/^QDRANT_API_KEY=.*/QDRANT_API_KEY=ci-qdrant-api-key-change-me-1234567890/' .env
           sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-postgres-password-change-me-1234567890/' .env.postgresql
@@ -84,12 +85,9 @@ jobs:
 
       - name: Audit runtime dependencies
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        # Chroma is used only through the embedded PersistentClient. PYSEC-2026-311
-        # affects the separately launched, network-facing `chroma run` server.
         run: >
           python -m pip_audit
           --requirement requirements-postgresql.txt
-          --ignore-vuln PYSEC-2026-311
 
       - name: Alembic migration SQL dry-run
         shell: bash
@@ -135,6 +133,7 @@ jobs:
           cp .env.postgresql.example .env.postgresql
           sed -i 's/^ADMIN_INITIAL_PASSWORD=.*/ADMIN_INITIAL_PASSWORD=ci-admin-password-change-me-1234567890/' .env
           sed -i 's/^ALARM_RAG_TRIGGER_TOKEN=.*/ALARM_RAG_TRIGGER_TOKEN=ci-trigger-token-change-me-1234567890/' .env
+          sed -i 's/^ALARM_RAG_INDEX_SIGNING_KEY=.*/ALARM_RAG_INDEX_SIGNING_KEY=ci-index-signing-key-change-me-1234567890/' .env
           sed -i 's/^N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=ci-n8n-encryption-key-change-me-1234567890/' .env
           sed -i 's/^QDRANT_API_KEY=.*/QDRANT_API_KEY=ci-qdrant-api-key-change-me-1234567890/' .env
           sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-postgres-password-change-me-1234567890/' .env.postgresql

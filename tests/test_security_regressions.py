@@ -377,7 +377,7 @@ def test_vector_store_readiness_hides_connection_error_details():
         assert stats_routes._vector_store_readiness_status() == "unavailable"
 
 
-def test_health_does_not_disclose_upstream_service_urls():
+def test_public_health_is_minimal_and_details_do_not_disclose_upstream_service_urls():
     with (
         patch.object(stats_routes, "engines", {}),
         patch.object(
@@ -400,8 +400,9 @@ def test_health_does_not_disclose_upstream_service_urls():
         ),
         patch.object(stats_routes, "_last_llm_source", return_value="none"),
     ):
-        response = asyncio.run(stats_routes.health())
+        response = asyncio.run(stats_routes.health_details({"user_id": "admin01", "role": "admin"}))
 
+    assert asyncio.run(stats_routes.health()) == {"status": "ok"}
     assert "ollama_url" not in response
     assert "school_api_base_url" not in response
     assert response["model_cache"] == {
@@ -415,6 +416,19 @@ def test_health_does_not_disclose_upstream_service_urls():
             },
         ],
     }
+
+
+def test_health_details_requires_admin():
+    unauthenticated = asyncio.run(stats_routes.health_details({"user_id": "", "role": ""}))
+    forbidden = asyncio.run(
+        stats_routes.health_details({"user_id": "operator01", "role": "operator"})
+    )
+
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.headers["www-authenticate"] == "Bearer"
+    assert json.loads(unauthenticated.body) == {"status": "error", "message": "Not authenticated"}
+    assert forbidden.status_code == 403
+    assert json.loads(forbidden.body) == {"status": "error", "message": "Permission denied"}
 
 
 def test_qdrant_client_receives_required_api_key():
@@ -441,7 +455,13 @@ def test_qdrant_client_receives_required_api_key():
     ):
         QdrantStore()
 
-    client_class.assert_called_once_with(host="qdrant", port=6333, api_key="secret-key", https=False)
+    client_class.assert_called_once_with(
+        host="qdrant",
+        port=6333,
+        api_key="secret-key",
+        https=False,
+        timeout=5,
+    )
 
 
 def test_qdrant_https_is_explicitly_opt_in():
@@ -473,7 +493,13 @@ def test_qdrant_https_is_explicitly_opt_in():
     ):
         QdrantStore()
 
-    client_class.assert_called_once_with(host="qdrant.example.com", port=443, api_key="secret-key", https=True)
+    client_class.assert_called_once_with(
+        host="qdrant.example.com",
+        port=443,
+        api_key="secret-key",
+        https=True,
+        timeout=5,
+    )
 
 
 def test_qdrant_rejects_api_key_over_untrusted_remote_http():
@@ -519,5 +545,14 @@ def test_qdrant_and_postgresql_container_boundaries_are_declared():
     assert "${N8N_BIND_ADDRESS:-127.0.0.1}" in compose
     assert "QDRANT__SERVICE__API_KEY" in compose
     assert "QDRANT_API_KEY: ${QDRANT_API_KEY:?" in compose
+    assert "read_only: true" in compose
+    assert compose.count("no-new-privileges:true") == 3
+    assert compose.count("- ALL") >= 3
+    assert "condition: service_healthy" in compose
+    assert "DB_SQLITE_POOL_SIZE" in compose
+    assert 'N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"' in compose
+    assert 'N8N_GIT_NODE_DISABLE_BARE_REPOS: "true"' in compose
+    assert "./n8n_data:/app/n8n_data" not in compose
+    assert "./qdrant_data:/app/qdrant_data" not in compose
     assert "USER alarm-rag" in base_dockerfile
     assert "USER alarm-rag" in postgres_dockerfile

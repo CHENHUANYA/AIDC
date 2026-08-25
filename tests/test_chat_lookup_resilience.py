@@ -19,7 +19,7 @@ DOC = {
 
 class EmptyEngine:
     ready = True
-    tokenizer_version = "unicode-domain-v1"
+    tokenizer_version = "unicode-domain-v2"
 
     def retrieve(self, _query, top_k=4):
         del top_k
@@ -37,7 +37,7 @@ def stream_kwargs() -> dict:
         "temperature": 0.1,
         "max_tokens": 64,
         "created_by": "operator01",
-        "tokenizer_version": "unicode-domain-v1",
+        "tokenizer_version": "unicode-domain-v2",
         "start_ts": time.time(),
         "retrieval_ms": 1.0,
     }

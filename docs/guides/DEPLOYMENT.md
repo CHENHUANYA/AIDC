@@ -7,11 +7,23 @@ Delivery closeout status is tracked in `docs/reports/DELIVERY_RISK_STATUS.md`.
 1. Install Docker Desktop.
 2. Copy `.env.example` to `.env`.
 3. Set `ADMIN_INITIAL_PASSWORD`, `N8N_ENCRYPTION_KEY`,
-   `ALARM_RAG_TRIGGER_TOKEN`, and `QDRANT_API_KEY`, or generate them:
+   `ALARM_RAG_TRIGGER_TOKEN`, `ALARM_RAG_INDEX_SIGNING_KEY`, and
+   `QDRANT_API_KEY`, or generate them:
 
 ```powershell
 python scripts/bootstrap_env.py --show-admin-password
 ```
+
+If the checkout already contains locally generated `alarm_db/bm25_*.pkl`
+indexes, authenticate their current bytes before the first hardened startup:
+
+```powershell
+python scripts/sign_bm25_indexes.py --trust-existing-files
+```
+
+The signing command never deserializes the existing pickle files. Runtime and
+maintenance tools reject an index when its `.hmac` sidecar is missing or does
+not match.
 
 If `alarm_db/users.json` already exists and you need to align the existing
 seeded role accounts with `.env`, run:
@@ -57,18 +69,23 @@ Before sharing, recording, or moving a demo runtime into production, rotate loca
 deployment secrets:
 
 ```bash
+docker compose stop alarm_rag
 python scripts/bootstrap_env.py --rotate-secrets --reset-bootstrap-passwords --show-admin-password
-docker compose up -d --force-recreate alarm_rag n8n
+python scripts/sign_bm25_indexes.py --trust-existing-files
+docker compose up -d --force-recreate alarm_rag qdrant n8n
 ```
 
 This regenerates `ADMIN_INITIAL_PASSWORD`, `ALARM_RAG_TRIGGER_TOKEN`,
-`N8N_ENCRYPTION_KEY`, and `QDRANT_API_KEY` in `.env`, then resets seeded
+`ALARM_RAG_INDEX_SIGNING_KEY`, `N8N_ENCRYPTION_KEY`, and `QDRANT_API_KEY` in
+`.env`, then resets seeded
 role-account passwords to the new admin password. Recreate `qdrant`
 and `alarm_rag` together so both receive the new API key. Re-import or
 update n8n workflows after rotation so they use
 the new `ALARM_RAG_TRIGGER_TOKEN`. If real n8n credentials are stored, changing
 `N8N_ENCRYPTION_KEY` can make old encrypted credentials unreadable; export or
-recreate them during the rotation window.
+recreate them during the rotation window. Keep `alarm_rag` stopped between the
+index-key rotation and re-signing so an old process cannot write a sidecar with
+the previous key.
 
 External provider credentials such as `SCHOOL_API_KEY` cannot be generated
 locally. Replace them with a newly issued provider key, then run:
@@ -299,15 +316,16 @@ Check whether the running service has the current login UI/API:
 curl http://localhost:8100/auth/login-config
 ```
 
-The response should include `bootstrap_users` with `supervisor` and `admin`.
+The response should include an empty `bootstrap_users` list. Account IDs are
+intentionally not published by this unauthenticated endpoint.
 If this path returns 404 after a code update, restart Alarm RAG:
 
 ```bash
 docker compose up -d --build alarm_rag
 ```
 
-Role cards on the login page fill the user ID only. Enter the password from
-`ADMIN_INITIAL_PASSWORD`. To reset existing seeded users to the current `.env`
+Enter the assigned user ID and password. Bootstrap account IDs are not shown on
+the public login page. To reset existing seeded users to the current `.env`
 password, run:
 
 ```bash
@@ -408,12 +426,22 @@ Write a portable cache manifest:
 python scripts/model_cache.py manifest
 ```
 
-The `/health` response includes `model_cache.ready` and per-model cache paths.
+The public `/health` endpoint returns only liveness status. Authenticated
+administrators can use `/health/details` to inspect model cache and collection
+runtime status without publishing deployment metadata anonymously.
+
+The application container uses a read-only root filesystem, drops all Linux
+capabilities, and cannot gain new privileges. Its writable mounts are limited
+to application-owned data, backups, and model cache; Qdrant and n8n state are
+not mounted into the application container. Run `scripts/data_maintenance.py`
+from the host checkout when a coordinated full-runtime backup is required.
 
 If `VECTOR_STORE=qdrant` but Qdrant is unavailable during a direct local
 `uvicorn` run, Alarm RAG keeps serving BM25-only lookup/chat/ingest and logs a
 warning. Start the compose stack for full vector search, or set
-`VECTOR_STORE=chroma` for a local single-process fallback.
+`VECTOR_STORE=none` for an explicit BM25-only local mode. The Chroma backend is
+disabled because the affected dependency versions have known code-execution
+vulnerabilities.
 
 The base compose file explicitly starts `uvicorn`, while the PostgreSQL overlay
 replaces that command with `alembic upgrade head && exec uvicorn ...`. This

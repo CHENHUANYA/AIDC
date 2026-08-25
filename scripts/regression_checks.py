@@ -130,19 +130,14 @@ def check_health(runner: Runner) -> bool:
 def check_login_config(runner: Runner) -> None:
     code, data = runner.request_json("/auth/login-config")
     users = data.get("bootstrap_users") if isinstance(data, dict) else []
-    roles = {
-        str(user.get("role") or "")
-        for user in users
-        if isinstance(user, dict)
-    }
     ok = (
         code == 200
         and data.get("status") == "ok"
         and isinstance(data.get("production"), bool)
         and isinstance(data.get("initial_password_configured"), bool)
-        and {"admin", "supervisor"}.issubset(roles)
+        and users == []
     )
-    runner.record("auth:login-config", ok, f"HTTP {code}, roles={','.join(sorted(roles)) or '-'}")
+    runner.record("auth:login-config", ok, f"HTTP {code}, account_ids_disclosed={bool(users)}")
 
 
 def check_lookup_metadata(runner: Runner, manual: str, alarm_code: str) -> None:

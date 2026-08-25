@@ -1,6 +1,5 @@
 import json
 import os
-import pickle
 import shutil
 import tempfile
 import threading
@@ -33,6 +32,7 @@ from api_schemas import (
 )
 from auth import actor_id, actor_role, get_actor, is_admin
 from config_values import env_float, env_int
+from signed_pickle import load_signed_pickle
 from repositories.postgres_content import ConcurrentContentUpdateError
 from storage import (
     DB_PATH,
@@ -78,12 +78,7 @@ def _load_rebuild_sections(collection_name: str) -> list[dict]:
     pkl_path = f"{DB_PATH}/bm25_{collection_name}.pkl"
     if not os.path.exists(pkl_path):
         raise FileNotFoundError("Index file not found")
-    try:
-        with open(pkl_path, "rb") as file:
-            data = json.load(file)
-    except Exception:
-        with open(pkl_path, "rb") as file:
-            data = pickle.load(file)
+    data = load_signed_pickle(pkl_path)
     return data.get("sections", [])
 
 

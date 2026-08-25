@@ -34,7 +34,7 @@ from app_context import (
     engines,
     error_log,
 )
-from auth import actor_id, actor_role, get_actor
+from auth import actor_id, actor_role, api_error, get_actor
 from db.session import get_engine
 from observability import runtime_metrics
 from rag_engine import model_cache_status
@@ -349,13 +349,32 @@ def _postgres_pool_metrics() -> dict:
         return {"enabled": True, "status": "unavailable"}
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get("/health", response_model=StatusOkResponse)
 async def health():
+    """Minimal unauthenticated liveness probe."""
+    return {"status": "ok"}
+
+
+@router.get(
+    "/health/details",
+    response_model=HealthResponse,
+    responses=API_ERROR_RESPONSES,
+)
+async def health_details(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return JSONResponse(
+            status_code=401,
+            content=api_error("Not authenticated"),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if actor_role(actor) != "admin":
+        return JSONResponse(status_code=403, content=api_error("Permission denied"))
     collections = {
         name: {
             "ready": engine.ready,
             "alarms_indexed": len(engine.sections),
             "retrieval_runtime": engine.retrieval_runtime_status(),
+            "traceability": engine.traceability_coverage(),
         }
         for name, engine in engines.items()
     }
@@ -405,7 +424,7 @@ def _database_readiness_status() -> str:
 
 
 def _vector_store_readiness_status() -> str:
-    if os.getenv("VECTOR_STORE", "chroma").strip().lower() != "qdrant":
+    if os.getenv("VECTOR_STORE", "qdrant").strip().lower() != "qdrant":
         return "not-required"
     try:
         get_store().ping()

@@ -42,6 +42,12 @@ Set `ADMIN_INITIAL_PASSWORD` before the first startup. Existing `alarm_db/users.
 python scripts/phase0_closeout_check.py
 python scripts/bm25_index_upgrade.py
 python scripts/rag_offline_evaluation.py
+python scripts/rag_retrieval_benchmark.py --scope development
+python scripts/rag_blind_set.py --help
+python scripts/rag_annotation_review.py init --annotator member-a --output tests_tmp/annotations/member-a.json
+python scripts/rag_source_traceability.py
+python scripts/rag_experiment_freeze.py verify docs/reports/RAG_EXPERIMENT_FREEZE_FINAL.json --require-vector-report
+python scripts/vector_snapshot_rebuild.py --qdrant-host localhost
 python scripts/rag_answer_quality_evaluation.py
 python scripts/rag_runtime_check.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000
 python scripts/standalone_acceptance.py --base-url http://localhost:8100 --manual 808d --alarm-code 3000
@@ -62,6 +68,11 @@ python scripts/preflight_check.py --require-model-cache
 python scripts/model_cache.py check
 python scripts/model_cache.py doctor
 ```
+
+For low-latency alarm-description retrieval, set
+`RAG_RETRIEVAL_STRATEGY=title_bm25`. The default `hybrid` remains appropriate
+for broader procedural/document queries. Always freeze the selected strategy
+before the final held-out run.
 
 For a release-style pass that also creates and verifies a real runtime backup:
 
@@ -89,5 +100,10 @@ python scripts/data_maintenance.py restore-runtime --backup backups/YYYY-MM-DD_H
 
 - [Documentation index](docs/README.md)
 - [Deployment guide](docs/guides/DEPLOYMENT.md)
+- [RAG retrieval benchmark](docs/guides/RAG_RETRIEVAL_BENCHMARK.md)
+- [RAG evaluation governance and source annotation](docs/guides/RAG_EVALUATION_GOVERNANCE.md)
+- [Independent annotation review packs](docs/guides/RAG_ANNOTATION_REVIEW_PACKS.md)
+- [RAG source traceability](docs/guides/RAG_SOURCE_TRACEABILITY.md)
+- [Qdrant vector snapshot rebuild](docs/guides/VECTOR_SNAPSHOT_REBUILD.md)
 - [PostgreSQL operations index](docs/operations/POSTGRESQL_OPERATIONS_INDEX.md)
 - [Delivery risk status](docs/reports/DELIVERY_RISK_STATUS.md)

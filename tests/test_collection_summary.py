@@ -29,7 +29,7 @@ class CollectionSummaryTests(unittest.TestCase):
         class FakeEngine:
             ready = True
             sections = [{"text": "a"}, {"text": "b"}]
-            tokenizer_version = "unicode-domain-v1"
+            tokenizer_version = "unicode-domain-v2"
 
             def vector_coverage(self):
                 return {
@@ -50,7 +50,7 @@ class CollectionSummaryTests(unittest.TestCase):
         self.assertEqual(1, summary["vector_points"])
         self.assertEqual(50, summary["vector_coverage_percent"])
         self.assertFalse(summary["vector_ready"])
-        self.assertEqual("unicode-domain-v1", summary["bm25_tokenizer_version"])
+        self.assertEqual("unicode-domain-v2", summary["bm25_tokenizer_version"])
 
 
 if __name__ == "__main__":

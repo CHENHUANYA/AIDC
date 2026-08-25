@@ -554,7 +554,15 @@ class CitationResponse(BaseModel):
     page: Any = ""
     source: str = ""
     source_file: str = ""
+    source_hash: str = ""
     doc_id: str = ""
+    source_id: str = ""
+    section_id: str = ""
+    locator: str = ""
+    official_source: bool = False
+    publisher: str = ""
+    document_title: str = ""
+    edition: str = ""
     kind: str = ""
     excerpt: str = ""
 
@@ -668,6 +676,7 @@ class CollectionHealthResponse(BaseModel):
     ready: bool
     alarms_indexed: int
     retrieval_runtime: dict[str, Any]
+    traceability: dict[str, Any]
 
 
 class HealthResponse(StatusOkResponse):

@@ -36,6 +36,13 @@ def test_current_user_without_session_returns_401_with_bearer_challenge() -> Non
     assert response.json() == {"status": "error", "message": "Not authenticated"}
 
 
+def test_public_login_config_does_not_disclose_bootstrap_account_ids() -> None:
+    response = asyncio.run(request("GET", "/auth/login-config"))
+
+    assert response.status_code == 200
+    assert response.json()["bootstrap_users"] == []
+
+
 def test_browser_login_uses_http_only_cookie_and_hashes_json_session_at_rest() -> None:
     user = {
         "user_id": "operator01",
@@ -97,7 +104,7 @@ def test_browser_login_uses_http_only_cookie_and_hashes_json_session_at_rest() -
 
 def test_repeated_invalid_logins_are_rate_limited() -> None:
     username = "rate-limited-user"
-    auth.clear_login_failures(username)
+    auth.clear_login_failures(username, client_identity="127.0.0.1")
     with (
         patch.object(auth, "LOGIN_FAILURE_LIMIT", 2),
         patch.object(auth, "LOGIN_LOCKOUT_SECONDS", 60),
@@ -113,7 +120,7 @@ def test_repeated_invalid_logins_are_rate_limited() -> None:
         third = asyncio.run(
             request("POST", "/auth/login", json={"username": username, "password": "invalid-password"})
         )
-    auth.clear_login_failures(username)
+    auth.clear_login_failures(username, client_identity="127.0.0.1")
 
     assert first.status_code == 401
     assert second.status_code == 429
@@ -124,6 +131,24 @@ def test_repeated_invalid_logins_are_rate_limited() -> None:
         call("throttled"),
         call("throttled"),
     ]
+
+
+def test_login_throttle_isolated_by_client_identity() -> None:
+    username = "shared-account"
+    first_source = "198.51.100.10"
+    second_source = "198.51.100.11"
+    with (
+        patch.object(auth, "LOGIN_FAILURE_LIMIT", 2),
+        patch.object(auth, "LOGIN_LOCKOUT_SECONDS", 60),
+        patch.object(auth, "postgres_store_enabled", return_value=False),
+    ):
+        assert auth.record_login_failure(username, client_identity=first_source, now=100.0) == 0
+        assert auth.record_login_failure(username, client_identity=first_source, now=101.0) == 60
+        assert auth.login_retry_after(username, client_identity=first_source, now=102.0) == 59
+        assert auth.login_retry_after(username, client_identity=second_source, now=102.0) == 0
+
+    auth.clear_login_failures(username, client_identity=first_source)
+    auth.clear_login_failures(username, client_identity=second_source)
 
 
 def test_login_rate_state_evicts_oldest_key_at_capacity() -> None:

@@ -4,15 +4,36 @@ from unittest.mock import patch
 from pathlib import Path
 
 from scripts import preflight_check
+from signed_pickle import dump_signed_pickle
 
 
 class PreflightCheckTests(unittest.TestCase):
+    def test_index_signature_preflight_rejects_unsigned_and_accepts_signed(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            index_dir = root / "alarm_db"
+            index_dir.mkdir()
+            index = index_dir / "bm25_demo.pkl"
+            index.write_bytes(b"unsigned")
+            with patch.object(preflight_check, "ROOT", root):
+                results = []
+                preflight_check.check_index_signatures(results)
+                self.assertEqual("FAIL", results[0].status)
+
+                dump_signed_pickle(index, {"sections": []})
+                results = []
+                preflight_check.check_index_signatures(results)
+                self.assertEqual("PASS", results[0].status)
+
     def test_placeholder_deployment_secrets_are_failures(self):
         with patch.dict(
             os.environ,
             {
                 "ADMIN_INITIAL_PASSWORD": "change-me-now",
                 "ALARM_RAG_TRIGGER_TOKEN": "replace-with-a-random-trigger-token",
+                "ALARM_RAG_INDEX_SIGNING_KEY": "replace-with-a-long-random-index-signing-key",
                 "N8N_ENCRYPTION_KEY": "replace-with-a-long-random-string",
                 "QDRANT_API_KEY": "replace-with-a-long-random-qdrant-api-key",
             },
@@ -24,6 +45,7 @@ class PreflightCheckTests(unittest.TestCase):
         statuses = {item.name: item.status for item in results}
         self.assertEqual("FAIL", statuses["env:ADMIN_INITIAL_PASSWORD"])
         self.assertEqual("FAIL", statuses["env:ALARM_RAG_TRIGGER_TOKEN"])
+        self.assertEqual("FAIL", statuses["env:ALARM_RAG_INDEX_SIGNING_KEY"])
         self.assertEqual("FAIL", statuses["env:N8N_ENCRYPTION_KEY"])
         self.assertEqual("FAIL", statuses["env:QDRANT_API_KEY"])
 
@@ -33,6 +55,7 @@ class PreflightCheckTests(unittest.TestCase):
             {
                 "ADMIN_INITIAL_PASSWORD": "configured-admin-password",
                 "ALARM_RAG_TRIGGER_TOKEN": "configured-trigger-token",
+                "ALARM_RAG_INDEX_SIGNING_KEY": "configured-index-signing-key-with-at-least-32-bytes",
                 "N8N_ENCRYPTION_KEY": "configured-n8n-key",
                 "QDRANT_API_KEY": "configured-qdrant-key",
             },
@@ -44,6 +67,7 @@ class PreflightCheckTests(unittest.TestCase):
         statuses = {item.name: item.status for item in results}
         self.assertEqual("PASS", statuses["env:ADMIN_INITIAL_PASSWORD"])
         self.assertEqual("PASS", statuses["env:ALARM_RAG_TRIGGER_TOKEN"])
+        self.assertEqual("PASS", statuses["env:ALARM_RAG_INDEX_SIGNING_KEY"])
         self.assertEqual("PASS", statuses["env:N8N_ENCRYPTION_KEY"])
         self.assertEqual("PASS", statuses["env:QDRANT_API_KEY"])
 
@@ -72,6 +96,7 @@ services:
       ALARM_RAG_ENV: production
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-change-me-now}
       ALARM_RAG_TRIGGER_TOKEN: ${ALARM_RAG_TRIGGER_TOKEN:-}
+      ALARM_RAG_INDEX_SIGNING_KEY: ${ALARM_RAG_INDEX_SIGNING_KEY:?required}
       DB_PATH: /app/alarm_db
       HF_HOME: /app/hf_cache
       VECTOR_STORE: ${VECTOR_STORE:-qdrant}
@@ -92,6 +117,9 @@ services:
     environment:
       N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: true
       N8N_RUNNERS_ENABLED: true
+      DB_SQLITE_POOL_SIZE: 2
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_GIT_NODE_DISABLE_BARE_REPOS: "true"
 """
         results = []
         with patch.object(preflight_check, "ROOT", Path(".")):

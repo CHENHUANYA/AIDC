@@ -164,7 +164,7 @@ def check_stream_chat(client: SoakClient, manual: str, alarm_code: str) -> SoakR
 
 def check_vector_coverage(client: SoakClient, qdrant_url: str, collections: list[str], timeout: int) -> SoakResult:
     started = time.monotonic()
-    code, health, _ = client.request_json("/health")
+    code, health, _ = client.request_json("/health/details")
     health_collections = health.get("collections", {}) if isinstance(health, dict) else {}
     api_key = os.environ.get("QDRANT_API_KEY", "").strip()
     details = []

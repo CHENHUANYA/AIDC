@@ -5,6 +5,7 @@ import hashlib
 import logging
 import os
 import secrets
+import threading
 
 from fastapi import APIRouter, Depends, Header
 
@@ -36,6 +37,9 @@ logger = logging.getLogger("alarm_rag.alarm")
 router = APIRouter()
 postgres_alarms = PostgresAlarmRepository()
 rag_answers = RagAnswerRepository()
+_pending_alarm_lock = threading.Lock()
+_pending_alarm_sequence = 0
+_pending_alarm_cursors: dict[str, int] = {}
 
 
 def _normalize_severity(value: Optional[str], fallback: str) -> str:
@@ -101,12 +105,33 @@ def _duplicate_response(entry: dict, issue: dict | None, work_order: dict | None
 
 
 def _publish_alarm(entry: dict) -> None:
-    pending_alarms.append(entry)
+    global _pending_alarm_sequence
+    with _pending_alarm_lock:
+        _pending_alarm_sequence += 1
+        pending_alarms.append({**entry, "_queue_sequence": _pending_alarm_sequence})
+        if len(pending_alarms) > 20:
+            pending_alarms.pop(0)
     alarm_history.append(entry)
-    if len(pending_alarms) > 20:
-        pending_alarms.pop(0)
     if len(alarm_history) > 1000:
         alarm_history.pop(0)
+
+
+def _pending_alarms_for_actor(user_id: str) -> list[dict]:
+    """Return each queued alarm once per user without draining other users' queue."""
+    global _pending_alarm_sequence
+    with _pending_alarm_lock:
+        for entry in pending_alarms:
+            if not isinstance(entry.get("_queue_sequence"), int):
+                _pending_alarm_sequence += 1
+                entry["_queue_sequence"] = _pending_alarm_sequence
+        cursor = _pending_alarm_cursors.get(user_id, 0)
+        queued = [entry for entry in pending_alarms if entry["_queue_sequence"] > cursor]
+        if queued:
+            _pending_alarm_cursors[user_id] = max(entry["_queue_sequence"] for entry in queued)
+        return [
+            {key: value for key, value in entry.items() if key != "_queue_sequence"}
+            for entry in queued
+        ]
 
 
 @router.post(
@@ -264,8 +289,7 @@ async def trigger_alarm(
     responses={200: {"model": PendingAlarmsResponse}, **API_ERROR_RESPONSES},
 )
 async def get_pending_alarms(actor: dict = Depends(get_actor)):
-    if not actor_id(actor):
+    user_id = actor_id(actor)
+    if not user_id:
         return {"status": "error", "message": "Not authenticated"}
-    alarms = pending_alarms.copy()
-    pending_alarms.clear()
-    return {"alarms": alarms}
+    return {"alarms": _pending_alarms_for_actor(user_id)}
