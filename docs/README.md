@@ -20,7 +20,6 @@
 - [`guides/`](guides/)：部署、維護、Demo 與驗收操作。
 - [`operations/`](operations/)：PostgreSQL runbook、檢查表、風險矩陣與維運索引。
 - [`plans/`](plans/)：尚在規劃或分階段執行的工作。
-- [下一階段本機工作計畫](plans/NEXT_LOCAL_WORK_PLAN_2026-06-24.md)
 - [`reference/`](reference/)：模擬資料與廠商整合規格。
 - [`reports/`](reports/)：已執行工作的狀態、交付證據與品質評測紀錄。
 
