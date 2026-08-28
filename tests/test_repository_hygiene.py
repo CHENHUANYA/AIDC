@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -117,12 +118,23 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertIn("windows-latest", text)
         self.assertIn("coverage run -m pytest -q", text)
         self.assertIn("coverage report", text)
-        self.assertIn("actions/setup-node@v4", text)
+        self.assertIn("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", text)
         self.assertIn("node --test", text)
         self.assertIn("python -m pip_audit", text)
         self.assertNotIn("--ignore-vuln", text)
         self.assertIn("docker compose --env-file .env config --quiet", text)
         self.assertIn("docker-compose.postgresql-secrets.yml", text)
+
+    def test_github_actions_are_pinned_to_immutable_commits(self):
+        uses = []
+        for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
+            uses.extend(
+                re.findall(r"uses:\s+(actions/[^@\s]+)@([^\s#]+)", workflow.read_text(encoding="utf-8"))
+            )
+
+        self.assertTrue(uses)
+        for action, revision in uses:
+            self.assertRegex(revision, r"^[0-9a-f]{40}$", msg=f"{action} is not pinned")
 
     def test_browser_security_headers_are_enabled(self):
         text = (ROOT / "main.py").read_text(encoding="utf-8")

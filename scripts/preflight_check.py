@@ -182,6 +182,12 @@ def check_compose(results: list[Check]) -> None:
         "http://localhost:8000/ready" in compose_text,
         "configured" if "http://localhost:8000/ready" in compose_text else "missing",
     )
+    record(
+        results,
+        "compose:n8n-healthcheck",
+        "http://127.0.0.1:5678/healthz" in compose_text,
+        "configured" if "http://127.0.0.1:5678/healthz" in compose_text else "missing",
+    )
     for service, expected in {
         "alarm-port-bind": "${ALARM_RAG_BIND_ADDRESS:-127.0.0.1}:${ALARM_RAG_PORT:-8100}:8000",
         "qdrant-port-bind": "${QDRANT_BIND_ADDRESS:-127.0.0.1}:${QDRANT_HTTP_PORT:-6333}:6333",
@@ -199,6 +205,9 @@ def check_compose(results: list[Check]) -> None:
         "DB_SQLITE_POOL_SIZE",
         "N8N_BLOCK_ENV_ACCESS_IN_NODE",
         "N8N_GIT_NODE_DISABLE_BARE_REPOS",
+        "N8N_DIAGNOSTICS_ENABLED",
+        "N8N_PERSONALIZATION_ENABLED",
+        "N8N_VERSION_NOTIFICATIONS_ENABLED",
     ]:
         record(
             results,
@@ -206,6 +215,12 @@ def check_compose(results: list[Check]) -> None:
             key in compose_text,
             "configured" if key in compose_text else "missing",
         )
+    record(
+        results,
+        "compose:QDRANT__TELEMETRY_DISABLED",
+        "QDRANT__TELEMETRY_DISABLED" in compose_text,
+        "configured" if "QDRANT__TELEMETRY_DISABLED" in compose_text else "missing",
+    )
     try:
         completed = subprocess.run(
             ["docker", "compose", "config", "--quiet"],

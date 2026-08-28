@@ -96,7 +96,7 @@ def test_alembic_revision_and_compose_overlay_exist():
     assert (ROOT / "alembic.ini").exists()
     assert (ROOT / "migrations" / "versions" / "20260630_0001_initial_transactional_schema.py").exists()
     compose = (ROOT / "docker-compose.postgresql.yml").read_text(encoding="utf-8")
-    assert "postgres:17.10" in compose
+    assert "postgres:17.10@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317" in compose
     assert "condition: service_healthy" in compose
     assert "127.0.0.1" in compose
     assert "shared_preload_libraries=pg_stat_statements" in compose

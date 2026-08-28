@@ -120,6 +120,12 @@ services:
       DB_SQLITE_POOL_SIZE: 2
       N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
       N8N_GIT_NODE_DISABLE_BARE_REPOS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      QDRANT__TELEMETRY_DISABLED: "true"
+    healthcheck:
+      test: ["CMD", "node", "-e", "http://127.0.0.1:5678/healthz"]
 """
         results = []
         with patch.object(preflight_check, "ROOT", Path(".")):
@@ -137,6 +143,7 @@ services:
         self.assertEqual("PASS", statuses["compose:volume:./alarm_db"])
         self.assertEqual("PASS", statuses["compose:volume:./qdrant_data"])
         self.assertEqual("PASS", statuses["compose:alarm-healthcheck"])
+        self.assertEqual("PASS", statuses["compose:n8n-healthcheck"])
         self.assertEqual("PASS", statuses["compose:alarm-port-bind"])
         self.assertEqual("PASS", statuses["compose:qdrant-port-bind"])
         self.assertEqual("PASS", statuses["compose:n8n-port-bind"])

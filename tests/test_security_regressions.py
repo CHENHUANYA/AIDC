@@ -545,6 +545,8 @@ def test_qdrant_and_postgresql_container_boundaries_are_declared():
     assert "${N8N_BIND_ADDRESS:-127.0.0.1}" in compose
     assert "QDRANT__SERVICE__API_KEY" in compose
     assert "QDRANT_API_KEY: ${QDRANT_API_KEY:?" in compose
+    assert "qdrant/qdrant:v1.16.1@sha256:" in compose
+    assert "n8nio/n8n:1.123.68@sha256:" in compose
     assert "read_only: true" in compose
     assert compose.count("no-new-privileges:true") == 3
     assert compose.count("- ALL") >= 3
@@ -552,7 +554,14 @@ def test_qdrant_and_postgresql_container_boundaries_are_declared():
     assert "DB_SQLITE_POOL_SIZE" in compose
     assert 'N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"' in compose
     assert 'N8N_GIT_NODE_DISABLE_BARE_REPOS: "true"' in compose
+    assert "QDRANT__TELEMETRY_DISABLED" in compose
+    assert "N8N_DIAGNOSTICS_ENABLED" in compose
+    assert "N8N_PERSONALIZATION_ENABLED" in compose
+    assert "N8N_VERSION_NOTIFICATIONS_ENABLED" in compose
+    assert "http://127.0.0.1:5678/healthz" in compose
     assert "./n8n_data:/app/n8n_data" not in compose
     assert "./qdrant_data:/app/qdrant_data" not in compose
     assert "USER alarm-rag" in base_dockerfile
     assert "USER alarm-rag" in postgres_dockerfile
+    assert "python:3.11-slim@sha256:" in base_dockerfile
+    assert "python:3.11-slim@sha256:" in postgres_dockerfile
