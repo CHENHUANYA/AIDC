@@ -28,7 +28,7 @@ from api_schemas import (
     IssuesResponse,
 )
 from audit_history import append_history, field_changes, history_list
-from auth import actor_id, actor_role, can_update_issue, can_view_issue, get_actor
+from auth import actor_id, actor_role, can_reference_rag_answer, can_update_issue, can_view_issue, get_actor
 from pagination import InvalidCursor, decode_cursor, encode_cursor, paginate_records
 from repositories.postgres_workflow import PostgresIssueRepository
 from repositories.rag_answers import RagAnswerRepository
@@ -447,8 +447,12 @@ async def api_create_issue(req: CreateIssue, actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("operator", "supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
-    if req.rag_answer_id and rag_answers.get(req.rag_answer_id) is None:
-        return {"status": "error", "message": "RAG answer not found"}
+    if req.rag_answer_id:
+        answer = rag_answers.get(req.rag_answer_id)
+        if answer is None:
+            return {"status": "error", "message": "RAG answer not found"}
+        if not can_reference_rag_answer(actor, answer):
+            return {"status": "error", "message": "Permission denied"}
     created_by = actor_id(actor)
     if postgres_store_enabled():
         issue, work_order = postgres_create_issue(

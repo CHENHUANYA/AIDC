@@ -34,7 +34,15 @@ from app_context import (
     engines,
     error_log,
 )
-from auth import actor_id, actor_role, api_error, get_actor
+from auth import (
+    actor_id,
+    actor_role,
+    can_reference_rag_answer,
+    can_view_issue,
+    can_view_work_order,
+    api_error,
+    get_actor,
+)
 from db.session import get_engine
 from observability import runtime_metrics
 from rag_engine import model_cache_status
@@ -144,6 +152,37 @@ async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
                 status_code=409,
                 content={"status": "error", "message": "Feedback query or collection does not match the RAG answer"},
             )
+        if not can_reference_rag_answer(actor, answer):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Permission denied"})
+    else:
+        answer = None
+
+    from issues import get_issue_dict
+    from work_orders import get_order_dict
+
+    issue = get_issue_dict(req.issue_id) if req.issue_id else None
+    if req.issue_id and issue is None:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Issue not found"})
+    if issue is not None and not can_view_issue(actor, issue):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Permission denied"})
+
+    work_order = get_order_dict(req.work_order_id) if req.work_order_id else None
+    if req.work_order_id and work_order is None:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Work order not found"})
+    linked_issue = issue
+    if work_order is not None and linked_issue is None and work_order.get("issue_id"):
+        linked_issue = get_issue_dict(str(work_order.get("issue_id") or ""))
+    if work_order is not None and not can_view_work_order(actor, work_order, linked_issue):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Permission denied"})
+    if issue is not None and work_order is not None and str(work_order.get("issue_id") or "") != req.issue_id:
+        return JSONResponse(status_code=409, content={"status": "error", "message": "Issue and work order do not match"})
+    if answer is not None:
+        for resource in (issue, work_order):
+            if resource is not None and str(resource.get("rag_answer_id") or "") != req.answer_id:
+                return JSONResponse(
+                    status_code=409,
+                    content={"status": "error", "message": "Workflow object does not belong to the RAG answer"},
+                )
     entry = {
         "time": datetime.now().isoformat(),
         "query": req.query,

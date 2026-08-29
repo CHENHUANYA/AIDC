@@ -61,7 +61,7 @@ class AlarmTriggerRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Alarm 3000 reported from n8n-mock", created_orders[0]["description"])
         self.assertNotIn("demo1234", created_orders[0]["description"])
 
-    async def test_json_duplicate_external_event_returns_existing_workflow(self):
+    async def test_json_duplicate_external_event_returns_minimal_machine_ack(self):
         alarm = {
             "alarm_code": "3000",
             "source": "n8n-mock",
@@ -92,8 +92,9 @@ class AlarmTriggerRouteTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(result["duplicate"])
-        self.assertEqual(issue, result["issue"])
-        self.assertEqual(order, result["work_order"])
+        self.assertNotIn("issue", result)
+        self.assertNotIn("work_order", result)
+        self.assertNotIn("alarm", result)
         create_issue.assert_not_called()
 
     async def test_json_new_external_event_persists_workflow_links(self):
@@ -135,15 +136,16 @@ class AlarmTriggerRouteTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(alarm_routes, "pending_alarms", pending),
             patch.object(alarm_routes, "_pending_alarm_cursors", {}),
+            patch.object(alarm_routes, "_pending_alarm_deliveries", {}),
             patch.object(alarm_routes, "_pending_alarm_sequence", 0),
         ):
             first_user = await alarm_routes.get_pending_alarms({"user_id": "operator01", "role": "operator"})
             first_user_again = await alarm_routes.get_pending_alarms({"user_id": "operator01", "role": "operator"})
             second_user = await alarm_routes.get_pending_alarms({"user_id": "supervisor01", "role": "supervisor"})
 
-        self.assertEqual([{"alarm_code": "3000", "manual": "808d"}], first_user["alarms"])
+        self.assertEqual([], first_user["alarms"])
         self.assertEqual([], first_user_again["alarms"])
-        self.assertEqual(first_user["alarms"], second_user["alarms"])
+        self.assertEqual([{"alarm_code": "3000", "manual": "808d"}], second_user["alarms"])
 
 
 if __name__ == "__main__":

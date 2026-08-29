@@ -150,6 +150,7 @@ class AlarmTrigger(BaseModel):
     alarm_code: str = Field(min_length=1, max_length=128)
     manual: Optional[str] = Field(default="808d", max_length=64)
     machine_id: Optional[str] = Field(default=None, max_length=255)
+    line_id: Optional[str] = Field(default=None, max_length=128)
     source: Optional[str] = Field(default="API", max_length=128)
     external_event_id: Optional[str] = Field(default=None, max_length=255)
     severity: Optional[str] = Field(default=None, max_length=32)

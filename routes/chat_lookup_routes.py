@@ -8,6 +8,7 @@ from typing import AsyncIterator
 import httpx
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from api_schemas import (
     API_ERROR_RESPONSES,
@@ -63,6 +64,12 @@ from services.llm_clients import (
 )
 from services.chat_streaming import StreamDependencies, stream_chat_events as assemble_stream_chat_events
 from services.chat_completion import CompletionDependencies, complete_non_streaming_chat
+from services.ai_usage import (
+    AIUsageLimitExceeded,
+    ai_usage_guard,
+    estimate_reserved_tokens,
+    release_after_stream,
+)
 
 
 logger = logging.getLogger("alarm_rag.chat")
@@ -97,16 +104,18 @@ def validate_collection_name(collection_name: str) -> dict | None:
 
 
 def error_detail(exc: Exception) -> str:
-    return str(exc) or exc.__class__.__name__
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"{exc.__class__.__name__}:status={exc.response.status_code}"
+    return exc.__class__.__name__
 
 
 def build_llm_unavailable_message(exc: Exception, docs: list[dict]) -> str:
-    detail = error_detail(exc)
+    del exc
     if not docs:
         return (
             "系統目前無法連線至 LLM 服務，暫時不能產生對話回答。\n\n"
-            f"狀態：{detail}\n\n"
-            "請確認 alarm_rag 後端設定的 LLM 服務已啟動，例如 Ollama 或 SCHOOL_API_BASE_URL。"
+            "錯誤代碼：LLM_UNAVAILABLE\n\n"
+            "請稍後再試；若問題持續發生，請聯絡系統管理員。"
         )
 
     first = docs[0]
@@ -119,7 +128,7 @@ def build_llm_unavailable_message(exc: Exception, docs: list[dict]) -> str:
         "系統目前無法連線至 LLM 服務，因此先顯示 RAG 找到的手冊內容。\n\n"
         f"來源：Alarm {code} / P.{page}\n\n"
         f"{excerpt}\n\n"
-        f"狀態：{detail}"
+        "錯誤代碼：LLM_UNAVAILABLE"
     )
 
 
@@ -197,7 +206,7 @@ async def call_llm(messages: list[dict], temperature: float, max_tokens: int) ->
         except httpx.HTTPError as exc:
             if not SCHOOL_API_FALLBACK_TO_OLLAMA:
                 raise
-            logger.warning("School API connection failed: %s; falling back to Ollama", exc)
+            logger.warning("School API connection failed (%s); falling back to Ollama", exc.__class__.__name__)
 
     content = await call_ollama(messages, temperature, max_tokens)
     last_llm_source = "ollama"
@@ -332,6 +341,10 @@ def save_rag_answer(
         return False
 
 
+async def save_rag_answer_async(**kwargs) -> bool:
+    return await run_in_threadpool(save_rag_answer, **kwargs)
+
+
 def classify_answer_state(provider: str) -> str:
     if provider == "unavailable":
         return "unavailable"
@@ -422,7 +435,7 @@ def stream_chat_events(
             provider_source=request_llm_source.get,
             classify_answer_state=classify_answer_state,
             record_query=record_query,
-            save_answer=save_rag_answer,
+            save_answer=save_rag_answer_async,
             record_metric=runtime_metrics.record_rag,
         ),
     )
@@ -439,7 +452,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
         msg = NOT_READY_TEMPLATE.format(name=collection_name)
         rag_metadata = build_rag_metadata(collection_name, user_query, [])
         response_id = new_answer_id()
-        save_rag_answer(
+        await save_rag_answer_async(
             answer_id=response_id,
             query=user_query,
             collection=collection_name,
@@ -482,7 +495,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
         content = f"{tags}\n{grounded_answer}" if tags else grounded_answer
         elapsed_ms = int((time.time() - start_ts) * 1000)
         record_query(collection_name, user_query, source="api-grounded", elapsed_ms=elapsed_ms)
-        save_rag_answer(
+        await save_rag_answer_async(
             answer_id=response_id,
             query=user_query,
             collection=collection_name,
@@ -553,7 +566,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
             record_error=record_chat_error,
             classify_answer_state=classify_answer_state,
             record_query=record_query,
-            save_answer=save_rag_answer,
+            save_answer=save_rag_answer_async,
             record_metric=runtime_metrics.record_rag,
             make_response=make_openai_response,
             ollama_model=OLLAMA_MODEL,
@@ -562,12 +575,35 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
     )
 
 
+async def limited_chat(req: ChatRequest, collection_name: str, actor: dict):
+    try:
+        lease = await ai_usage_guard.acquire(
+            actor_id(actor), estimate_reserved_tokens(req.messages, req.max_tokens or 1024)
+        )
+    except AIUsageLimitExceeded as exc:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(exc.retry_after)},
+            content={"status": "error", "message": str(exc)},
+        )
+    try:
+        response = await handle_chat(req, collection_name, actor)
+    except Exception:
+        lease.release()
+        raise
+    if isinstance(response, StreamingResponse):
+        response.body_iterator = release_after_stream(response.body_iterator, lease)
+        return response
+    lease.release()
+    return response
+
+
 @router.post("/v1/chat/completions", responses=CHAT_RESPONSES)
 async def chat_default(req: ChatRequest, collection: str = "alarms", actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
         return denied
-    return await handle_chat(req, collection, actor)
+    return await limited_chat(req, collection, actor)
 
 
 @router.post(
@@ -578,14 +614,34 @@ async def free_chat(req: ChatRequest, actor: dict = Depends(get_actor)):
     denied = require_authenticated(actor)
     if denied:
         return denied
-    messages = [{"role": "system", "content": FREE_CHAT_SYSTEM}]
-    messages.extend({"role": m.role, "content": m.content} for m in req.messages)
-    content = await call_llm(
-        messages=messages,
-        temperature=req.temperature or 0.7,
-        max_tokens=req.max_tokens or 1024,
-    )
-    return make_openai_response(content or "Error: empty response from LLM.")
+    try:
+        lease = await ai_usage_guard.acquire(
+            actor_id(actor), estimate_reserved_tokens(req.messages, req.max_tokens or 1024)
+        )
+    except AIUsageLimitExceeded as exc:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(exc.retry_after)},
+            content={"status": "error", "message": str(exc)},
+        )
+    try:
+        messages = [{"role": "system", "content": FREE_CHAT_SYSTEM}]
+        messages.extend({"role": m.role, "content": m.content} for m in req.messages)
+        try:
+            content = await call_llm(
+                messages=messages,
+                temperature=req.temperature or 0.7,
+                max_tokens=req.max_tokens or 1024,
+            )
+        except Exception as exc:
+            record_chat_error("free", str(req.messages[-1].content), [], exc)
+            return JSONResponse(
+                status_code=503,
+                content={"status": "error", "message": "LLM service unavailable", "error_code": "LLM_UNAVAILABLE"},
+            )
+        return make_openai_response(content or "LLM service unavailable.")
+    finally:
+        lease.release()
 
 
 @router.post("/v1/{collection_name}/chat/completions", responses=CHAT_RESPONSES)
@@ -596,7 +652,7 @@ async def chat_collection(req: ChatRequest, collection_name: str, actor: dict = 
     invalid = validate_collection_name(collection_name)
     if invalid:
         return invalid
-    return await handle_chat(req, collection_name, actor)
+    return await limited_chat(req, collection_name, actor)
 
 
 @router.get(
@@ -660,7 +716,7 @@ async def chat_multiturn(req: ChatRequest, collection_name: str, actor: dict = D
     invalid = validate_collection_name(collection_name)
     if invalid:
         return invalid
-    return await handle_chat(req, collection_name, actor)
+    return await limited_chat(req, collection_name, actor)
 
 
 @router.get(
@@ -754,7 +810,7 @@ async def lookup_alarm(collection_name: str, code: str, actor: dict = Depends(ge
             source="lookup",
             elapsed_ms=int((time.time() - start_ts) * 1000),
         )
-        return {"found": False, "error": str(exc)}
+        return {"found": False, "error": "Lookup service unavailable", "error_code": "LOOKUP_UNAVAILABLE"}
 
 
 @router.get(

@@ -941,6 +941,15 @@ def can_view_work_order(actor: dict, order: dict, linked_issue: Optional[dict] =
     return False
 
 
+def can_reference_rag_answer(actor: dict, answer: dict | None) -> bool:
+    """Allow an answer reference only to its creator or a privileged reviewer."""
+    if not answer or not actor_id(actor):
+        return False
+    if actor_role(actor) in FULL_ACCESS_ROLES:
+        return True
+    return bool(answer.get("created_by")) and str(answer.get("created_by")) == actor_id(actor)
+
+
 def can_update_issue(actor: dict, issue: dict, next_status: Optional[str]) -> bool:
     role = actor_role(actor)
     if role in FULL_ACCESS_ROLES:

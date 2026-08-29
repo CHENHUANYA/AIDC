@@ -250,7 +250,7 @@ def test_ollama_adapter_sends_bounded_payload(monkeypatch):
     ("lines", "error"),
     [
         (["not-json"], "invalid streaming JSON"),
-        ([json.dumps({"error": "model failed"})], "model failed"),
+        ([json.dumps({"error": "model failed"})], "streaming request failed"),
     ],
 )
 def test_ollama_stream_adapter_rejects_invalid_events(monkeypatch, lines, error):

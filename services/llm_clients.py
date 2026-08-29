@@ -83,7 +83,7 @@ async def stream_ollama(
                 except json.JSONDecodeError as exc:
                     raise RuntimeError("Ollama returned invalid streaming JSON") from exc
                 if event.get("error"):
-                    raise RuntimeError(str(event["error"]))
+                    raise RuntimeError("Ollama streaming request failed")
                 content = str(event.get("message", {}).get("content") or "")
                 if content:
                     yield content

@@ -36,7 +36,17 @@ from api_schemas import (
     WorkOrdersResponse,
 )
 from audit_history import append_history, field_changes, history_list
-from auth import actor_id, actor_role, can_update_work_order, can_view_work_order, can_verify, get_actor, is_admin, resolve_user
+from auth import (
+    actor_id,
+    actor_role,
+    can_reference_rag_answer,
+    can_update_work_order,
+    can_view_work_order,
+    can_verify,
+    get_actor,
+    is_admin,
+    resolve_user,
+)
 from config_values import env_float, env_int
 from pagination import InvalidCursor, decode_cursor, encode_cursor, paginate_records
 from repositories.postgres_workflow import PostgresWorkOrderRepository
@@ -562,9 +572,20 @@ async def api_create_order(req: CreateWorkOrder, actor: dict = Depends(get_actor
         linked_issue = get_issue_dict(req.issue_id)
         if linked_issue is None:
             return {"status": "error", "message": "Issue not found"}
+        if not can_view_work_order(actor, {"status": "pending", "assigned_to": ""}, linked_issue):
+            return {"status": "error", "message": "Permission denied"}
     rag_answer_id = req.rag_answer_id or str((linked_issue or {}).get("rag_answer_id") or "")
-    if rag_answer_id and rag_answers.get(rag_answer_id) is None:
-        return {"status": "error", "message": "RAG answer not found"}
+    if rag_answer_id:
+        answer = rag_answers.get(rag_answer_id)
+        if answer is None:
+            return {"status": "error", "message": "RAG answer not found"}
+        inherited_from_visible_issue = bool(
+            linked_issue
+            and not req.rag_answer_id
+            and str(linked_issue.get("rag_answer_id") or "") == rag_answer_id
+        )
+        if not inherited_from_visible_issue and not can_reference_rag_answer(actor, answer):
+            return {"status": "error", "message": "Permission denied"}
     order = create_order_dict(
         alarm_code=req.alarm_code,
         manual=req.manual or "808d",

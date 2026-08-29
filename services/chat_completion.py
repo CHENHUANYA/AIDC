@@ -67,7 +67,7 @@ async def complete_non_streaming_chat(
         if provider == "school"
         else dependencies.ollama_model if provider == "ollama" else ""
     )
-    dependencies.save_answer(
+    await dependencies.save_answer(
         answer_id=response_id,
         query=user_query,
         collection=collection_name,
