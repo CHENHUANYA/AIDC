@@ -49,11 +49,11 @@ def test_create_user_validation_rejects_invalid_inputs(user_request, existing, m
     assert message in str(auth.validate_create_user(user_request, existing))
 
 
-def test_create_user_validation_checks_implicit_production_password(monkeypatch):
+def test_create_user_validation_requires_explicit_per_account_password(monkeypatch):
     request = auth.CreateUserRequest(user_id="new", password=None)
     monkeypatch.setattr(auth, "implicit_initial_password_error", lambda: "production password required")
 
-    assert auth.validate_create_user(request, {}) == "production password required"
+    assert auth.validate_create_user(request, {}) == "Password is required for every new account"
 
 
 def test_create_user_builds_normalized_account_and_returns_public_fields(monkeypatch):
@@ -125,6 +125,7 @@ def test_update_user_applies_all_fields_and_revokes_sessions(monkeypatch):
         "line_scope": ["LINE-A"],
         "active": True,
         "updated_at": "v1",
+        "must_change_password": False,
     }
     monkeypatch.setattr(auth, "load_users", lambda: {"operator01": user})
     monkeypatch.setattr(auth, "save_user", lambda _key, saved, expected_updated_at=None: saved)
@@ -151,6 +152,7 @@ def test_update_user_applies_all_fields_and_revokes_sessions(monkeypatch):
         "active": False,
         "created_at": "",
         "updated_at": "v1",
+        "must_change_password": False,
     }
     assert result["sessions_revoked"] == 2
     revoke_sessions.assert_called_once_with("operator01")
@@ -187,6 +189,7 @@ def test_revoke_user_sessions_endpoint_guards(monkeypatch, actor, user_id, users
 
 def test_revoke_user_sessions_endpoint_reports_count(monkeypatch):
     monkeypatch.setattr(auth, "load_users", lambda: {"operator01": {}})
+    monkeypatch.setattr(auth, "save_user", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(auth, "revoke_user_sessions", lambda _user_id: 3)
 
     assert asyncio.run(auth._api_revoke_user_sessions("operator01", ADMIN)) == {
@@ -215,16 +218,17 @@ def test_session_list_prunes_and_sorts_local_sessions(monkeypatch):
         "load_users",
         lambda: {"operator01": {"role": "operator"}, "admin02": {"role": "admin"}},
     )
-    monkeypatch.setattr(auth, "load_sessions", lambda: sessions)
-    saved = []
-    monkeypatch.setattr(auth, "save_sessions", lambda value: saved.append(value))
+    monkeypatch.setattr(auth.auth_sessions, "mutate_sessions", lambda _path, mutation: mutation(sessions))
 
     result = asyncio.run(auth.api_list_sessions(actor=ADMIN))
 
     assert result["total"] == 2
+    assert result["limit"] == 200
+    assert result["offset"] == 0
+    assert result["has_more"] is False
     assert [entry["token_prefix"] for entry in result["sessions"]] == ["a" * 10, "b" * 10]
     assert [entry["role"] for entry in result["sessions"]] == ["admin", "operator"]
-    assert list(saved[0]) == ["b" * 64, "a" * 64]
+    assert list(sessions) == ["b" * 64, "a" * 64]
 
 
 @pytest.mark.parametrize("actor,message", [({}, "Not authenticated"), (OPERATOR, "Permission denied")])
@@ -235,11 +239,14 @@ def test_session_list_requires_admin(actor, message):
 def test_postgres_session_list_delegates(monkeypatch):
     entries = [{"token_prefix": "1234567890", "user_id": "operator01"}]
     monkeypatch.setattr(auth, "postgres_store_enabled", lambda: True)
-    monkeypatch.setattr(auth.postgres_sessions, "list_active", lambda: entries)
+    monkeypatch.setattr(auth.postgres_sessions, "list_active_page", lambda **_kwargs: (entries, 1))
 
     assert asyncio.run(auth.api_list_sessions(actor=ADMIN)) == {
         "status": "ok",
         "total": 1,
+        "limit": 200,
+        "offset": 0,
+        "has_more": False,
         "sessions": entries,
     }
 
@@ -248,19 +255,16 @@ def test_local_session_revoke_rejects_ambiguous_prefix_and_handles_exact_match(m
     prefix = "1234567890"
     sessions = {prefix + "a" * 54: {}, prefix + "b" * 54: {}}
     monkeypatch.setattr(auth, "postgres_store_enabled", lambda: False)
-    monkeypatch.setattr(auth, "load_sessions", lambda: dict(sessions))
-    save_sessions = patch.object(auth, "save_sessions")
-
-    with save_sessions as save:
-        ambiguous = asyncio.run(auth.api_revoke_session(prefix, actor=ADMIN))
+    store = dict(sessions)
+    monkeypatch.setattr(auth.auth_sessions, "mutate_sessions", lambda _path, mutation: mutation(store))
+    ambiguous = asyncio.run(auth.api_revoke_session(prefix, actor=ADMIN))
     assert ambiguous == {"status": "error", "message": "Ambiguous token prefix"}
-    save.assert_not_called()
+    assert store == sessions
 
-    monkeypatch.setattr(auth, "load_sessions", lambda: {prefix + "a" * 54: {}})
-    with patch.object(auth, "save_sessions") as save:
-        revoked = asyncio.run(auth.api_revoke_session(prefix, actor=ADMIN))
+    store = {prefix + "a" * 54: {}}
+    revoked = asyncio.run(auth.api_revoke_session(prefix, actor=ADMIN))
     assert revoked == {"status": "ok", "revoked": 1}
-    assert save.call_args.args[0] == {}
+    assert store == {}
 
 
 @pytest.mark.parametrize(
@@ -297,8 +301,9 @@ def test_local_bootstrap_store_and_corrupt_json_recovery_behavior(local_auth_sto
     auth.ensure_user_store()
     users = auth.load_users()
 
-    assert len(users) == len(auth.BOOTSTRAP_USERS)
+    assert set(users) == {"admin01"}
     assert users["admin01"]["password_hash"] == "hashed:StrongPass!"
+    assert users["admin01"]["must_change_password"] is True
     user_path = db_dir / "users.json"
     user_path.write_text("{broken", encoding="utf-8")
     assert auth.load_users() == {}

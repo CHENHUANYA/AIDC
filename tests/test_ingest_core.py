@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import ingest
+from signed_pickle import load_signed_pickle
 
 
 class FakePage:
@@ -122,8 +123,7 @@ def test_build_index_writes_vector_metadata_and_bm25_payload(tmp_path) -> None:
     assert all("text" not in metadata for metadata in add_call["metadatas"])
     bm25_class.assert_called_once()
 
-    with (tmp_path / "bm25_808d.pkl").open("rb") as file:
-        payload = ingest.pickle.load(file)
+    payload = load_signed_pickle(tmp_path / "bm25_808d.pkl")
     assert payload["bm25"] == bm25
     assert payload["sections"] == sections
     assert payload["tokenizer_version"] == ingest.BM25_TOKENIZER_VERSION

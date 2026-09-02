@@ -47,3 +47,50 @@ def test_wait_for_login_retries_transient_startup_failure():
         result, attempts = wait_for_login(client, wait_seconds=10, interval_seconds=0.1)
     assert result.ok is True
     assert attempts == 2
+
+
+def test_soak_report_fails_when_chat_p95_exceeds_slo():
+    results = [
+        (1, SoakResult("chat", True, "HTTP 200", 24_961)),
+        (2, SoakResult("chat", True, "HTTP 200", 31_000)),
+    ]
+
+    report = build_report(
+        results,
+        base_url="https://pilot.example.com",
+        manual="808d",
+        alarm_code="3000",
+        started_at="start",
+        finished_at="finish",
+        configured_duration_seconds=300,
+        max_failures=0,
+        latency_slos_ms={"chat": 30_000},
+    )
+
+    assert report["status"] == "fail"
+    assert report["slo_failures"] == ["chat"]
+    assert report["latency_slos"]["chat"] == {
+        "metric": "p95_ms",
+        "threshold_ms": 30_000,
+        "actual_ms": 31_000,
+        "met": False,
+    }
+    assert "| chat | p95_ms | 31000 | 30000 | no |" in markdown_report(report)
+
+
+def test_soak_report_passes_when_observed_chat_latency_meets_slo():
+    report = build_report(
+        [(1, SoakResult("chat", True, "HTTP 200", 24_961))],
+        base_url="https://pilot.example.com",
+        manual="808d",
+        alarm_code="3000",
+        started_at="start",
+        finished_at="finish",
+        configured_duration_seconds=300,
+        max_failures=0,
+        latency_slos_ms={"chat": 30_000},
+    )
+
+    assert report["status"] == "pass"
+    assert report["slo_failures"] == []
+    assert report["latency_slos"]["chat"]["met"] is True

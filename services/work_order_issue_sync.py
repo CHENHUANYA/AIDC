@@ -15,6 +15,8 @@ def apply_issue_update(
     status_transition_error: Callable[[str, str], str],
     append_history: Any,
     calculate_field_changes: Any,
+    allow_reopen: bool = False,
+    increment_version: bool = False,
 ) -> dict | None:
     before_order = dict(order)
     previous_status = order.get("status", "pending")
@@ -33,7 +35,7 @@ def apply_issue_update(
         if status_transition_error(previous_status, "cancelled"):
             return None
         next_status = "cancelled"
-    elif issue_status == "open" and previous_status in {"completed", "verified"}:
+    elif allow_reopen and issue_status in {"open", "assigned", "in_progress"} and previous_status in {"completed", "verified"}:
         next_status = "assigned" if order.get("assigned_to") else "pending"
         for field in ("verified_by", "completed_at"):
             if order.get(field):
@@ -57,6 +59,7 @@ def apply_issue_update(
             if existing_notes
             else note_line
         )
+        order["notes"] = order["notes"][-10_000:]
         changed_fields.append("notes")
 
     if not changed_fields:
@@ -73,4 +76,9 @@ def apply_issue_update(
         order.get("status", previous_status),
         calculate_field_changes(before_order, order, changed_fields),
     )
+    if increment_version:
+        try:
+            order["version"] = max(int(before_order.get("version") or 1), 1) + 1
+        except (TypeError, ValueError):
+            order["version"] = 2
     return order

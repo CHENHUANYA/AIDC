@@ -12,11 +12,12 @@ Re-run with the same --name to rebuild that manual's index.
 """
 
 import fitz
-import re, pickle, argparse, os, hashlib
+import re, argparse, os, hashlib, time
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
+from signed_pickle import dump_signed_pickle
 from vector_store import get_store
 from storage import (
     DB_PATH,
@@ -102,15 +103,62 @@ def is_alarm_code_line(line: str, all_lines: list | None = None, idx: int = 0) -
     return True
 
 
-def extract_alarm_sections(pdf_path: str) -> list[dict]:
-    doc = fitz.open(pdf_path)
-    all_lines = []  # (text, page_num)
+class IngestBudgetExceeded(RuntimeError):
+    pass
 
-    for page_num, page in enumerate(doc):
-        for line in page.get_text().split("\n"):
-            stripped = line.strip()
-            if stripped:
-                all_lines.append((stripped, page_num + 1))
+
+def _check_extraction_budget(
+    *,
+    chars: int,
+    lines: int,
+    sections: int,
+    max_chars: int | None,
+    max_lines: int | None,
+    max_sections: int | None,
+    deadline: float | None,
+) -> None:
+    if max_chars is not None and chars > max_chars:
+        raise IngestBudgetExceeded("extracted character budget exceeded")
+    if max_lines is not None and lines > max_lines:
+        raise IngestBudgetExceeded("extracted line budget exceeded")
+    if max_sections is not None and sections > max_sections:
+        raise IngestBudgetExceeded("section budget exceeded")
+    if deadline is not None and time.monotonic() > deadline:
+        raise IngestBudgetExceeded("processing time budget exceeded")
+
+
+def extract_alarm_sections(
+    pdf_path: str,
+    *,
+    max_chars: int | None = None,
+    max_lines: int | None = None,
+    max_sections: int | None = None,
+    deadline: float | None = None,
+) -> list[dict]:
+    all_lines = []  # (text, page_num)
+    extracted_chars = 0
+
+    doc = fitz.open(pdf_path)
+    try:
+        for page_num, page in enumerate(doc):
+            for line in page.get_text().split("\n"):
+                stripped = line.strip()
+                if stripped:
+                    extracted_chars += len(stripped)
+                    all_lines.append((stripped, page_num + 1))
+                    _check_extraction_budget(
+                        chars=extracted_chars,
+                        lines=len(all_lines),
+                        sections=0,
+                        max_chars=max_chars,
+                        max_lines=max_lines,
+                        max_sections=max_sections,
+                        deadline=deadline,
+                    )
+    finally:
+        close = getattr(doc, "close", None)
+        if callable(close):
+            close()
 
     sections = []
     cur_code  = None
@@ -145,6 +193,15 @@ def extract_alarm_sections(pdf_path: str) -> list[dict]:
                         "text":  "\n".join(cur_lines),
                         "page":  cur_page,
                     })
+                    _check_extraction_budget(
+                        chars=extracted_chars,
+                        lines=len(all_lines),
+                        sections=len(sections),
+                        max_chars=max_chars,
+                        max_lines=max_lines,
+                        max_sections=max_sections,
+                        deadline=deadline,
+                    )
                 cur_code  = line.strip()
                 cur_title = next_line
                 cur_lines = [f"{cur_code} {cur_title}"]
@@ -166,6 +223,15 @@ def extract_alarm_sections(pdf_path: str) -> list[dict]:
             "text":  "\n".join(cur_lines),
             "page":  cur_page,
         })
+        _check_extraction_budget(
+            chars=extracted_chars,
+            lines=len(all_lines),
+            sections=len(sections),
+            max_chars=max_chars,
+            max_lines=max_lines,
+            max_sections=max_sections,
+            deadline=deadline,
+        )
 
     print(f"✓ Extracted {len(sections)} alarm sections")
     if sections:
@@ -207,7 +273,16 @@ def _get_alarm_line_ranges(all_lines: list) -> set:
     return alarm_indices
 
 
-def extract_general_chunks(pdf_path: str, chunk_size: int = 40, overlap: int = 8) -> list[dict]:
+def extract_general_chunks(
+    pdf_path: str,
+    chunk_size: int = 40,
+    overlap: int = 8,
+    *,
+    max_chars: int | None = None,
+    max_lines: int | None = None,
+    max_sections: int | None = None,
+    deadline: float | None = None,
+) -> list[dict]:
     """
     Parse ALL non-alarm content from the PDF into sliding-window chunks.
 
@@ -226,13 +301,29 @@ def extract_general_chunks(pdf_path: str, chunk_size: int = 40, overlap: int = 8
     if overlap < 0 or overlap >= chunk_size:
         raise ValueError("overlap must be between zero and chunk_size - 1")
 
-    doc = fitz.open(pdf_path)
     all_lines = []
-    for page_num, page in enumerate(doc):
-        for line in page.get_text().split("\n"):
-            stripped = line.strip()
-            if stripped:
-                all_lines.append((stripped, page_num + 1))
+    extracted_chars = 0
+    doc = fitz.open(pdf_path)
+    try:
+        for page_num, page in enumerate(doc):
+            for line in page.get_text().split("\n"):
+                stripped = line.strip()
+                if stripped:
+                    extracted_chars += len(stripped)
+                    all_lines.append((stripped, page_num + 1))
+                    _check_extraction_budget(
+                        chars=extracted_chars,
+                        lines=len(all_lines),
+                        sections=0,
+                        max_chars=max_chars,
+                        max_lines=max_lines,
+                        max_sections=max_sections,
+                        deadline=deadline,
+                    )
+    finally:
+        close = getattr(doc, "close", None)
+        if callable(close):
+            close()
 
     alarm_indices = _get_alarm_line_ranges(all_lines)
 
@@ -289,6 +380,15 @@ def extract_general_chunks(pdf_path: str, chunk_size: int = 40, overlap: int = 8
             "content_type": content_type,
             "topic": topic,
         })
+        _check_extraction_budget(
+            chars=extracted_chars,
+            lines=len(all_lines),
+            sections=len(chunks),
+            max_chars=max_chars,
+            max_lines=max_lines,
+            max_sections=max_sections,
+            deadline=deadline,
+        )
         i += chunk_size - overlap  # slide forward with overlap
 
     print(f"✓ Extracted {len(chunks)} general content chunks")
@@ -336,15 +436,14 @@ def build_index(sections: list[dict], collection_name: str):
     # BM25 — includes both alarm and general sections for full-text search
     bm25 = BM25Okapi([tokenize_bm25(text) for text in texts])
     pkl_path = f"{DB_PATH}/bm25_{collection_name}.pkl"
-    with open(pkl_path, "wb") as f:
-        pickle.dump(
-            {
-                "bm25": bm25,
-                "sections": sections,
-                "tokenizer_version": BM25_TOKENIZER_VERSION,
-            },
-            f,
-        )
+    dump_signed_pickle(
+        pkl_path,
+        {
+            "bm25": bm25,
+            "sections": sections,
+            "tokenizer_version": BM25_TOKENIZER_VERSION,
+        },
+    )
     print(f"✓ BM25 index saved → {pkl_path}")
 
     alarm_count   = sum(1 for s in sections if s.get("code"))

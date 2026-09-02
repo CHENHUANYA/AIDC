@@ -21,6 +21,7 @@ class PublicUserResponse(BaseModel):
     line_scope: list[str]
     team: str
     active: bool
+    must_change_password: bool = False
     created_at: str
     updated_at: str
 
@@ -75,6 +76,9 @@ class SessionResponse(BaseModel):
 
 class SessionsResponse(StatusOkResponse):
     total: int
+    limit: int
+    offset: int
+    has_more: bool
     sessions: list[SessionResponse]
 
 
@@ -360,9 +364,9 @@ class AlarmEntryResponse(BaseModel):
 class AlarmTriggerResponse(StatusOkResponse):
     duplicate: bool
     external_event_id: str
-    alarm: AlarmEntryResponse
-    issue: IssueResponse | None
-    work_order: WorkOrderResponse | None
+    alarm: AlarmEntryResponse | None = None
+    issue: IssueResponse | None = None
+    work_order: WorkOrderResponse | None = None
 
 
 class PendingAlarmsResponse(BaseModel):
@@ -506,6 +510,7 @@ class RuntimeMetricsResponse(StatusOkResponse):
 class SystemSettingsResponse(BaseModel):
     default_manual: str
     session_hours: int
+    session_hours_source: str = "settings"
     allow_operator_reopen: bool
     updated_by: str
     updated_at: str
@@ -554,7 +559,15 @@ class CitationResponse(BaseModel):
     page: Any = ""
     source: str = ""
     source_file: str = ""
+    source_hash: str = ""
     doc_id: str = ""
+    source_id: str = ""
+    section_id: str = ""
+    locator: str = ""
+    official_source: bool = False
+    publisher: str = ""
+    document_title: str = ""
+    edition: str = ""
     kind: str = ""
     excerpt: str = ""
 
@@ -668,6 +681,7 @@ class CollectionHealthResponse(BaseModel):
     ready: bool
     alarms_indexed: int
     retrieval_runtime: dict[str, Any]
+    traceability: dict[str, Any]
 
 
 class HealthResponse(StatusOkResponse):

@@ -21,7 +21,7 @@ AUTHENTICATED_ACTOR = {"user_id": "admin01", "role": "admin", "line_scope": ["*"
 
 class FakeEngine:
     ready = True
-    tokenizer_version = "unicode-domain-v1"
+    tokenizer_version = "unicode-domain-v2"
 
     def retrieve(self, _query, top_k=5):
         documents = [
@@ -43,7 +43,7 @@ class FakeEngine:
 
 class ExactThenRelatedEngine:
     ready = True
-    tokenizer_version = "unicode-domain-v1"
+    tokenizer_version = "unicode-domain-v2"
 
     def __init__(self):
         self.queries = []
@@ -120,6 +120,9 @@ def test_citation_ids_are_stable_and_openai_response_remains_compatible():
 
     assert first["citations"][0]["id"] == second["citations"][0]["id"]
     assert first["citations"][0]["source"] == "mock-week2-sop"
+    assert first["citations"][0]["source_id"] == "doc-coolant"
+    assert first["citations"][0]["source_hash"] == ""
+    assert first["citations"][0]["official_source"] is False
     response = make_openai_response("answer", rag=first)
     second_response = make_openai_response("another")
     assert response["choices"][0]["message"]["content"] == "answer"
@@ -201,7 +204,10 @@ def test_program_transfer_scenario_uses_manual_page_and_does_not_mention_tool_ch
     assert "程式傳輸是警報出現前的操作情境" in answer
     assert "沒有證明程式傳輸與 Alarm 3000 之間的直接因果關係" in answer
     assert "換刀是故障發生時機" not in answer
-    assert "<!-- PAGE:58 -->" in tags
+    assert tags == ""
+    citation = build_rag_metadata("808d", query, docs)["citations"][0]
+    assert citation["page"] == 58
+    assert citation["code"] == "3000"
 
 
 def test_work_order_page_zero_is_not_rendered_as_a_manual_page():
@@ -210,7 +216,8 @@ def test_work_order_page_zero_is_not_rendered_as_a_manual_page():
     tags = chat_lookup_routes.answer_source_tags(docs)
 
     assert "PAGE" not in tags
-    assert "<!-- CODE:3000 -->" in tags
+    assert tags == ""
+    assert build_rag_metadata("808d", "repair", docs)["citations"][0]["code"] == "3000"
 
 
 def test_exact_code_troubleshooting_bypasses_llm_and_persists_retrieval_provider():
@@ -247,7 +254,7 @@ def test_retrieve_endpoint_returns_ranked_structured_sources():
         )
 
     assert response["ready"] is True
-    assert response["tokenizer_version"] == "unicode-domain-v1"
+    assert response["tokenizer_version"] == "unicode-domain-v2"
     assert response["result_count"] == 1
     assert response["results"][0]["rank"] == 1
     assert response["results"][0]["code"] == "340100"

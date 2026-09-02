@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "description": "Verified official source mapping for the three derived alarm-manual collections.",
+  "sources": {
+    "808d": {
+      "path": "data/SINUMERIK 808D_ADVANCED_Diagnostics Manual_0917_en-US P10~593.pdf",
+      "sha256": "d230c9926c98cb9506d42df0458fd088c09b446e8eab0fcf26b67323c8504344",
+      "document_title": "SINUMERIK 808D ADVANCED Diagnostics Manual",
+      "edition": "09/2017",
+      "publisher": "Siemens AG",
+      "official_source": true
+    },
+    "840d": {
+      "path": "data/SINUMERIK 840D 840Di 810D Diagnostics Manual_DA_1106_en P15~877.pdf",
+      "sha256": "c81ce03d4c61518c9b6f85ac12917fc6ed7c9e552393182af6f534234e373cda",
+      "document_title": "SINUMERIK 840D/840Di/810D Diagnostics Manual",
+      "edition": "11/2006",
+      "publisher": "Siemens AG",
+      "official_source": true
+    },
+    "840dsl": {
+      "path": "data/SINUMERIK 840D sl,Alarms Diagnostics Manua DAsl_0115_en_en-US  P9~1420.pdf",
+      "sha256": "ed2b662d4e0af27594bbfe8a3ad109a88cca74b041712f2d2b099122621db8a4",
+      "document_title": "SINUMERIK 840D sl Alarms Diagnostics Manual",
+      "edition": "01/2015",
+      "publisher": "Siemens AG",
+      "official_source": true
+    }
+  }
+}

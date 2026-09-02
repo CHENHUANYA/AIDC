@@ -3,6 +3,7 @@ import json
 import hashlib
 import re
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -58,6 +59,31 @@ def is_safe_path_segment(value: str) -> bool:
 
 def generate_doc_id(filename: str, source_hash: str) -> str:
     return f"{slugify(filename)}-{source_hash[:8]}"
+
+
+def source_locator(section: Dict[str, Any], ordinal: int) -> str:
+    """Return a compact, human-readable locator within one source document."""
+    page = str(section.get("page") or "").strip()
+    code = str(section.get("code") or "").strip()
+    parts = [f"p.{page}" if page and page != "0" else ""]
+    parts.append(f"alarm-{code}" if code else f"section-{ordinal + 1}")
+    return "#".join(part for part in parts if part)
+
+
+def generate_section_id(source_id: str, section: Dict[str, Any], ordinal: int) -> str:
+    """Generate a deterministic section identity for one version of a source."""
+    identity = "\x1f".join(
+        [
+            source_id,
+            str(ordinal),
+            str(section.get("code") or ""),
+            str(section.get("page") or ""),
+            str(section.get("title") or ""),
+            str(section.get("text") or ""),
+        ]
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    return f"{source_id}:s{ordinal + 1:05d}-{digest}"
 
 
 def document_revision(document: Dict[str, Any]) -> str:
@@ -300,24 +326,79 @@ def list_collections_summary() -> List[Dict[str, Any]]:
 
 def apply_doc_meta(sections: List[dict], doc_meta: Dict[str, Any]) -> List[dict]:
     enriched = []
-    for s in sections:
+    source_id = str(doc_meta.get("source_id") or doc_meta["doc_id"])
+    source_file = str(doc_meta.get("filename") or "")
+    for ordinal, s in enumerate(sections):
         meta = dict(s)
         meta["doc_id"] = doc_meta["doc_id"]
-        meta["source_file"] = doc_meta.get("filename")
+        meta["source_id"] = source_id
+        meta["source_file"] = source_file
+        meta.setdefault("source", source_file)
         meta["source_hash"] = doc_meta.get("source_hash")
         meta["imported_at"] = doc_meta.get("imported_at", now_iso())
         meta["version"] = doc_meta.get("version", 1)
+        meta["section_id"] = generate_section_id(source_id, meta, ordinal)
+        meta["locator"] = source_locator(meta, ordinal)
+        meta["official_source"] = bool(doc_meta.get("official_source", False))
+        if doc_meta.get("publisher"):
+            meta["publisher"] = str(doc_meta["publisher"])
+        if doc_meta.get("document_title"):
+            meta["document_title"] = str(doc_meta["document_title"])
+        if doc_meta.get("edition"):
+            meta["edition"] = str(doc_meta["edition"])
         if "type" not in meta:
             meta["type"] = "alarm" if meta.get("code") else "general"
         enriched.append(meta)
     return enriched
 
 
-def append_jsonl(path: str, entry: Dict[str, Any]):
+_jsonl_write_lock = threading.Lock()
+
+
+def append_jsonl(
+    path: str,
+    entry: Dict[str, Any],
+    *,
+    max_records: int | None = None,
+    identity_fields: tuple[str, ...] = (),
+):
     serialized = json.dumps(entry, ensure_ascii=False)
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(serialized + "\n")
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if max_records is None and not identity_fields:
+        with open(target, "a", encoding="utf-8") as f:
+            f.write(serialized + "\n")
+        return
+
+    with _jsonl_write_lock:
+        entries = read_jsonl(str(target))
+        if identity_fields:
+            identity = tuple(entry.get(field) for field in identity_fields)
+            entries = [
+                existing
+                for existing in entries
+                if tuple(existing.get(field) for field in identity_fields) != identity
+            ]
+        entries.append(entry)
+        if max_records is not None:
+            entries = entries[-max(int(max_records), 1):]
+        temporary_name = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary:
+                temporary_name = temporary.name
+                for existing in entries:
+                    temporary.write(json.dumps(existing, ensure_ascii=False) + "\n")
+            os.replace(temporary_name, target)
+        finally:
+            if temporary_name and os.path.exists(temporary_name):
+                os.remove(temporary_name)
 
 
 def read_jsonl(path: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:

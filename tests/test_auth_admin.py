@@ -95,12 +95,13 @@ class AuthAdminStaticTests(unittest.TestCase):
         self.assertIn("/users/${encodeURIComponent(userId)}/sessions", self.admin_source)
         self.assertIn("撤銷 Session", self.admin_source)
 
-    def test_login_ui_guides_role_card_password_flow(self):
+    def test_login_ui_does_not_publish_bootstrap_account_ids(self):
         self.assertIn("/auth/login-config", self.login_source)
-        self.assertIn("preselectUserFromNextPath", self.login_source)
-        self.assertIn("admin01", self.login_source)
-        self.assertIn("supervisor01", self.login_source)
-        self.assertIn("角色卡只會帶入使用者 ID", self.login_source)
+        self.assertIn("safeNextPath", self.login_source)
+        self.assertNotIn("preselectUserFromNextPath", self.login_source)
+        self.assertNotIn("admin01", self.login_source)
+        self.assertNotIn("supervisor01", self.login_source)
+        self.assertIn("ROLE_NEXT_PATHS", self.login_source)
 
 
 class AuthPermissionRuntimeTests(unittest.TestCase):

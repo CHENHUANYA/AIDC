@@ -192,6 +192,8 @@ def test_environment_and_identifier_helpers(tmp_path, monkeypatch):
     assert storage.slugify("My Manual.pdf") == "my-manual"
     assert storage.slugify("---.pdf") == "doc"
     assert storage.generate_doc_id("My Manual.pdf", "1234567890") == "my-manual-12345678"
+    assert storage.source_locator({"page": 58, "code": "3000"}, 0) == "p.58#alarm-3000"
+    assert storage.source_locator({"page": 0}, 2) == "section-3"
     assert storage.is_safe_path_segment("line_808-D")
     assert not storage.is_safe_path_segment("../808d")
     assert not storage.is_safe_path_segment("")
@@ -299,6 +301,11 @@ def test_local_document_crud_summary_and_metadata_helpers(local_storage, monkeyp
     assert [item["type"] for item in enriched] == ["alarm", "general", "custom"]
     assert all(item["imported_at"] == "2026-08-18T01:02:03+00:00" for item in enriched)
     assert all(item["version"] == 1 for item in enriched)
+    assert all(item["source_id"] == "doc-meta" for item in enriched)
+    assert all(item["source"] == "meta.pdf" for item in enriched)
+    assert [item["locator"] for item in enriched] == ["alarm-3000", "section-2", "section-3"]
+    assert len({item["section_id"] for item in enriched}) == 3
+    assert all(not item["official_source"] for item in enriched)
 
 
 def test_postgres_manifest_operations_delegate_to_repository():

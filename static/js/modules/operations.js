@@ -239,7 +239,7 @@ async function loadKBStats() {
 
   try {
     const [health, collectionsData] = await Promise.all([
-      app.apiJson('/health'),
+      app.apiJson('/health/details'),
       app.apiJson('/collections'),
     ]);
     const summaries = (collectionsData.collections || []).reduce((map, item) => {

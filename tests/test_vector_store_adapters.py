@@ -159,8 +159,11 @@ def test_vector_batch_validation_rejects_length_mismatch_before_backend_call():
 
 def test_get_store_selects_backend_and_reports_missing_qdrant_dependency(monkeypatch):
     monkeypatch.setenv("VECTOR_STORE", "chroma")
-    with patch.object(vector_store, "ChromaStore", return_value="chroma"):
-        assert vector_store.get_store() == "chroma"
+    with pytest.raises(RuntimeError, match="Chroma dependency has known code-execution"):
+        vector_store.get_store()
+
+    monkeypatch.setenv("VECTOR_STORE", "none")
+    assert isinstance(vector_store.get_store(), vector_store.DisabledVectorStore)
 
     monkeypatch.setenv("VECTOR_STORE", "qdrant")
     with (
@@ -241,13 +244,20 @@ def test_qdrant_init_enforces_key_and_tls_boundary(monkeypatch):
         with patch.object(vector_store, "secret_value", return_value="secret"):
             vector_store.QdrantStore()
     assert calls[-1]["https"] is False
+    assert calls[-1]["timeout"] == 5
 
     monkeypatch.setenv("QDRANT_HTTPS", "true")
     monkeypatch.setenv("QDRANT_PORT", "7443")
     with patch.dict(sys.modules, qdrant_module(calls)):
         with patch.object(vector_store, "secret_value", return_value="secret"):
             vector_store.QdrantStore()
-    assert calls[-1] == {"host": "remote.example", "port": 7443, "api_key": "secret", "https": True}
+    assert calls[-1] == {
+        "host": "remote.example",
+        "port": 7443,
+        "api_key": "secret",
+        "https": True,
+        "timeout": 5,
+    }
 
 
 def test_qdrant_collection_batch_query_delete_and_count(monkeypatch):

@@ -150,6 +150,7 @@ class AlarmTrigger(BaseModel):
     alarm_code: str = Field(min_length=1, max_length=128)
     manual: Optional[str] = Field(default="808d", max_length=64)
     machine_id: Optional[str] = Field(default=None, max_length=255)
+    line_id: Optional[str] = Field(default=None, max_length=128)
     source: Optional[str] = Field(default="API", max_length=128)
     external_event_id: Optional[str] = Field(default=None, max_length=255)
     severity: Optional[str] = Field(default=None, max_length=32)
@@ -608,7 +609,7 @@ def retrieval_citations(collection: str, docs: list[dict]) -> list[dict]:
         text = str(doc.get("text") or "")
         identity = "\x1f".join([
             collection,
-            str(meta.get("doc_id") or ""),
+            str(meta.get("section_id") or meta.get("doc_id") or ""),
             str(meta.get("source") or meta.get("source_file") or ""),
             str(meta.get("code") or ""),
             str(meta.get("page") or ""),
@@ -622,7 +623,15 @@ def retrieval_citations(collection: str, docs: list[dict]) -> list[dict]:
             "page": meta.get("page", ""),
             "source": str(meta.get("source") or ""),
             "source_file": str(meta.get("source_file") or ""),
+            "source_hash": str(meta.get("source_hash") or ""),
             "doc_id": str(meta.get("doc_id") or ""),
+            "source_id": str(meta.get("source_id") or meta.get("doc_id") or ""),
+            "section_id": str(meta.get("section_id") or ""),
+            "locator": str(meta.get("locator") or ""),
+            "official_source": bool(meta.get("official_source", False)),
+            "publisher": str(meta.get("publisher") or ""),
+            "document_title": str(meta.get("document_title") or ""),
+            "edition": str(meta.get("edition") or ""),
             "kind": str(meta.get("kind") or meta.get("type") or ""),
             "excerpt": re.sub(r"\s+", " ", text).strip()[:300],
         })
@@ -777,4 +786,8 @@ def log_query(collection: str, query: str, source: str = "web", elapsed_ms: int 
     query_log.append(entry)
     if len(query_log) > 500:
         query_log.pop(0)
-    append_jsonl(QUERY_LOG_PATH, entry)
+    append_jsonl(
+        QUERY_LOG_PATH,
+        entry,
+        max_records=env_int("ALARM_RAG_QUERY_LOG_MAX_RECORDS", 5000, minimum=1, maximum=1_000_000),
+    )

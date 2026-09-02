@@ -27,7 +27,7 @@ def test_feedback_rejects_unknown_answer_id():
 
 
 def test_feedback_rejects_query_or_collection_mismatch():
-    answer = {"query": "original", "collection": "808d"}
+    answer = {"query": "original", "collection": "808d", "created_by": "operator01"}
     with patch.object(stats_routes.rag_answers, "get", return_value=answer):
         response = asyncio.run(stats_routes.save_feedback(
             FeedbackRequest(query="tampered", collection="808d", feedback="good", answer_id="chatcmpl_1"),
@@ -37,7 +37,7 @@ def test_feedback_rejects_query_or_collection_mismatch():
 
 
 def test_matching_feedback_preserves_answer_id_in_repository_payload():
-    answer = {"query": "original", "collection": "808d"}
+    answer = {"query": "original", "collection": "808d", "created_by": "operator01"}
     with (
         patch.object(stats_routes.rag_answers, "get", return_value=answer),
         patch.object(stats_routes, "postgres_store_enabled", return_value=True),

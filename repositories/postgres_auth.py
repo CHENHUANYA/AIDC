@@ -5,12 +5,13 @@ from datetime import datetime, timedelta, timezone
 from math import ceil
 from typing import Dict, List
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from db.models import LoginSession, LoginThrottle, User
 from db.session import session_scope
+from config_values import env_int
 
 
 TOKEN_PREFIX_LENGTH = 10
@@ -18,6 +19,19 @@ TOKEN_PREFIX_LENGTH = 10
 
 class ConcurrentUserUpdateError(RuntimeError):
     """Raised when a caller tries to save a stale user record."""
+
+
+class CredentialChangedError(RuntimeError):
+    """Raised when credentials changed after a login request verified them."""
+
+
+class SessionCapacityError(RuntimeError):
+    """Raised when the global active-session safety ceiling is reached."""
+
+
+def _serialize_capacity_change(session, lock_id: int) -> None:
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
 
 
 def token_digest(token: str) -> str:
@@ -66,6 +80,8 @@ def user_dict(user: User) -> dict:
         "line_scope": list(user.line_scope or []),
         "team": user.team,
         "active": user.active,
+        "credential_epoch": user.credential_epoch,
+        "must_change_password": user.must_change_password,
         "password_hash": user.password_hash,
         "created_at": iso(user.created_at),
         "updated_at": iso(user.updated_at),
@@ -79,6 +95,8 @@ def apply_user_payload(user: User, user_id: str, payload: dict) -> None:
     user.line_scope = [str(item) for item in payload.get("line_scope", [])]
     user.password_hash = str(payload.get("password_hash") or "")
     user.active = bool(payload.get("active", True))
+    user.credential_epoch = max(int(payload.get("credential_epoch") or 1), 1)
+    user.must_change_password = bool(payload.get("must_change_password", False))
 
 
 class PostgresUserRepository:
@@ -118,16 +136,61 @@ class PostgresUserRepository:
 
 
 class PostgresSessionRepository:
-    def create(self, token: str, user_id: str, created_at: str, expires_at: str) -> None:
+    def create(
+        self,
+        token: str,
+        user_id: str,
+        created_at: str,
+        expires_at: str,
+        *,
+        expected_credential_epoch: int = 1,
+    ) -> None:
         with session_scope() as session:
-            user_pk = session.scalar(select(User.id).where(User.user_id == user_id))
-            if user_pk is None:
+            _serialize_capacity_change(session, 4_601_101)
+            user = session.scalar(select(User).where(User.user_id == user_id).with_for_update())
+            if user is None:
                 raise ValueError(f"User {user_id} not found")
+            if not user.active or user.credential_epoch != expected_credential_epoch:
+                raise CredentialChangedError("Credentials changed while the session was being created")
+            now = datetime.now(timezone.utc)
+            cleanup_batch = env_int("SESSION_CLEANUP_BATCH_SIZE", 1000, minimum=1, maximum=10_000)
+            stale_ids = list(session.scalars(
+                select(LoginSession.id)
+                .where(or_(LoginSession.expires_at <= now, LoginSession.revoked_at.is_not(None)))
+                .order_by(LoginSession.expires_at, LoginSession.id)
+                .limit(cleanup_batch)
+            ))
+            if stale_ids:
+                session.execute(delete(LoginSession).where(LoginSession.id.in_(stale_ids)))
+
+            per_user_limit = env_int("SESSION_MAX_ACTIVE_PER_USER", 10, minimum=1, maximum=1000)
+            user_session_ids = list(session.scalars(
+                select(LoginSession.id)
+                .where(
+                    LoginSession.user_id == user.id,
+                    LoginSession.revoked_at.is_(None),
+                    LoginSession.expires_at > now,
+                )
+                .order_by(LoginSession.created_at, LoginSession.id)
+            ))
+            overflow = len(user_session_ids) - per_user_limit + 1
+            if overflow > 0:
+                session.execute(delete(LoginSession).where(LoginSession.id.in_(user_session_ids[:overflow])))
+
+            global_limit = env_int("SESSION_MAX_ACTIVE_GLOBAL", 10_000, minimum=1, maximum=1_000_000)
+            active_total = int(session.scalar(
+                select(func.count())
+                .select_from(LoginSession)
+                .where(LoginSession.revoked_at.is_(None), LoginSession.expires_at > now)
+            ) or 0)
+            if active_total >= global_limit:
+                raise SessionCapacityError("Global active-session capacity reached")
             session.add(LoginSession(
                 token_hash=token_digest(token),
-                user_id=user_pk,
+                user_id=user.id,
                 created_at=parse_datetime(created_at),
                 expires_at=parse_datetime(expires_at),
+                credential_epoch=user.credential_epoch,
             ))
 
     def get(self, token: str) -> dict | None:
@@ -135,14 +198,19 @@ class PostgresSessionRepository:
         now = datetime.now(timezone.utc)
         with session_scope() as session:
             row = session.execute(
-                select(LoginSession, User.user_id, User.active)
+                select(LoginSession, User.user_id, User.active, User.credential_epoch)
                 .join(User, User.id == LoginSession.user_id)
                 .where(LoginSession.token_hash == digest)
             ).one_or_none()
             if row is None:
                 return None
-            record, user_id, active = row
-            if record.revoked_at is not None or utc_datetime(record.expires_at) <= now or not active:
+            record, user_id, active, current_epoch = row
+            if (
+                record.revoked_at is not None
+                or utc_datetime(record.expires_at) <= now
+                or not active
+                or record.credential_epoch != current_epoch
+            ):
                 session.delete(record)
                 return None
             record.last_seen_at = now
@@ -180,21 +248,39 @@ class PostgresSessionRepository:
                 session.delete(record)
             return len(records)
 
-    def list_active(self) -> List[dict]:
+    def list_active_page(self, *, limit: int = 200, offset: int = 0) -> tuple[List[dict], int]:
         now = datetime.now(timezone.utc)
         with session_scope() as session:
-            session.execute(delete(LoginSession).where(LoginSession.expires_at <= now))
+            cleanup_batch = env_int("SESSION_CLEANUP_BATCH_SIZE", 1000, minimum=1, maximum=10_000)
+            stale_ids = list(session.scalars(
+                select(LoginSession.id)
+                .where(or_(LoginSession.expires_at <= now, LoginSession.revoked_at.is_not(None)))
+                .order_by(LoginSession.expires_at, LoginSession.id)
+                .limit(cleanup_batch)
+            ))
+            if stale_ids:
+                session.execute(delete(LoginSession).where(LoginSession.id.in_(stale_ids)))
+            conditions = (
+                LoginSession.revoked_at.is_(None),
+                LoginSession.expires_at > now,
+                User.active.is_(True),
+                LoginSession.credential_epoch == User.credential_epoch,
+            )
+            total = int(session.scalar(
+                select(func.count())
+                .select_from(LoginSession)
+                .join(User, User.id == LoginSession.user_id)
+                .where(*conditions)
+            ) or 0)
             rows = session.execute(
                 select(LoginSession, User.user_id, User.role)
                 .join(User, User.id == LoginSession.user_id)
-                .where(
-                    LoginSession.revoked_at.is_(None),
-                    LoginSession.expires_at > now,
-                    User.active.is_(True),
-                )
+                .where(*conditions)
                 .order_by(LoginSession.expires_at)
+                .offset(max(offset, 0))
+                .limit(min(max(limit, 1), 500))
             ).all()
-            return [
+            entries = [
                 {
                     "token_prefix": record.token_hash[:TOKEN_PREFIX_LENGTH],
                     "user_id": user_id,
@@ -204,6 +290,11 @@ class PostgresSessionRepository:
                 }
                 for record, user_id, role in rows
             ]
+            return entries, total
+
+    def list_active(self) -> List[dict]:
+        entries, _ = self.list_active_page()
+        return entries
 
 
 class PostgresLoginThrottleRepository:
@@ -299,6 +390,110 @@ class PostgresLoginThrottleRepository:
             throttle.window_started_at = current
             throttle.locked_until = current + timedelta(seconds=lockout_seconds)
             return lockout_seconds
+
+    def record_failures(
+        self,
+        rate_keys: list[str] | tuple[str, ...],
+        limit: int,
+        window_seconds: int,
+        lockout_seconds: int,
+        *,
+        max_keys: int,
+        now: datetime | None = None,
+    ) -> int:
+        """Atomically admit and update all account/source throttle buckets."""
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        retention = timedelta(seconds=max(window_seconds, lockout_seconds))
+        keyed_hashes = list(dict.fromkeys(
+            (throttle_key_digest(key), key)
+            for key in rate_keys
+        ))
+        hashes = [key_hash for key_hash, _ in keyed_hashes]
+        if not keyed_hashes:
+            return 0
+        with session_scope() as session:
+            _serialize_capacity_change(session, 4_601_102)
+            cleanup_batch = env_int("LOGIN_RATE_CLEANUP_BATCH_SIZE", 1000, minimum=1, maximum=10_000)
+            stale_keys = list(session.scalars(
+                select(LoginThrottle.key_hash)
+                .where(
+                    LoginThrottle.updated_at < current - retention,
+                    or_(LoginThrottle.locked_until.is_(None), LoginThrottle.locked_until <= current),
+                )
+                .order_by(LoginThrottle.updated_at, LoginThrottle.key_hash)
+                .limit(cleanup_batch)
+            ))
+            if stale_keys:
+                session.execute(delete(LoginThrottle).where(LoginThrottle.key_hash.in_(stale_keys)))
+            existing_hashes = set(session.scalars(
+                select(LoginThrottle.key_hash).where(LoginThrottle.key_hash.in_(hashes))
+            ))
+            active_count = int(session.scalar(select(func.count()).select_from(LoginThrottle)) or 0)
+            if active_count + len(set(hashes) - existing_hashes) > max_keys:
+                global_throttle = session.scalar(
+                    select(LoginThrottle)
+                    .where(LoginThrottle.key_hash == throttle_key_digest("global:login"))
+                    .with_for_update()
+                )
+                if global_throttle is not None:
+                    global_throttle.locked_until = current + timedelta(seconds=lockout_seconds)
+                    global_throttle.updated_at = current
+                return lockout_seconds
+
+            retry_after = 0
+            global_limit = env_int(
+                "LOGIN_RATE_GLOBAL_FAILURE_LIMIT",
+                max(limit * 20, 100),
+                minimum=limit,
+                maximum=1_000_000,
+            )
+            for key_hash, rate_key in keyed_hashes:
+                throttle = self._get_or_create_locked(session, key_hash, current)
+                window_started_at = utc_datetime(throttle.window_started_at)
+                if window_started_at + timedelta(seconds=window_seconds) <= current:
+                    throttle.failure_count = 0
+                    throttle.window_started_at = current
+                    throttle.locked_until = None
+                throttle.failure_count += 1
+                throttle.updated_at = current
+                bucket_limit = global_limit if rate_key == "global:login" else limit
+                if throttle.failure_count >= bucket_limit:
+                    throttle.failure_count = 0
+                    throttle.window_started_at = current
+                    throttle.locked_until = current + timedelta(seconds=lockout_seconds)
+                    retry_after = max(retry_after, lockout_seconds)
+            return retry_after
+
+    def retry_after_many(
+        self,
+        rate_keys: list[str] | tuple[str, ...],
+        window_seconds: int,
+        now: datetime | None = None,
+    ) -> int:
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        hashes = [throttle_key_digest(key) for key in rate_keys]
+        with session_scope() as session:
+            rows = list(session.scalars(
+                select(LoginThrottle)
+                .where(LoginThrottle.key_hash.in_(hashes or [""]))
+                .with_for_update()
+            ))
+            retry_after = 0
+            for throttle in rows:
+                locked_until = utc_datetime(throttle.locked_until) if throttle.locked_until else None
+                if locked_until and locked_until > current:
+                    retry_after = max(retry_after, max(ceil((locked_until - current).total_seconds()), 1))
+                    throttle.updated_at = current
+                elif utc_datetime(throttle.window_started_at) + timedelta(seconds=window_seconds) <= current:
+                    session.delete(throttle)
+            return retry_after
+
+    def clear_many(self, rate_keys: list[str] | tuple[str, ...]) -> None:
+        hashes = [throttle_key_digest(key) for key in rate_keys]
+        if not hashes:
+            return
+        with session_scope() as session:
+            session.execute(delete(LoginThrottle).where(LoginThrottle.key_hash.in_(hashes)))
 
     def clear(self, rate_key: str) -> None:
         with session_scope() as session:

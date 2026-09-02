@@ -19,10 +19,18 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from env_utils import EnvConfigError, admin_initial_password, load_project_env
 from bm25_text import BM25_TOKENIZER_VERSION
 from rag_offline_evaluation import evaluate, load_dataset
+from rag_retrieval_benchmark import (
+    BenchmarkError,
+    VALID_SCOPES,
+    authorize_heldout_run,
+    dataset_for_scope,
+    load_split_manifest,
+)
 
 
 load_project_env()
 DEFAULT_GOLD_DATASET = ROOT / "mock_data" / "rag_gold_v2.json"
+DEFAULT_GOLD_SPLIT = ROOT / "mock_data" / "rag_evaluation_split_v1.json"
 DEFAULT_JSON_REPORT = ROOT / "tests_tmp" / "rag-runtime" / "report.json"
 DEFAULT_MD_REPORT = ROOT / "tests_tmp" / "rag-runtime" / "report.md"
 
@@ -88,12 +96,14 @@ def qdrant_count(qdrant_url: str, collection: str, timeout: int, api_key: str = 
     return int(points) if isinstance(points, int) else None
 
 
-def check_health(client: RuntimeClient) -> tuple[Check, dict[str, Any]]:
-    code, data = client.request_json("/health")
+def check_health(client: RuntimeClient, *, detailed: bool = False) -> tuple[Check, dict[str, Any]]:
+    path = "/health/details" if detailed else "/health"
+    code, data = client.request_json(path)
     ok = code == 200 and isinstance(data, dict) and data.get("status") == "ok"
     collections = data.get("collections", {}) if isinstance(data, dict) else {}
     detail = f"HTTP {code}, collections={','.join(sorted(collections)) or '-'}"
-    return Check("health", "PASS" if ok else "FAIL", detail), data if isinstance(data, dict) else {}
+    name = "health:details" if detailed else "health"
+    return Check(name, "PASS" if ok else "FAIL", detail), data if isinstance(data, dict) else {}
 
 
 def check_reranker_runtime(health: dict[str, Any], collection: str, require: bool) -> Check:
@@ -138,6 +148,37 @@ def check_vector_coverage(
     return checks
 
 
+def check_traceability_coverage(health: dict[str, Any]) -> Check:
+    collections = health.get("collections", {}) if isinstance(health, dict) else {}
+    failures = []
+    details = []
+    for name, summary in sorted(collections.items()):
+        traceability = summary.get("traceability", {}) if isinstance(summary, dict) else {}
+        total = int(summary.get("alarms_indexed") or 0) if isinstance(summary, dict) else 0
+        traced = int(traceability.get("traceable_sections") or 0) if isinstance(traceability, dict) else 0
+        ready = traceability.get("traceability_ready") is True if isinstance(traceability, dict) else False
+        details.append(f"{name}={traced}/{total}")
+        if total <= 0 or traced != total or not ready:
+            failures.append(name)
+    return Check(
+        "rag:traceability-coverage",
+        "PASS" if collections and not failures else "FAIL",
+        f"coverage={','.join(details) or '-'}, failures={','.join(failures) or '-'}",
+    )
+
+
+def citation_traceable(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    required = ("source_id", "source_file", "section_id", "locator")
+    if not all(str(item.get(field) or "").strip() for field in required):
+        return False
+    if item.get("official_source") is True:
+        source_hash = str(item.get("source_hash") or "").strip()
+        return len(source_hash) == 64 and all(char in "0123456789abcdefABCDEF" for char in source_hash)
+    return True
+
+
 def check_lookup(client: RuntimeClient, manual: str, alarm_code: str) -> Check:
     code, data = client.request_json(f"/v1/{manual}/lookup?code={alarm_code}")
     ok = code == 200 and isinstance(data, dict) and data.get("found") is True
@@ -154,7 +195,12 @@ def chat_payload(prompt: str, stream: bool = False) -> dict[str, Any]:
     }
 
 
-def check_chat(client: RuntimeClient, manual: str, prompt: str, expected_code: str) -> Check:
+def check_chat_with_answer_id(
+    client: RuntimeClient,
+    manual: str,
+    prompt: str,
+    expected_code: str,
+) -> tuple[Check, str]:
     start = time.time()
     code, data = client.request_json(f"/v1/{manual}/chat/completions", "POST", chat_payload(prompt))
     elapsed_ms = int((time.time() - start) * 1000)
@@ -164,17 +210,46 @@ def check_chat(client: RuntimeClient, manual: str, prompt: str, expected_code: s
     rag = data.get("rag", {}) if isinstance(data, dict) else {}
     citations = rag.get("citations", []) if isinstance(rag, dict) else []
     citation_ok = bool(citations) and any(str(item.get("code") or "") == expected_code for item in citations)
+    traceability_ok = bool(citations) and all(citation_traceable(item) for item in citations)
     response_id = str(data.get("id") or "") if isinstance(data, dict) else ""
     answer_id_ok = bool(response_id and isinstance(rag, dict) and rag.get("answer_id") == response_id)
-    ok = code == 200 and isinstance(content, str) and len(content.strip()) > 20 and citation_ok and answer_id_ok
+    ok = (
+        code == 200
+        and isinstance(content, str)
+        and len(content.strip()) > 20
+        and citation_ok
+        and traceability_ok
+        and answer_id_ok
+    )
     source_hint = "fallback" if "LLM" in content and ("unavailable" in content.lower() or "Detail" in content) else "llm"
     return Check(
         "rag:chat",
         "PASS" if ok else "FAIL",
         f"HTTP {code}, len={len(content)}, citations={len(citations)}, expected_code={citation_ok}, "
-        f"answer_id={answer_id_ok}, "
+        f"traceable={traceability_ok}, answer_id={answer_id_ok}, "
         f"elapsed_ms={elapsed_ms}, mode={source_hint}",
-    )
+    ), response_id
+
+
+def check_chat(client: RuntimeClient, manual: str, prompt: str, expected_code: str) -> Check:
+    check, _answer_id = check_chat_with_answer_id(client, manual, prompt, expected_code)
+    return check
+
+
+def check_answer_snapshot_provider(client: RuntimeClient, answer_id: str) -> tuple[Check, str]:
+    if not answer_id:
+        return Check("rag:answer-provider", "FAIL", "answer_id is missing"), ""
+    code, data = client.request_json(f"/rag/answers/{answer_id}")
+    answer = data.get("answer", {}) if isinstance(data, dict) else {}
+    provider = str(answer.get("provider") or "") if isinstance(answer, dict) else ""
+    state = str(answer.get("answer_state") or "") if isinstance(answer, dict) else ""
+    accepted = {"retrieval", "ollama", "school"}
+    status = "PASS" if code == 200 and provider in accepted and state in {"complete", "fallback"} else "FAIL"
+    return Check(
+        "rag:answer-provider",
+        status,
+        f"HTTP {code}, provider={provider or '-'}, state={state or '-'}",
+    ), provider
 
 
 class LiveRetriever:
@@ -207,9 +282,18 @@ class LiveRetriever:
         ]
 
 
-def check_gold_retrieval(client: RuntimeClient, dataset_path: Path, top_k: int) -> tuple[Check, dict[str, Any]]:
+def check_gold_retrieval(
+    client: RuntimeClient,
+    dataset_path: Path,
+    top_k: int,
+    split_manifest_path: Path | None = None,
+    scope: str = "all",
+) -> tuple[Check, dict[str, Any]]:
     try:
         dataset = load_dataset(dataset_path)
+        if split_manifest_path is not None:
+            split_manifest = load_split_manifest(split_manifest_path, dataset, dataset_path)
+            dataset = dataset_for_scope(dataset, split_manifest, scope)
         collections = sorted({str(case["collection"]) for case in dataset["cases"]})
         retrievers = {collection: LiveRetriever(client, collection) for collection in collections}
         report = evaluate(dataset, retrievers, top_k)
@@ -218,6 +302,8 @@ def check_gold_retrieval(client: RuntimeClient, dataset_path: Path, top_k: int) 
         return Check("rag:gold-dataset", "FAIL", str(exc)), {"status": "fail", "error": str(exc)}
 
     report["transport_errors"] = transport_errors
+    report["scope"] = scope
+    report["split_manifest"] = report_path(split_manifest_path) if split_manifest_path else ""
     report["runtime_tokenizer_versions"] = {
         collection: sorted(retriever.tokenizer_versions)
         for collection, retriever in retrievers.items()
@@ -226,6 +312,7 @@ def check_gold_retrieval(client: RuntimeClient, dataset_path: Path, top_k: int) 
     ok = report["status"] == "pass" and not transport_errors
     detail = (
         f"dataset={report['dataset_version']}, cases={metrics['case_count']}, "
+        f"scope={scope}, "
         f"recall@{top_k}={metrics['recall_at_k']:.4f}, mrr={metrics['mrr']:.4f}, "
         f"evidence={metrics['evidence_coverage_rate']:.4f}, source={metrics['source_hit_rate']:.4f}, "
         f"transport_errors={len(transport_errors)}"
@@ -260,14 +347,16 @@ def validate_stream_contract(body: str, expected_code: str) -> tuple[bool, dict[
             rag_events.append(rag)
     citations = rag_events[0].get("citations", []) if rag_events else []
     citation_ok = any(str(item.get("code") or "") == expected_code for item in citations)
+    traceability_ok = bool(citations) and all(citation_traceable(item) for item in citations)
     answer_id_ok = bool(rag_events and len(ids) == 1 and rag_events[0].get("answer_id") in ids)
     done = "data: [DONE]" in body
-    ok = bool(events and done and citation_ok and answer_id_ok)
+    ok = bool(events and done and citation_ok and traceability_ok and answer_id_ok)
     return ok, {
         "events": len(events),
         "ids": len(ids),
         "citations": len(citations),
         "expected_code": citation_ok,
+        "traceable": traceability_ok,
         "answer_id": answer_id_ok,
         "done": done,
     }
@@ -330,7 +419,8 @@ def check_stream_chat_with_snapshot(
         "PASS" if ok else "FAIL",
         f"HTTP {code}, bytes={len(body)}, events={detail['events']}, ids={detail['ids']}, "
         f"citations={detail['citations']}, expected_code={detail['expected_code']}, "
-        f"answer_id={detail['answer_id']}, done={detail['done']}, content_events={content_events}, "
+        f"traceable={detail['traceable']}, answer_id={detail['answer_id']}, "
+        f"done={detail['done']}, content_events={content_events}, "
         f"incremental={incremental}, first_content_ms={first_content_ms}, total_ms={total_ms}",
     ), answer_id, content_text
 
@@ -405,6 +495,8 @@ def build_runtime_report(
     *,
     base_url: str,
     gold_dataset: Path,
+    gold_split_manifest: Path,
+    gold_scope: str,
     gold_report: dict[str, Any],
 ) -> dict[str, Any]:
     return {
@@ -413,6 +505,8 @@ def build_runtime_report(
         "git_revision": git_revision(),
         "base_url": base_url,
         "gold_dataset": report_path(gold_dataset),
+        "gold_split_manifest": report_path(gold_split_manifest),
+        "gold_scope": gold_scope,
         "checks": [asdict(check) for check in checks],
         "gold_retrieval": gold_report,
     }
@@ -426,6 +520,7 @@ def markdown_report(report: dict[str, Any]) -> str:
         f"- Git revision: `{report.get('git_revision', '')}`",
         f"- Runtime: `{report.get('base_url', '')}`",
         f"- Gold dataset: `{report.get('gold_dataset', '')}`",
+        f"- Gold split: `{report.get('gold_scope', '')}` from `{report.get('gold_split_manifest', '')}`",
         "",
         "| Check | Status | Detail |",
         "|---|---|---|",
@@ -475,7 +570,7 @@ def print_report(checks: list[Check]) -> None:
     )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate live LLM/RAG runtime behavior")
     parser.add_argument("--base-url", default="http://localhost:8100")
     parser.add_argument("--qdrant-url", default="http://localhost:6333")
@@ -487,13 +582,34 @@ def main() -> int:
     parser.add_argument("--require-reranker", action="store_true", help="fail unless reranker inference succeeds during this gate")
     parser.add_argument("--check-school-api", action="store_true", help="directly call the configured School API provider")
     parser.add_argument("--gold-dataset", type=Path, default=DEFAULT_GOLD_DATASET)
+    parser.add_argument("--gold-split-manifest", type=Path, default=DEFAULT_GOLD_SPLIT)
+    parser.add_argument("--gold-scope", choices=sorted(VALID_SCOPES), default="development")
     parser.add_argument("--gold-top-k", type=int, default=5)
+    parser.add_argument("--run-label", default="")
+    parser.add_argument("--freeze-manifest", type=Path)
+    parser.add_argument("--confirm-heldout-final", action="store_true")
     parser.add_argument("--skip-gold-retrieval", action="store_true")
     parser.add_argument("--report-json", type=Path, default=DEFAULT_JSON_REPORT)
     parser.add_argument("--report-md", type=Path, default=DEFAULT_MD_REPORT)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.gold_top_k < 1:
         parser.error("--gold-top-k must be positive")
+    try:
+        authorize_heldout_run(
+            args.gold_scope,
+            args.confirm_heldout_final,
+            args.run_label,
+            args.freeze_manifest,
+            args.gold_dataset,
+            args.gold_split_manifest,
+            True,
+            args.gold_top_k,
+            "original",
+            None,
+        )
+    except BenchmarkError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     client = RuntimeClient(args.base_url, args.timeout)
     checks: list[Check] = []
@@ -506,11 +622,16 @@ def main() -> int:
             checks,
             base_url=args.base_url,
             gold_dataset=args.gold_dataset,
+            gold_split_manifest=args.gold_split_manifest,
+            gold_scope=args.gold_scope,
             gold_report=gold_report,
         )
         write_runtime_reports(args.report_json, args.report_md, report)
         print_report(checks)
         return 1
+
+    detailed_health_check, health = check_health(client, detailed=True)
+    checks.append(detailed_health_check)
 
     checks.extend(
         check_vector_coverage(
@@ -521,22 +642,40 @@ def main() -> int:
             os.getenv("QDRANT_API_KEY", "").strip(),
         )
     )
+    checks.append(check_traceability_coverage(health))
     checks.append(check_lookup(client, args.manual, args.alarm_code))
     if not args.skip_gold_retrieval:
-        gold_check, gold_report = check_gold_retrieval(client, args.gold_dataset, args.gold_top_k)
-        checks.append(gold_check)
-    _, post_retrieval_health = check_health(client)
-    checks.append(check_reranker_runtime(post_retrieval_health, args.manual, args.require_reranker))
-    checks.append(
-        check_chat(
+        gold_check, gold_report = check_gold_retrieval(
             client,
-            args.manual,
-            f"Alarm {args.alarm_code} remedy summary for runtime validation",
-            args.alarm_code,
+            args.gold_dataset,
+            args.gold_top_k,
+            args.gold_split_manifest,
+            args.gold_scope,
         )
+        checks.append(gold_check)
+    _, post_retrieval_health = check_health(client, detailed=True)
+    checks.append(check_reranker_runtime(post_retrieval_health, args.manual, args.require_reranker))
+    chat_check, answer_id = check_chat_with_answer_id(
+        client,
+        args.manual,
+        f"Alarm {args.alarm_code} remedy summary for runtime validation",
+        args.alarm_code,
     )
-    _, post_chat_health = check_health(client)
-    checks.append(Check("llm:last-source", "PASS" if post_chat_health.get("last_llm_source") in {"ollama", "school"} else "FAIL", str(post_chat_health.get("last_llm_source"))))
+    checks.append(chat_check)
+    provider_check, answer_provider = check_answer_snapshot_provider(client, answer_id)
+    checks.append(provider_check)
+    _, post_chat_health = check_health(client, detailed=True)
+    last_source = str(post_chat_health.get("last_llm_source") or "none")
+    if answer_provider == "retrieval":
+        checks.append(Check("llm:last-source", "SKIP", "retrieval-only answer; no LLM call expected"))
+    else:
+        checks.append(
+            Check(
+                "llm:last-source",
+                "PASS" if last_source == answer_provider and answer_provider in {"ollama", "school"} else "FAIL",
+                f"health={last_source}, snapshot={answer_provider or '-'}",
+            )
+        )
     if args.check_school_api:
         checks.append(check_school_api_direct(args.timeout))
     checks.append(
@@ -553,6 +692,8 @@ def main() -> int:
         checks,
         base_url=args.base_url,
         gold_dataset=args.gold_dataset,
+        gold_split_manifest=args.gold_split_manifest,
+        gold_scope=args.gold_scope,
         gold_report=gold_report,
     )
     write_runtime_reports(args.report_json, args.report_md, report)

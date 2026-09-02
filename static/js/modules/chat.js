@@ -84,7 +84,7 @@ function canSaveAssistantMessage(content) {
     && !text.includes('對話查詢失敗');
 }
 
-function appendMessage(role, content) {
+function appendMessage(role, content, rag = null) {
   const app = getApp();
   if (!app) {
     return;
@@ -105,10 +105,10 @@ function appendMessage(role, content) {
 
   const bubble = div.querySelector('.msg-bubble');
   if (role === 'assistant') {
-    // Extract metadata before stripping
-    const pageTag = content.match(/<!-- PAGE:(\d+) -->/)?.[1] || null;
-    const codeTag = content.match(/<!-- CODE:(\d+) -->/)?.[1] || null;
-    const titleTag = content.match(/<!-- TITLE:([^-]+?)\s*-->/)?.[1]?.trim() || null;
+    const citation = Array.isArray(rag?.citations) ? rag.citations[0] : null;
+    const pageTag = citation?.page || null;
+    const codeTag = citation?.code || null;
+    const titleTag = citation?.title || citation?.document_title || null;
     const collection = app.getState('chatCollection') || '808d';
 
     const cleaned = stripMetaComments(content);
@@ -205,7 +205,7 @@ async function sendChat() {
     const content = data?.choices?.[0]?.message?.content || '抱歉，系統目前沒有回傳內容。';
     app.setState('lastAnswerId', data?.rag?.answer_id || data?.id || '');
     removeTyping();
-    appendMessage('assistant', content);
+    appendMessage('assistant', content, data?.rag);
     app.setState('chatHistory', [...requestHistory, { role: 'assistant', content }].slice(-12));
   } catch (error) {
     removeTyping();

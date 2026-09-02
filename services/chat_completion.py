@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import time
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
+
+
+RESERVED_CITATION_COMMENT = re.compile(r"<!--\s*(?:PAGE|CODE|TITLE)\s*:[\s\S]*?-->", re.IGNORECASE)
+
+
+def strip_reserved_citation_comments(content: str) -> str:
+    return RESERVED_CITATION_COMMENT.sub("", str(content or "")).lstrip("\r\n")
 
 
 @dataclass(frozen=True)
@@ -50,9 +58,7 @@ async def complete_non_streaming_chat(
         if not content:
             raise RuntimeError("LLM returned empty response")
 
-        tags = dependencies.answer_source_tags(docs)
-        if tags:
-            content = f"{tags}\n{content}"
+        content = strip_reserved_citation_comments(content)
         provider = dependencies.provider_source()
     except Exception as exc:
         content = dependencies.unavailable_message(exc, docs)
@@ -67,7 +73,7 @@ async def complete_non_streaming_chat(
         if provider == "school"
         else dependencies.ollama_model if provider == "ollama" else ""
     )
-    dependencies.save_answer(
+    await dependencies.save_answer(
         answer_id=response_id,
         query=user_query,
         collection=collection_name,

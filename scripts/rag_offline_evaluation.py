@@ -3,13 +3,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import pickle
 import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Protocol
 
 import numpy as np
 
@@ -18,6 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
+from signed_pickle import load_signed_pickle
 
 
 DEFAULT_DATASET = ROOT / "mock_data" / "rag_gold_v2.json"
@@ -29,6 +29,10 @@ ALARM_PATTERN = re.compile(r"\b(\d{2,6})\b")
 
 class DatasetError(ValueError):
     pass
+
+
+class Retriever(Protocol):
+    def retrieve(self, query: str, top_k: int) -> list[dict]: ...
 
 
 def sha256_file(path: Path) -> str:
@@ -65,11 +69,10 @@ def load_dataset(path: Path) -> dict[str, Any]:
 
 
 class OfflineBm25Retriever:
-    """Loads only trusted, locally generated pickle indexes; never use untrusted index files."""
+    """Loads only authenticated, locally generated pickle indexes."""
 
     def __init__(self, index_path: Path):
-        with index_path.open("rb") as file:
-            payload = pickle.load(file)
+        payload = load_signed_pickle(index_path)
         self.bm25 = payload["bm25"]
         self.sections = payload["sections"]
         self.index_tokenizer_version = str(payload.get("tokenizer_version") or "legacy-whitespace-v0")
@@ -138,7 +141,7 @@ def source_hit(documents: list[dict], expected_sources: list[str]) -> bool | Non
     return False
 
 
-def evaluate(dataset: dict, retrievers: dict[str, OfflineBm25Retriever], top_k: int) -> dict[str, Any]:
+def evaluate(dataset: dict, retrievers: Mapping[str, Retriever], top_k: int) -> dict[str, Any]:
     results = []
     reciprocal_ranks = []
     source_hits: list[bool] = []

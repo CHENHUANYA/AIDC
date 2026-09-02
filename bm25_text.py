@@ -4,7 +4,7 @@ import re
 import unicodedata
 
 
-BM25_TOKENIZER_VERSION = "unicode-domain-v1"
+BM25_TOKENIZER_VERSION = "unicode-domain-v2"
 
 _ASCII_TOKEN_RE = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*")
 _CJK_SEQUENCE_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
@@ -50,6 +50,14 @@ _DOMAIN_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("驅動", ("drive",)),
     ("驱动", ("drive",)),
     ("加速度", ("acceleration",)),
+    ("尚未啟動", ("not", "started", "up")),
+    ("尚未启动", ("not", "started", "up")),
+    ("重複定義", ("defined", "repeatedly")),
+    ("重复定义", ("defined", "repeatedly")),
+    ("升級處理", ("escalation", "contact", "service")),
+    ("升级处理", ("escalation", "contact", "service")),
+    ("升級流程", ("escalation", "contact", "service")),
+    ("升级流程", ("escalation", "contact", "service")),
     ("空壓", ("air", "pressure")),
     ("空压", ("air", "pressure")),
     ("調壓器", ("regulator",)),
