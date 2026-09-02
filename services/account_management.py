@@ -47,6 +47,8 @@ def build_user(
         "line_scope": normalize_line_scope(request.line_scope),
         "team": (request.team or "").strip(),
         "active": True,
+        "credential_epoch": 1,
+        "must_change_password": False,
         "password_hash": password_hasher(password),
         "created_at": now,
         "updated_at": now,
@@ -72,10 +74,8 @@ def validate_create_user(
     if user_id in existing_users:
         return f"User {user_id} already exists"
     if not request.password:
-        password_error = missing_password_error()
-        if password_error:
-            return password_error
-    if not valid_password(request.password or default_password()):
+        return "Password is required for every new account"
+    if not valid_password(request.password):
         return "Password must be at least 8 characters and not use a common placeholder"
     return None
 
@@ -112,6 +112,7 @@ def public_user(user: Mapping[str, Any]) -> dict[str, Any]:
         "line_scope": user.get("line_scope") if isinstance(user.get("line_scope"), list) else [],
         "team": str(user.get("team") or ""),
         "active": bool(user.get("active", True)),
+        "must_change_password": bool(user.get("must_change_password", False)),
         "created_at": str(user.get("created_at") or ""),
         "updated_at": str(user.get("updated_at") or ""),
     }

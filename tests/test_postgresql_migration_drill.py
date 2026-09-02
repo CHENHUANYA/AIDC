@@ -24,12 +24,12 @@ def test_migration_drill_dry_run_does_not_connect() -> None:
         report = drill.migration_drill(database_url="", apply=False)
 
     assert report["status"] == "dry-run"
-    assert report["head_revision"] == "20260729_0007"
+    assert report["head_revision"] == "20260902_0009"
     create.assert_not_called()
 
 
 def test_migration_drill_rehearses_both_directions_and_removes_scratch() -> None:
-    head = "20260729_0007"
+    head = "20260902_0009"
     with (
         patch.object(drill, "create_scratch_database") as create,
         patch.object(drill, "drop_scratch_database") as drop,

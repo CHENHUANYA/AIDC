@@ -48,6 +48,8 @@ class User(Base):
     line_scope: Mapped[list[str]] = mapped_column(JSON_TYPE, nullable=False, default=list)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    credential_epoch: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     created_at: Mapped[datetime] = created_at_column()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -62,6 +64,7 @@ class LoginSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    credential_epoch: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
 
     __table_args__ = (Index("ix_sessions_user_expires", "user_id", "expires_at"),)
 
@@ -270,6 +273,7 @@ class RagAnswer(Base):
     __table_args__ = (
         Index("ix_rag_answers_created", "created_at"),
         Index("ix_rag_answers_collection_created", "collection", "created_at"),
+        Index("ix_rag_answers_creator_created", "created_by_ref", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -284,6 +288,7 @@ class RagAnswer(Base):
     tokenizer_version: Mapped[str] = mapped_column(String(128), nullable=False, server_default="")
     retrieval_version: Mapped[str] = mapped_column(String(128), nullable=False, server_default="")
     elapsed_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    payload_bytes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_by_ref: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     created_at: Mapped[datetime] = created_at_column()
 

@@ -53,6 +53,14 @@ def apply_order_update(
         order["status"] = request.status
         if request.status != previous_status:
             changed_fields.append("status")
+            identity_field = {
+                "in_progress": "accepted_by",
+                "completed": "completed_by",
+                "verified": "verified_by",
+            }.get(request.status)
+            if identity_field and order.get(identity_field) != updated_by:
+                order[identity_field] = updated_by
+                changed_fields.append(identity_field)
         if request.status in {"completed", "verified"}:
             order["completed_at"] = order.get("completed_at") or now
         else:
@@ -71,9 +79,6 @@ def apply_order_update(
                 changed_fields.append("status")
 
     for field in (
-        "accepted_by",
-        "completed_by",
-        "verified_by",
         "root_cause",
         "repair_action",
         "failure_category",
@@ -89,6 +94,27 @@ def apply_order_update(
             if order.get(field) != value:
                 changed_fields.append(field)
             order[field] = value
+
+    aggregate_text_size = sum(
+        len(str(order.get(field) or ""))
+        for field in (
+            "description",
+            "resolution",
+            "notes",
+            "root_cause",
+            "repair_action",
+            "llm_missing_info",
+            "llm_expected_fix",
+        )
+    )
+    if aggregate_text_size > 50_000:
+        return MutationResult(
+            order,
+            before_order,
+            changed_fields,
+            current_version,
+            "Work order text exceeds the aggregate 50000 character limit",
+        )
 
     validation_error = closure_error(order)
     if validation_error:

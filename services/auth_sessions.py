@@ -6,7 +6,12 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Any, Callable, Mapping, TypeVar
+
+from services.json_file_store import exclusive_file_lock, write_json_atomic
+
+
+T = TypeVar("T")
 
 
 def session_cookie_secure(configured: str, request_scheme: str, forwarded_proto: str) -> bool:
@@ -52,15 +57,23 @@ def load_sessions(
 ) -> dict[str, dict]:
     session_path = Path(path)
     session_path.parent.mkdir(parents=True, exist_ok=True)
+    with exclusive_file_lock(str(session_path) + ".lock"):
+        normalized, migrated = _load_sessions_unlocked(session_path)
+        if migrated:
+            write_json_atomic(session_path, normalized)
+        return normalized
+
+
+def _load_sessions_unlocked(session_path: Path) -> tuple[dict[str, dict], bool]:
     if not session_path.exists():
-        return {}
+        return {}, False
     try:
         with session_path.open("r", encoding="utf-8") as file:
             payload = json.load(file)
     except (json.JSONDecodeError, OSError):
-        return {}
+        return {}, False
     if not isinstance(payload, dict):
-        return {}
+        return {}, False
     normalized: dict[str, dict] = {}
     migrated = False
     for stored_token, session in payload.items():
@@ -70,16 +83,28 @@ def load_sessions(
             migrated = True
         if isinstance(session, dict):
             normalized[key] = session
-    if migrated:
-        save_migrated(normalized)
-    return normalized
+    return normalized, migrated
 
 
 def save_sessions(path: str | Path, sessions: Mapping[str, dict]) -> None:
     session_path = Path(path)
     session_path.parent.mkdir(parents=True, exist_ok=True)
-    with session_path.open("w", encoding="utf-8") as file:
-        json.dump(sessions, file, ensure_ascii=False, indent=2)
+    with exclusive_file_lock(str(session_path) + ".lock"):
+        write_json_atomic(session_path, dict(sessions))
+
+
+def mutate_sessions(
+    path: str | Path,
+    mutation: Callable[[dict[str, dict]], T],
+) -> T:
+    """Atomically load, mutate and publish the complete JSON session map."""
+    session_path = Path(path)
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    with exclusive_file_lock(str(session_path) + ".lock"):
+        sessions, _ = _load_sessions_unlocked(session_path)
+        result = mutation(sessions)
+        write_json_atomic(session_path, sessions)
+        return result
 
 
 def revoke_user_sessions(sessions: Mapping[str, dict], user_id: str) -> dict[str, dict]:

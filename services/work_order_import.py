@@ -103,6 +103,26 @@ def import_workbook_rows(
     for row_index, row in enumerate(data_rows, start=2 if has_header else 1):
         try:
             fields = row_fields(row, column_map)
+            field_limits = {
+                "alarm_code": 128,
+                "manual": 64,
+                "machine_id": 255,
+                "priority": 32,
+                "status": 32,
+                "assigned_to": 128,
+                "source": 128,
+                "description": 10_000,
+                "resolution": 20_000,
+                "notes": 10_000,
+                "root_cause": 10_000,
+                "repair_action": 10_000,
+                "verified_by": 128,
+            }
+            oversized = [name for name, value in fields.items() if len(value) > field_limits.get(name, 10_000)]
+            if oversized:
+                errors.append(f"Row {row_index}: fields exceed size limits: {', '.join(sorted(oversized))}")
+                skipped += 1
+                continue
             alarm_code = fields.get("alarm_code", "").strip()
             if not alarm_code:
                 skipped += 1
@@ -114,6 +134,10 @@ def import_workbook_rows(
             status = fields.get("status", "pending").lower()
             if status not in valid_statuses:
                 status = "pending"
+            if status == "verified":
+                # Imported files are historical input, not proof that the
+                # authenticated verifier workflow took place.
+                status = "completed"
 
             order = build_order(
                 alarm_code=alarm_code,
@@ -132,7 +156,7 @@ def import_workbook_rows(
                 before_order = dict(order)
                 previous_status = order.get("status", "pending")
                 order["status"] = status
-                changed_fields = ["status", "resolution", "notes", "root_cause", "repair_action", "verified_by"]
+                changed_fields = ["status", "resolution", "notes", "root_cause", "repair_action"]
                 for field_name in changed_fields[1:]:
                     if fields.get(field_name):
                         order[field_name] = fields[field_name]
@@ -143,12 +167,17 @@ def import_workbook_rows(
                     continue
                 if status in {"completed", "verified"}:
                     order["completed_at"] = order.get("completed_at") or now().isoformat()
+                    order["completed_by"] = created_by
+                    changed_fields.append("completed_by")
+                elif status == "in_progress":
+                    order["accepted_by"] = created_by
+                    changed_fields.append("accepted_by")
                 refresh_knowledge_state(order, changed_fields)
                 knowledge_candidate = order.get("kb_review_status") == "pending_review"
                 append_order_history(
                     order,
                     "import_status_override",
-                    fields.get("verified_by", "") or fields.get("assigned_to", ""),
+                    created_by,
                     changed_fields,
                     previous_status,
                     status,

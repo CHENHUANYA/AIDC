@@ -9,6 +9,7 @@ from api_schemas import API_ERROR_RESPONSES, SystemSettingsEnvelope
 from auth import actor_id, get_actor, is_admin
 from repositories.postgres_content import ConcurrentContentUpdateError, PostgresSettingsRepository
 from repositories.runtime import postgres_store_enabled
+from services.system_settings import DEFAULT_SETTINGS, load_effective_settings, session_hours_override
 from storage import DB_PATH
 
 
@@ -18,16 +19,6 @@ postgres_settings = PostgresSettingsRepository()
 DB_DIR = DB_PATH
 SETTINGS_FILE = os.path.join(DB_DIR, "system_settings.json")
 DEFAULT_MANUALS = {"808d", "840d", "840dsl", "furnace_b85t"}
-DEFAULT_SETTINGS = {
-    "default_manual": "808d",
-    "session_hours": 12,
-    "allow_operator_reopen": True,
-    "updated_by": "",
-    "updated_at": "",
-    "revision": "",
-}
-
-
 class UpdateSystemSettings(BaseModel):
     default_manual: Optional[str] = None
     session_hours: Optional[int] = None
@@ -36,16 +27,11 @@ class UpdateSystemSettings(BaseModel):
 
 
 def _load_settings() -> dict:
-    if postgres_store_enabled():
-        return {**DEFAULT_SETTINGS, **postgres_settings.load_all()}
-    if not os.path.exists(SETTINGS_FILE):
-        return dict(DEFAULT_SETTINGS)
-    try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as file:
-            payload = json.load(file)
-    except (json.JSONDecodeError, OSError):
-        return dict(DEFAULT_SETTINGS)
-    return {**DEFAULT_SETTINGS, **payload} if isinstance(payload, dict) else dict(DEFAULT_SETTINGS)
+    return load_effective_settings(
+        SETTINGS_FILE,
+        postgres_reader=postgres_settings,
+        use_postgres=postgres_store_enabled(),
+    )
 
 
 def _save_settings(settings: dict, updated_by: str = "", expected_revision: str | None = None) -> str:
@@ -57,6 +43,17 @@ def _save_settings(settings: dict, updated_by: str = "", expected_revision: str 
     return str(settings.get("revision") or "")
 
 
+def _settings_response(settings: dict) -> dict:
+    response = dict(settings)
+    override = session_hours_override(os.getenv("SESSION_TTL_HOURS", ""))
+    if override is not None:
+        response["session_hours"] = override
+        response["session_hours_source"] = "environment"
+    else:
+        response["session_hours_source"] = "settings"
+    return response
+
+
 @router.get(
     "/system-settings",
     responses={200: {"model": SystemSettingsEnvelope}, **API_ERROR_RESPONSES},
@@ -66,7 +63,7 @@ async def get_system_settings(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
-    return {"status": "ok", "settings": _load_settings()}
+    return {"status": "ok", "settings": _settings_response(_load_settings())}
 
 
 @router.patch(
@@ -78,6 +75,11 @@ async def update_system_settings(req: UpdateSystemSettings, actor: dict = Depend
         return {"status": "error", "message": "Not authenticated"}
     if not is_admin(actor):
         return {"status": "error", "message": "Permission denied"}
+    if req.session_hours is not None and session_hours_override(os.getenv("SESSION_TTL_HOURS", "")) is not None:
+        return {
+            "status": "error",
+            "message": "session_hours is controlled by SESSION_TTL_HOURS and cannot be changed here",
+        }
 
     from datetime import datetime
 
@@ -107,4 +109,4 @@ async def update_system_settings(req: UpdateSystemSettings, actor: dict = Depend
     except ConcurrentContentUpdateError as exc:
         return {"status": "error", "message": str(exc)}
     settings["revision"] = revision
-    return {"status": "ok", "settings": settings}
+    return {"status": "ok", "settings": _settings_response(settings)}

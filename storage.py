@@ -3,6 +3,7 @@ import json
 import hashlib
 import re
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -351,11 +352,53 @@ def apply_doc_meta(sections: List[dict], doc_meta: Dict[str, Any]) -> List[dict]
     return enriched
 
 
-def append_jsonl(path: str, entry: Dict[str, Any]):
+_jsonl_write_lock = threading.Lock()
+
+
+def append_jsonl(
+    path: str,
+    entry: Dict[str, Any],
+    *,
+    max_records: int | None = None,
+    identity_fields: tuple[str, ...] = (),
+):
     serialized = json.dumps(entry, ensure_ascii=False)
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(serialized + "\n")
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if max_records is None and not identity_fields:
+        with open(target, "a", encoding="utf-8") as f:
+            f.write(serialized + "\n")
+        return
+
+    with _jsonl_write_lock:
+        entries = read_jsonl(str(target))
+        if identity_fields:
+            identity = tuple(entry.get(field) for field in identity_fields)
+            entries = [
+                existing
+                for existing in entries
+                if tuple(existing.get(field) for field in identity_fields) != identity
+            ]
+        entries.append(entry)
+        if max_records is not None:
+            entries = entries[-max(int(max_records), 1):]
+        temporary_name = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary:
+                temporary_name = temporary.name
+                for existing in entries:
+                    temporary.write(json.dumps(existing, ensure_ascii=False) + "\n")
+            os.replace(temporary_name, target)
+        finally:
+            if temporary_name and os.path.exists(temporary_name):
+                os.remove(temporary_name)
 
 
 def read_jsonl(path: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:

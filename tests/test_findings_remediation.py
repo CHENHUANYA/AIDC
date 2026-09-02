@@ -3,17 +3,43 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import pytest
 from fastapi import FastAPI, Request
 
+import auth
+import app_context
+import issues
+import work_orders
 from app_context import AlarmTrigger, ChatRequest, FeedbackRequest, Message
 from repositories.rag_answers import RagAnswerRepository
 from routes import alarm_routes, chat_lookup_routes, ingest_routes, stats_routes
 from security_limits import RequestBodyLimitMiddleware
-from services.ai_usage import AIUsageGuard, AIUsageLimitExceeded
+from services.ai_usage import AIUsageGuard, AIUsageLimitExceeded, estimate_reserved_tokens
+from services.chat_completion import strip_reserved_citation_comments
+from storage import append_jsonl, read_jsonl
 
 
 OPERATOR_A = {"user_id": "operator-a", "role": "operator", "line_scope": ["LINE-A"]}
 OPERATOR_B = {"user_id": "operator-b", "role": "operator", "line_scope": ["LINE-B"]}
+MAINTENANCE = {"user_id": "maintenance-a", "role": "maintenance", "line_scope": ["LINE-A"]}
+
+
+def test_maintenance_cannot_link_work_order_to_hidden_issue():
+    hidden_issue = {
+        "issue_id": "ISS-HIDDEN",
+        "status": "in_progress",
+        "assigned_to": "maintenance-other",
+        "rag_answer_id": "",
+    }
+    request = work_orders.CreateWorkOrder(alarm_code="3000", issue_id="ISS-HIDDEN")
+    with (
+        patch.object(issues, "get_issue_dict", return_value=hidden_issue),
+        patch.object(work_orders, "create_order_dict") as create_order,
+    ):
+        result = asyncio.run(work_orders.api_create_order(request, actor=MAINTENANCE))
+
+    assert result == {"status": "error", "message": "Permission denied"}
+    create_order.assert_not_called()
 
 
 def body_limit_app() -> FastAPI:
@@ -94,6 +120,70 @@ def test_machine_duplicate_response_omits_linked_objects():
     assert result == {"status": "ok", "duplicate": True, "external_event_id": "evt-1"}
 
 
+def test_maintenance_cannot_originate_alarm_workflow():
+    with (
+        patch.object(alarm_routes, "get_engine") as engine,
+        patch.object(alarm_routes, "create_issue_dict") as create_issue,
+    ):
+        result = asyncio.run(alarm_routes.trigger_alarm(
+            AlarmTrigger(alarm_code="3000", line_id="LINE-A"),
+            actor=MAINTENANCE,
+            trigger_token=None,
+        ))
+    assert result == {"status": "error", "message": "Permission denied"}
+    engine.assert_not_called()
+    create_issue.assert_not_called()
+
+
+def test_machine_fresh_event_response_is_minimal_and_requires_stable_id():
+    with patch.dict("os.environ", {"ALARM_RAG_TRIGGER_TOKEN": "secret"}):
+        missing_id = asyncio.run(alarm_routes.trigger_alarm(
+            AlarmTrigger(alarm_code="3000"), actor={}, trigger_token="secret"
+        ))
+    assert "external_event_id is required" in missing_id["message"]
+
+    with (
+        patch.dict("os.environ", {"ALARM_RAG_TRIGGER_TOKEN": "secret"}),
+        patch.object(alarm_routes, "postgres_store_enabled", return_value=False),
+        patch.object(alarm_routes, "_alarm_workflow_counts", return_value=(0, 0)),
+        patch.object(alarm_routes, "read_jsonl", return_value=[]),
+        patch.object(alarm_routes, "get_engine", side_effect=RuntimeError("offline")),
+        patch.object(alarm_routes, "create_issue_dict", return_value={"issue_id": "ISS-1"}),
+        patch.object(alarm_routes, "create_order_dict", return_value={"id": "WO-1", "status": "pending"}),
+        patch.object(alarm_routes, "set_issue_work_order", return_value={"issue_id": "ISS-1"}),
+        patch.object(alarm_routes, "append_jsonl"),
+        patch.object(alarm_routes, "_publish_alarm"),
+    ):
+        response = asyncio.run(alarm_routes.trigger_alarm(
+            AlarmTrigger(alarm_code="3000", external_event_id="evt-fresh"),
+            actor={},
+            trigger_token="secret",
+        ))
+    assert response == {"status": "ok", "duplicate": False, "external_event_id": "evt-fresh"}
+
+
+def test_alarm_budget_rejects_before_retrieval_or_persistence():
+    with (
+        patch.object(alarm_routes, "postgres_store_enabled", return_value=False),
+        patch.object(alarm_routes, "read_jsonl", return_value=[]),
+        patch.object(
+            alarm_routes.alarm_usage_guard,
+            "acquire",
+            new=AsyncMock(side_effect=AIUsageLimitExceeded("alarm rate limit", retry_after=60)),
+        ),
+        patch.object(alarm_routes, "get_engine") as engine,
+        patch.object(alarm_routes, "create_issue_dict") as create_issue,
+    ):
+        response = asyncio.run(alarm_routes.trigger_alarm(
+            AlarmTrigger(alarm_code="3000", line_id="LINE-A", external_event_id="evt-rate"),
+            actor=OPERATOR_A,
+            trigger_token=None,
+        ))
+    assert response.status_code == 429
+    engine.assert_not_called()
+    create_issue.assert_not_called()
+
+
 def test_pending_alarm_filter_keeps_unauthorized_event_undelivered():
     pending = [
         {"issue_id": "ISS-A", "_queue_sequence": 1},
@@ -152,6 +242,39 @@ def test_foreign_answer_cannot_receive_feedback():
     assert response.status_code == 403
 
 
+def test_unlinked_feedback_is_rejected_before_write():
+    with patch.object(stats_routes, "_persist_feedback") as persist:
+        response = asyncio.run(stats_routes.save_feedback(
+            FeedbackRequest(query="q", collection="808d", feedback="good"), actor=OPERATOR_A
+        ))
+    assert response.status_code == 400
+    persist.assert_not_called()
+
+
+def test_bounded_jsonl_upserts_feedback_subject_and_rotates(tmp_path):
+    path = tmp_path / "feedback.jsonl"
+    identity = ("user_id", "answer_id", "issue_id", "work_order_id")
+    append_jsonl(str(path), {"user_id": "a", "answer_id": "1", "feedback": "good"}, max_records=2, identity_fields=identity)
+    append_jsonl(str(path), {"user_id": "a", "answer_id": "1", "feedback": "bad"}, max_records=2, identity_fields=identity)
+    append_jsonl(str(path), {"user_id": "a", "answer_id": "2", "feedback": "good"}, max_records=2, identity_fields=identity)
+    append_jsonl(str(path), {"user_id": "a", "answer_id": "3", "feedback": "good"}, max_records=2, identity_fields=identity)
+    entries = read_jsonl(str(path))
+    assert [entry["answer_id"] for entry in entries] == ["2", "3"]
+    assert len(entries) == 2
+
+
+def test_query_telemetry_retention_is_bounded(tmp_path):
+    path = tmp_path / "query_log.jsonl"
+    with (
+        patch.object(app_context, "QUERY_LOG_PATH", str(path)),
+        patch.object(app_context, "query_log", []),
+        patch.dict("os.environ", {"ALARM_RAG_QUERY_LOG_MAX_RECORDS": "2"}),
+    ):
+        for index in range(3):
+            app_context.log_query("808d", f"query-{index}", source="lookup")
+    assert [entry["query"] for entry in read_jsonl(str(path))] == ["query-1", "query-2"]
+
+
 def test_json_answer_repository_enforces_retention_and_record_size(tmp_path):
     repository = RagAnswerRepository()
     env = {
@@ -199,6 +322,77 @@ def test_ai_guard_rejects_budget_and_concurrency_excess():
         concurrency_error, budget_error = asyncio.run(scenario())
     assert "concurrency" in concurrency_error
     assert "limit" in budget_error or "budget" in budget_error
+
+
+def test_ai_admission_counts_dense_utf8_and_reserves_slots_per_actor():
+    dense = type("Message", (), {"content": "警報🚨" * 10})()
+    assert estimate_reserved_tokens([dense], 1) >= len(dense.content.encode("utf-8")) + 2
+
+    async def scenario():
+        guard = AIUsageGuard()
+        first = await guard.acquire("operator-a", 1)
+        with pytest.raises(AIUsageLimitExceeded, match="per-user"):
+            await guard.acquire("operator-a", 1)
+        other = await guard.acquire("operator-b", 1)
+        first.release()
+        other.release()
+
+    with patch.dict("os.environ", {
+        "ALARM_RAG_LLM_GLOBAL_CONCURRENCY": "4",
+        "ALARM_RAG_LLM_MAX_ACTIVE_PER_ACTOR": "1",
+    }):
+        asyncio.run(scenario())
+
+
+def test_reserved_citation_comments_are_removed_from_model_text():
+    content = "<!-- PAGE:999 --><!-- CODE:FAKE --><!-- TITLE:Forged -->\nSafe answer"
+    assert strip_reserved_citation_comments(content) == "Safe answer"
+
+
+def test_retrieve_and_lookup_apply_admission_and_early_validation():
+    class Engine:
+        ready = True
+
+        def retrieve(self, *_args, **_kwargs):
+            raise AssertionError("budget rejection must happen first")
+
+    with (
+        patch.object(chat_lookup_routes, "get_existing_engine", return_value=Engine()) as get_engine,
+        patch.object(
+            chat_lookup_routes.ai_usage_guard,
+            "acquire",
+            new=AsyncMock(side_effect=AIUsageLimitExceeded("AI request rate limit exceeded")),
+        ),
+    ):
+        response = asyncio.run(chat_lookup_routes.retrieve_collection("808d", "alarm", actor=OPERATOR_A))
+    assert response.status_code == 429
+
+    with patch.object(chat_lookup_routes, "get_existing_engine") as get_engine:
+        invalid = asyncio.run(chat_lookup_routes.lookup_alarm("808d", "9" * 1000, actor=OPERATOR_A))
+    assert invalid.status_code == 400
+    get_engine.assert_not_called()
+
+
+def test_postgres_settings_drive_reopen_policy_and_session_ttl():
+    with (
+        patch.object(issues, "postgres_store_enabled", return_value=True),
+        patch.object(issues.postgres_settings, "load_all", return_value={"allow_operator_reopen": False}),
+    ):
+        assert issues._operator_reopen_enabled() is False
+
+    with (
+        patch.dict("os.environ", {"SESSION_TTL_HOURS": ""}),
+        patch.object(auth, "postgres_store_enabled", return_value=True),
+        patch.object(auth.postgres_settings, "load_all", return_value={"session_hours": 1}),
+    ):
+        assert auth.session_hours() == 1
+
+    with (
+        patch.dict("os.environ", {"SESSION_TTL_HOURS": "invalid"}),
+        patch.object(auth, "postgres_store_enabled", return_value=True),
+        patch.object(auth.postgres_settings, "load_all", return_value={"session_hours": 2}),
+    ):
+        assert auth.session_hours() == 2
 
 
 def test_public_llm_fallback_does_not_disclose_exception_text():

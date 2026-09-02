@@ -204,7 +204,10 @@ def test_program_transfer_scenario_uses_manual_page_and_does_not_mention_tool_ch
     assert "程式傳輸是警報出現前的操作情境" in answer
     assert "沒有證明程式傳輸與 Alarm 3000 之間的直接因果關係" in answer
     assert "換刀是故障發生時機" not in answer
-    assert "<!-- PAGE:58 -->" in tags
+    assert tags == ""
+    citation = build_rag_metadata("808d", query, docs)["citations"][0]
+    assert citation["page"] == 58
+    assert citation["code"] == "3000"
 
 
 def test_work_order_page_zero_is_not_rendered_as_a_manual_page():
@@ -213,7 +216,8 @@ def test_work_order_page_zero_is_not_rendered_as_a_manual_page():
     tags = chat_lookup_routes.answer_source_tags(docs)
 
     assert "PAGE" not in tags
-    assert "<!-- CODE:3000 -->" in tags
+    assert tags == ""
+    assert build_rag_metadata("808d", "repair", docs)["citations"][0]["code"] == "3000"
 
 
 def test_exact_code_troubleshooting_bypasses_llm_and_persists_retrieval_provider():

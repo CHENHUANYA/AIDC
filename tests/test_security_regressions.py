@@ -210,17 +210,16 @@ def test_json_session_for_inactive_user_is_rejected_and_removed():
     }
     with (
         patch.object(auth, "postgres_store_enabled", return_value=False),
-        patch.object(auth, "load_sessions", return_value=sessions),
+        patch.object(auth.auth_sessions, "mutate_sessions", side_effect=lambda _path, mutation: mutation(sessions)),
         patch.object(
             auth,
-            "resolve_user",
-            return_value={"user_id": "operator01", "role": "operator", "active": False},
+            "load_users",
+            return_value={"operator01": {"user_id": "operator01", "role": "operator", "active": False}},
         ),
-        patch.object(auth, "save_sessions") as save_sessions,
     ):
         assert auth.actor_from_token(f"Bearer {token}") is None
 
-    save_sessions.assert_called_once_with({})
+    assert sessions == {}
 
 
 def test_postgresql_session_for_inactive_user_is_rejected():

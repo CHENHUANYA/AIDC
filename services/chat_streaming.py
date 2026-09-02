@@ -6,6 +6,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from services.chat_completion import strip_reserved_citation_comments
+
 
 @dataclass(frozen=True)
 class StreamDependencies:
@@ -47,12 +49,12 @@ async def stream_chat_events(
     first_event = True
     provider = "unavailable"
     answer_state = "complete"
-    tags = dependencies.answer_source_tags(docs)
     try:
         if dependencies.provider_name == "ollama" and not dependencies.is_troubleshooting_query(user_query):
             async for content_part in dependencies.stream_ollama(messages, temperature, max_tokens):
-                if first_event and tags:
-                    content_part = f"{tags}\n{content_part}"
+                content_part = strip_reserved_citation_comments(content_part)
+                if not content_part:
+                    continue
                 parts.append(content_part)
                 yield dependencies.make_sse_chunk(
                     content_part,
@@ -73,8 +75,7 @@ async def stream_chat_events(
             )
             if not content:
                 raise RuntimeError("LLM returned empty response")
-            if tags:
-                content = f"{tags}\n{content}"
+            content = strip_reserved_citation_comments(content)
             parts.append(content)
             provider = dependencies.provider_source()
             yield dependencies.make_sse_chunk(content, rag=rag_metadata, response_id=response_id)

@@ -43,12 +43,14 @@ from auth import (
     api_error,
     get_actor,
 )
+from config_values import env_int
 from db.session import get_engine
 from observability import runtime_metrics
 from rag_engine import model_cache_status
 from repositories.postgres_content import PostgresAlarmRepository, PostgresFeedbackRepository
 from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
+from services.ai_usage import AIUsageGuard, AIUsageLimitExceeded
 from storage import ALARM_LOG_PATH, QUERY_LOG_PATH, append_jsonl, read_jsonl
 from vector_store import get_store
 
@@ -58,6 +60,7 @@ logger = logging.getLogger("alarm_rag.stats")
 postgres_alarms = PostgresAlarmRepository()
 postgres_feedback = PostgresFeedbackRepository()
 rag_answers = RagAnswerRepository()
+feedback_usage_guard = AIUsageGuard("ALARM_RAG_FEEDBACK")
 
 
 @router.get(
@@ -143,6 +146,11 @@ def _clear_persisted_alarm_stats() -> None:
 async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
+    if not any((req.answer_id, req.issue_id, req.work_order_id)):
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Feedback must reference an answer, issue, or work order"},
+        )
     if req.answer_id:
         answer = rag_answers.get(req.answer_id)
         if answer is None:
@@ -201,6 +209,15 @@ async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
         "kb_candidate": req.kb_candidate,
     }
     try:
+        admission = await feedback_usage_guard.acquire(actor_id(actor), 1)
+    except AIUsageLimitExceeded as exc:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(exc.retry_after)},
+            content={"status": "error", "message": str(exc)},
+        )
+    admission.release()
+    try:
         await run_in_threadpool(_persist_feedback, entry)
     except Exception:
         logger.exception("Failed to persist feedback")
@@ -215,7 +232,12 @@ def _persist_feedback(entry: dict) -> None:
     if postgres_store_enabled():
         postgres_feedback.add(entry)
     else:
-        append_jsonl(FEEDBACK_LOG, entry)
+        append_jsonl(
+            FEEDBACK_LOG,
+            entry,
+            max_records=env_int("ALARM_RAG_FEEDBACK_MAX_RECORDS", 10_000, minimum=1, maximum=1_000_000),
+            identity_fields=("user_id", "answer_id", "issue_id", "work_order_id"),
+        )
 
 
 @router.get(
@@ -227,6 +249,28 @@ async def feedback_stats(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
+    if postgres_store_enabled():
+        try:
+            summary = await run_in_threadpool(postgres_feedback.stats, 20)
+        except Exception:
+            logger.exception("Failed to load feedback statistics")
+            return JSONResponse(
+                status_code=503,
+                content={"status": "error", "message": "Feedback statistics are unavailable"},
+            )
+        total = summary["total"]
+        correctness_total = summary["correctness_total"]
+        coverage_total = summary["coverage_total"]
+        return {
+            **summary,
+            "rate": f"{round(summary['good'] / total * 100)}%" if total else "0%",
+            "correctness_rate": (
+                f"{round(summary['correct'] / correctness_total * 100)}%" if correctness_total else "0%"
+            ),
+            "coverage_rate": (
+                f"{round(summary['complete'] / coverage_total * 100)}%" if coverage_total else "0%"
+            ),
+        }
     try:
         entries = await run_in_threadpool(_load_feedback_entries)
     except Exception:
@@ -265,10 +309,11 @@ async def feedback_stats(actor: dict = Depends(get_actor)):
 
 
 def _load_feedback_entries() -> list[dict]:
+    limit = env_int("ALARM_RAG_FEEDBACK_MAX_RECORDS", 10_000, minimum=1, maximum=1_000_000)
     if postgres_store_enabled():
-        entries = postgres_feedback.load_all()
+        entries = postgres_feedback.load_all(limit=limit)
     else:
-        entries = read_jsonl(FEEDBACK_LOG)
+        entries = read_jsonl(FEEDBACK_LOG, limit=limit)
     return [entry for entry in entries if isinstance(entry, dict)]
 
 

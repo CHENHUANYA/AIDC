@@ -1,5 +1,24 @@
+import hashlib
+import json
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
+
+from config_values import env_int
+
+
+def _audit_value(value: object) -> object:
+    limit = env_int("ALARM_RAG_AUDIT_VALUE_MAX_CHARS", 512, minimum=64, maximum=10_000)
+    if isinstance(value, str):
+        serialized = value
+    else:
+        try:
+            serialized = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            serialized = str(value)
+    if len(serialized) <= limit:
+        return value
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    return {"excerpt": serialized[:limit], "sha256": digest, "truncated": True}
 
 
 def field_changes(before: dict, after: dict, fields: List[str]) -> List[dict]:
@@ -11,8 +30,8 @@ def field_changes(before: dict, after: dict, fields: List[str]) -> List[dict]:
             continue
         changes.append({
             "field": field,
-            "from": before_value,
-            "to": after_value,
+            "from": _audit_value(before_value),
+            "to": _audit_value(after_value),
         })
     return changes
 
@@ -31,10 +50,10 @@ def append_history(
     if not isinstance(history, list):
         history = []
 
-    event = {
+    event: dict[str, Any] = {
         "action": action,
         "user_id": user_id,
-        "fields": fields or [],
+        "fields": list(fields or [])[:64],
         "created_at": datetime.now().isoformat(),
     }
     if from_status or to_status:
@@ -44,7 +63,8 @@ def append_history(
         event["changes"] = changes
 
     history.append(event)
-    record[history_key] = history
+    max_events = env_int("ALARM_RAG_AUDIT_HISTORY_MAX_EVENTS", 200, minimum=10, maximum=5000)
+    record[history_key] = history[-max_events:]
 
 
 def history_list(record: Optional[dict], history_key: str) -> List[dict]:

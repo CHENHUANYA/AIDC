@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime, timedelta
 from typing import Any, Callable, Iterable
+
+from config_values import env_float, env_int
 
 
 def parse_iso(value: str) -> datetime | None:
@@ -172,6 +175,11 @@ def load_archived_orders(archive_dir: str, logger: Any) -> tuple[list[dict], lis
         logger.warning("Work order archive listing failed: %s", exc)
         return [], []
 
+    max_files = env_int("ALARM_RAG_ARCHIVE_MAX_FILES", 100, minimum=1, maximum=10_000)
+    max_bytes = env_int("ALARM_RAG_ARCHIVE_MAX_BYTES", 50 * 1024 * 1024, minimum=1024)
+    max_records = env_int("ALARM_RAG_ARCHIVE_MAX_RECORDS", 5000, minimum=1, maximum=100_000)
+    deadline_seconds = env_float("ALARM_RAG_ARCHIVE_SCAN_SECONDS", 3, minimum=0.1, maximum=30)
+    started = time.monotonic()
     archive_files = sorted(
         (
             name
@@ -179,11 +187,21 @@ def load_archived_orders(archive_dir: str, logger: Any) -> tuple[list[dict], lis
             if name.startswith("work_orders_archive_") and name.endswith(".json")
         ),
         reverse=True,
-    )
+    )[:max_files]
     archives: list[dict] = []
     orders: list[dict] = []
+    scanned_bytes = 0
     for name in archive_files:
+        if time.monotonic() - started > deadline_seconds or len(orders) >= max_records:
+            break
         path = os.path.join(archive_dir, name)
+        try:
+            file_size = os.path.getsize(path)
+        except OSError:
+            continue
+        if file_size > max_bytes or scanned_bytes + file_size > max_bytes:
+            break
+        scanned_bytes += file_size
         try:
             with open(path, "r", encoding="utf-8") as file_handle:
                 archived = json.load(file_handle)
@@ -195,7 +213,8 @@ def load_archived_orders(archive_dir: str, logger: Any) -> tuple[list[dict], lis
             updated_at = datetime.fromtimestamp(os.path.getmtime(path)).isoformat()
         except OSError:
             continue
-        valid_orders = [order for order in archived if isinstance(order, dict)]
+        remaining = max_records - len(orders)
+        valid_orders = [order for order in archived if isinstance(order, dict)][:remaining]
         archives.append(
             {
                 "file": name,
@@ -214,6 +233,7 @@ def build_archive_response(
     actor: dict,
     issues_by_id: dict[str, dict],
     can_view: Callable[[dict, dict, dict | None], bool],
+    limit: int = 200,
 ) -> dict:
     visible_orders = [
         order
@@ -228,9 +248,19 @@ def build_archive_response(
         key=lambda order: order.get("completed_at") or order.get("updated_at") or "",
         reverse=True,
     )
+    visible_counts: dict[str, int] = {}
+    for order in visible_orders:
+        archive_file = str(order.get("archive_file") or "")
+        visible_counts[archive_file] = visible_counts.get(archive_file, 0) + 1
+    visible_archives = [
+        {**archive, "count": visible_counts[str(archive.get("file") or "")]}
+        for archive in archives
+        if visible_counts.get(str(archive.get("file") or ""), 0) > 0
+    ]
+    total = len(visible_orders)
     return {
         "status": "ok",
-        "archives": archives,
-        "orders": visible_orders,
-        "total": len(visible_orders),
+        "archives": visible_archives,
+        "orders": visible_orders[:max(int(limit), 1)],
+        "total": total,
     }

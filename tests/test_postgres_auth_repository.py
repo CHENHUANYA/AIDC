@@ -6,13 +6,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from db.base import Base
-from db.models import LoginThrottle
+from db.models import LoginSession, LoginThrottle
 from repositories import postgres_auth
 from repositories.postgres_auth import (
     ConcurrentUserUpdateError,
+    CredentialChangedError,
     PostgresLoginThrottleRepository,
     PostgresSessionRepository,
     PostgresUserRepository,
+    SessionCapacityError,
     throttle_key_digest,
     token_digest,
 )
@@ -87,6 +89,28 @@ def test_session_repository_lifecycle_and_prefix_revocation(repository_session: 
     assert sessions.revoke_user("missing") == 0
 
 
+def test_session_epoch_invalidates_rows_and_rejects_stale_login_commit(repository_session: Session) -> None:
+    users = PostgresUserRepository()
+    users.save_all({"operator01": user_payload()})
+    stored = users.load_all()["operator01"]
+    sessions = PostgresSessionRepository()
+    now = datetime.now(timezone.utc)
+    sessions.create("old-token", "operator01", now.isoformat(), (now + timedelta(hours=1)).isoformat())
+
+    stored["credential_epoch"] = 2
+    users.save_one("operator01", stored, expected_updated_at=stored["updated_at"])
+
+    assert sessions.get("old-token") is None
+    with pytest.raises(CredentialChangedError):
+        sessions.create(
+            "racing-token",
+            "operator01",
+            now.isoformat(),
+            (now + timedelta(hours=1)).isoformat(),
+            expected_credential_epoch=1,
+        )
+
+
 def test_session_repository_rejects_unknown_user_and_removes_expired_session(repository_session: Session) -> None:
     users = PostgresUserRepository()
     users.save_all({"operator01": user_payload()})
@@ -103,6 +127,32 @@ def test_session_repository_rejects_unknown_user_and_removes_expired_session(rep
         (now - timedelta(hours=1)).isoformat(),
     )
     assert sessions.get("expired-token") is None
+
+
+def test_session_repository_enforces_per_user_and_global_capacity(
+    repository_session: Session,
+    monkeypatch,
+) -> None:
+    users = PostgresUserRepository()
+    users.save_all({"operator01": user_payload(), "operator02": user_payload()})
+    sessions = PostgresSessionRepository()
+    now = datetime.now(timezone.utc)
+    expires = (now + timedelta(hours=1)).isoformat()
+    monkeypatch.setenv("SESSION_MAX_ACTIVE_PER_USER", "2")
+    monkeypatch.setenv("SESSION_MAX_ACTIVE_GLOBAL", "3")
+
+    sessions.create("token-one", "operator01", now.isoformat(), expires)
+    sessions.create("token-two", "operator01", now.isoformat(), expires)
+    sessions.create("token-three", "operator01", now.isoformat(), expires)
+
+    assert sum(
+        sessions.get(token) is not None
+        for token in ("token-one", "token-two", "token-three")
+    ) == 2
+    sessions.create("token-four", "operator02", now.isoformat(), expires)
+    with pytest.raises(SessionCapacityError):
+        sessions.create("token-five", "operator02", now.isoformat(), expires)
+    assert repository_session.query(LoginSession).count() == 3
 
 
 def test_login_throttle_repository_locks_clears_and_hashes_keys(repository_session: Session) -> None:
@@ -164,3 +214,30 @@ def test_login_throttle_cleanup_rejects_unbounded_arguments(repository_session: 
         throttles.count_expired(0)
     with pytest.raises(ValueError, match="batch_size"):
         throttles.cleanup_expired(300, batch_size=0)
+
+
+def test_login_throttle_batch_fails_closed_at_active_key_ceiling(repository_session: Session) -> None:
+    throttles = PostgresLoginThrottleRepository()
+    now = datetime(2026, 7, 29, 10, 0, tzinfo=timezone.utc)
+
+    assert throttles.record_failures(
+        ("account:first", "global:login"),
+        5,
+        300,
+        60,
+        max_keys=2,
+        now=now,
+    ) == 0
+    assert throttles.record_failures(
+        ("account:second", "global:login"),
+        5,
+        300,
+        60,
+        max_keys=2,
+        now=now + timedelta(seconds=1),
+    ) == 60
+    assert throttles.retry_after_many(
+        ("account:third", "global:login"),
+        300,
+        now=now + timedelta(seconds=2),
+    ) == 59

@@ -8,6 +8,7 @@ import secrets
 import threading
 
 from fastapi import APIRouter, Depends, Header
+from fastapi.responses import JSONResponse
 
 from api_schemas import API_ERROR_RESPONSES, AlarmTriggerResponse, PendingAlarmsResponse
 from app_context import (
@@ -23,6 +24,7 @@ from app_context import (
 from auth import (
     actor_id,
     actor_role,
+    can_trigger_alarm,
     can_reference_rag_answer,
     can_view_issue,
     can_view_work_order,
@@ -32,12 +34,15 @@ from auth import (
 from repositories.postgres_content import PostgresAlarmRepository
 from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
+from config_values import env_int
 from secret_values import secret_value
 from services.postgres_workflow import create_issue as postgres_create_issue
 from services.postgres_workflow import get_issue_for_alarm_event as postgres_get_issue_for_alarm_event
-from services.transactions import postgres_transactional
+from services.transactions import json_transactional, postgres_transactional
+from storage import DB_PATH
+from services.ai_usage import AIUsageGuard, AIUsageLimitExceeded
 from storage import ALARM_LOG_PATH, append_jsonl, read_jsonl
-from issues import create_issue_dict, get_issue_dict, set_issue_work_order
+from issues import _load_issues, create_issue_dict, get_issue_dict, set_issue_work_order
 from work_orders import create_order_dict, get_order_dict
 
 
@@ -45,6 +50,7 @@ logger = logging.getLogger("alarm_rag.alarm")
 router = APIRouter()
 postgres_alarms = PostgresAlarmRepository()
 rag_answers = RagAnswerRepository()
+alarm_usage_guard = AIUsageGuard("ALARM_RAG_ALARM")
 _pending_alarm_lock = threading.Lock()
 _pending_alarm_sequence = 0
 _pending_alarm_cursors: dict[str, int] = {}
@@ -143,6 +149,24 @@ def _minimal_duplicate_response(entry: dict) -> dict:
     }
 
 
+def _minimal_success_response(external_event_id: str, *, duplicate: bool = False) -> dict:
+    return {
+        "status": "ok",
+        "duplicate": duplicate,
+        "external_event_id": external_event_id,
+    }
+
+
+def _alarm_workflow_counts(principal: str, *, use_postgres: bool) -> tuple[int, int]:
+    if use_postgres:
+        return postgres_alarms.workflow_counts_for_principal(principal)
+    principal_issues = [issue for issue in _load_issues() if issue.get("created_by") == principal]
+    outstanding = sum(
+        1 for issue in principal_issues if issue.get("status") not in {"completed", "verified", "cancelled"}
+    )
+    return len(principal_issues), outstanding
+
+
 def _workflow_visible(actor: dict, issue: dict | None, work_order: dict | None) -> bool:
     if issue is not None and not can_view_issue(actor, issue):
         return False
@@ -214,6 +238,7 @@ def _pending_alarms_for_actor(actor: dict) -> list[dict]:
     responses={200: {"model": AlarmTriggerResponse}, **API_ERROR_RESPONSES},
 )
 @postgres_transactional
+@json_transactional(lambda: DB_PATH)
 async def trigger_alarm(
     req: AlarmTrigger,
     actor: dict = Depends(get_actor),
@@ -222,6 +247,8 @@ async def trigger_alarm(
     token_authenticated = not actor_id(actor) and valid_trigger_token(trigger_token)
     if not actor_id(actor) and not token_authenticated:
         return {"status": "error", "message": "Not authenticated"}
+    if actor_id(actor) and not can_trigger_alarm(actor):
+        return {"status": "error", "message": "Permission denied"}
     source = _event_source(req, token_authenticated=token_authenticated)
     line_id = _event_line(req, actor, token_authenticated=token_authenticated)
     if line_id is None:
@@ -240,6 +267,8 @@ async def trigger_alarm(
     alarm_info = classify_alarm(parse_alarm_code_int(req.alarm_code), manual_name)
     severity = _normalize_severity(req.severity, alarm_info["severity"])
     external_event_id = _external_event_id(req.external_event_id)
+    if token_authenticated and not external_event_id:
+        return {"status": "error", "message": "external_event_id is required for integration events"}
     use_postgres = postgres_store_enabled()
     if external_event_id and not use_postgres:
         existing_alarm = _find_json_alarm(source, external_event_id)
@@ -249,6 +278,39 @@ async def trigger_alarm(
             return _authorized_duplicate_response(
                 existing_alarm, issue, work_order, actor, token_authenticated=token_authenticated
             )
+    if external_event_id and use_postgres:
+        lookup_event_key = _external_event_key(source, external_event_id)
+        existing = postgres_alarms.get_by_event_key(lookup_event_key)
+        if existing is not None:
+            alarm_event_id, existing_alarm = existing
+            issue, work_order = postgres_get_issue_for_alarm_event(alarm_event_id)
+            return _authorized_duplicate_response(
+                existing_alarm, issue, work_order, actor, token_authenticated=token_authenticated
+            )
+
+    try:
+        admission = await alarm_usage_guard.acquire(audit_principal, 1)
+    except AIUsageLimitExceeded as exc:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(exc.retry_after)},
+            content={"status": "error", "message": str(exc)},
+        )
+    admission.release()
+    total_workflows, outstanding_workflows = _alarm_workflow_counts(
+        audit_principal, use_postgres=use_postgres
+    )
+    maximum_outstanding = env_int(
+        "ALARM_RAG_ALARM_MAX_OUTSTANDING_PER_PRINCIPAL", 100, minimum=1, maximum=100_000
+    )
+    maximum_total = env_int(
+        "ALARM_RAG_ALARM_MAX_WORKFLOWS_PER_PRINCIPAL", 10_000, minimum=1, maximum=1_000_000
+    )
+    if outstanding_workflows >= maximum_outstanding or total_workflows >= maximum_total:
+        return JSONResponse(
+            status_code=429,
+            content={"status": "error", "message": "Alarm workflow quota exceeded"},
+        )
     now = datetime.now()
     entry = {
         "alarm_code": req.alarm_code,
@@ -317,7 +379,7 @@ async def trigger_alarm(
             req.machine_id or req.source,
             entry["work_order_id"],
         )
-        return {
+        response = {
             "status": "ok",
             "duplicate": False,
             "external_event_id": external_event_id,
@@ -325,6 +387,7 @@ async def trigger_alarm(
             "issue": issue,
             "work_order": work_order,
         }
+        return _minimal_success_response(external_event_id) if token_authenticated else response
 
     issue = create_issue_dict(
         machine_id=req.machine_id or "",
@@ -355,7 +418,11 @@ async def trigger_alarm(
 
     entry["issue_id"] = issue.get("issue_id") or ""
     entry["work_order_id"] = work_order.get("id") or ""
-    append_jsonl(ALARM_LOG_PATH, entry)
+    append_jsonl(
+        ALARM_LOG_PATH,
+        entry,
+        max_records=env_int("ALARM_RAG_ALARM_LOG_MAX_RECORDS", 10_000, minimum=1, maximum=1_000_000),
+    )
     _publish_alarm(entry)
 
     logger.info(
@@ -364,7 +431,7 @@ async def trigger_alarm(
         req.machine_id or req.source,
         work_order["id"],
     )
-    return {
+    response = {
         "status": "ok",
         "duplicate": False,
         "external_event_id": external_event_id,
@@ -372,6 +439,7 @@ async def trigger_alarm(
         "issue": issue,
         "work_order": work_order,
     }
+    return _minimal_success_response(external_event_id) if token_authenticated else response
 
 
 @router.get(

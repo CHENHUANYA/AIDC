@@ -1,4 +1,5 @@
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -214,7 +215,9 @@ def test_lookup_route_covers_validation_success_missing_and_failure(monkeypatch)
             return self.outcome
 
     monkeypatch.setattr(chat_lookup_routes, "get_existing_engine", lambda _collection: Engine(None))
-    assert asyncio.run(chat_lookup_routes.lookup_alarm("808d", "abc", actor=ACTOR))["error"] == "Invalid alarm code"
+    invalid = asyncio.run(chat_lookup_routes.lookup_alarm("808d", "abc", actor=ACTOR))
+    assert invalid.status_code == 400
+    assert json.loads(invalid.body)["error"] == "Invalid alarm code"
     assert "not found" in asyncio.run(chat_lookup_routes.lookup_alarm("808d", "3000", actor=ACTOR))["error"]
 
     monkeypatch.setattr(chat_lookup_routes, "get_existing_engine", lambda _collection: Engine({"text": DOC["text"], "meta": DOC["meta"]}))

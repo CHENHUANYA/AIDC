@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from db.models import AlarmEvent, Document, DocumentVersion, Feedback, Issue, SystemSetting, User, WorkOrder
 from db.session import session_scope
+from config_values import env_int
 from repositories.postgres_workflow import parse_datetime
 
 
@@ -84,6 +86,26 @@ class PostgresAlarmRepository:
             record = session.get(AlarmEvent, alarm_event_id)
             return alarm_dict(record) if record is not None else None
 
+    def get_by_event_key(self, event_key: str) -> tuple[object, dict] | None:
+        with session_scope() as session:
+            record = session.scalar(select(AlarmEvent).where(AlarmEvent.event_key == event_key))
+            return (record.id, alarm_dict(record)) if record is not None else None
+
+    def workflow_counts_for_principal(self, principal: str) -> tuple[int, int]:
+        with session_scope() as session:
+            total, outstanding = session.execute(
+                select(
+                    func.count(Issue.id),
+                    func.sum(
+                        case((Issue.status.not_in(("completed", "verified", "cancelled")), 1), else_=0)
+                    ),
+                ).where(
+                    Issue.alarm_event_id.is_not(None),
+                    Issue.created_by_ref == principal,
+                )
+            ).one()
+            return int(total or 0), int(outstanding or 0)
+
     def load_all(self, limit: int | None = None) -> list[dict]:
         with session_scope() as session:
             statement = select(AlarmEvent).order_by(AlarmEvent.occurred_at, AlarmEvent.id)
@@ -123,32 +145,62 @@ class PostgresFeedbackRepository:
             user_ref = str(payload.get("user_id") or "")
             issue_ref = str(payload.get("issue_id") or "")
             order_ref = str(payload.get("work_order_id") or "")
-            record = Feedback(
-                legacy_key=f"runtime:feedback:{uuid.uuid4().hex}",
-                answer_id=str(payload.get("answer_id") or ""),
-                issue_id=session.scalar(select(Issue.id).where(Issue.issue_no == issue_ref)) if issue_ref else None,
-                work_order_id=session.scalar(select(WorkOrder.id).where(WorkOrder.work_order_no == order_ref)) if order_ref else None,
-                user_id=session.scalar(select(User.id).where(User.user_id == user_ref)) if user_ref else None,
-                user_ref=user_ref,
-                role=str(payload.get("role") or ""),
-                query=str(payload.get("query") or ""),
-                collection=str(payload.get("collection") or ""),
-                alarm_code=str(payload.get("alarm_code") or ""),
-                feedback=str(payload.get("feedback") or ""),
-                correctness=str(payload.get("correctness") or ""),
-                coverage=str(payload.get("coverage") or ""),
-                missing_info=str(payload.get("missing_info") or ""),
-                expected_fix=str(payload.get("expected_fix") or ""),
-                kb_candidate=bool(payload.get("kb_candidate", False)),
-                created_at=parse_datetime(payload.get("time")) or datetime.now(timezone.utc),
+            answer_ref = str(payload.get("answer_id") or "")
+            issue_pk = session.scalar(select(Issue.id).where(Issue.issue_no == issue_ref)) if issue_ref else None
+            order_pk = session.scalar(select(WorkOrder.id).where(WorkOrder.work_order_no == order_ref)) if order_ref else None
+            user_pk = session.scalar(select(User.id).where(User.user_id == user_ref)) if user_ref else None
+            subject = f"{user_ref}\0{answer_ref}\0{issue_ref}\0{order_ref}"
+            subject_key = "runtime:feedback-subject:" + hashlib.sha256(subject.encode("utf-8")).hexdigest()
+            record = session.scalar(
+                select(Feedback).where(
+                    Feedback.user_ref == user_ref,
+                    Feedback.answer_id == answer_ref,
+                    Feedback.issue_id.is_(issue_pk) if issue_pk is None else Feedback.issue_id == issue_pk,
+                    Feedback.work_order_id.is_(order_pk) if order_pk is None else Feedback.work_order_id == order_pk,
+                )
             )
-            session.add(record)
+            if record is None:
+                record = Feedback(legacy_key=subject_key)
+                session.add(record)
+            record.answer_id = answer_ref
+            record.issue_id = issue_pk
+            record.work_order_id = order_pk
+            record.user_id = user_pk
+            record.user_ref = user_ref
+            record.role = str(payload.get("role") or "")
+            record.query = str(payload.get("query") or "")
+            record.collection = str(payload.get("collection") or "")
+            record.alarm_code = str(payload.get("alarm_code") or "")
+            record.feedback = str(payload.get("feedback") or "")
+            record.correctness = str(payload.get("correctness") or "")
+            record.coverage = str(payload.get("coverage") or "")
+            record.missing_info = str(payload.get("missing_info") or "")
+            record.expected_fix = str(payload.get("expected_fix") or "")
+            record.kb_candidate = bool(payload.get("kb_candidate", False))
+            record.created_at = parse_datetime(payload.get("time")) or datetime.now(timezone.utc)
+            session.flush()
 
-    def load_all(self) -> list[dict]:
+            maximum = env_int("ALARM_RAG_FEEDBACK_MAX_RECORDS", 10_000, minimum=1, maximum=1_000_000)
+            stale_ids = session.scalars(
+                select(Feedback.id).order_by(Feedback.created_at.desc(), Feedback.id).offset(maximum)
+            ).all()
+            if stale_ids:
+                session.execute(delete(Feedback).where(Feedback.id.in_(stale_ids)))
+
+    def load_all(self, limit: int | None = None) -> list[dict]:
         with session_scope() as session:
-            records = session.scalars(select(Feedback).order_by(Feedback.created_at, Feedback.id)).all()
-            issue_numbers = dict(session.execute(select(Issue.id, Issue.issue_no)).all())
-            order_numbers = dict(session.execute(select(WorkOrder.id, WorkOrder.work_order_no)).all())
+            statement = select(Feedback).order_by(Feedback.created_at.desc(), Feedback.id.desc())
+            if limit:
+                statement = statement.limit(limit)
+            records = list(reversed(session.scalars(statement).all()))
+            issue_ids = {record.issue_id for record in records if record.issue_id is not None}
+            order_ids = {record.work_order_id for record in records if record.work_order_id is not None}
+            issue_numbers = dict(
+                session.execute(select(Issue.id, Issue.issue_no).where(Issue.id.in_(issue_ids))).all()
+            ) if issue_ids else {}
+            order_numbers = dict(
+                session.execute(select(WorkOrder.id, WorkOrder.work_order_no).where(WorkOrder.id.in_(order_ids))).all()
+            ) if order_ids else {}
             return [
                 feedback_dict(
                     record,
@@ -157,6 +209,46 @@ class PostgresFeedbackRepository:
                 )
                 for record in records
             ]
+
+    def stats(self, recent_limit: int = 20) -> dict:
+        with session_scope() as session:
+            totals = session.execute(
+                select(
+                    func.count(Feedback.id),
+                    func.sum(case((Feedback.feedback == "good", 1), else_=0)),
+                    func.sum(case((Feedback.feedback == "bad", 1), else_=0)),
+                    func.sum(case((Feedback.correctness.in_(("correct", "partially_correct", "incorrect")), 1), else_=0)),
+                    func.sum(case((Feedback.correctness == "correct", 1), else_=0)),
+                    func.sum(case((Feedback.coverage.in_(("complete", "missing_steps", "missing_source")), 1), else_=0)),
+                    func.sum(case((Feedback.coverage == "complete", 1), else_=0)),
+                    func.sum(case((Feedback.role == "maintenance", 1), else_=0)),
+                )
+            ).one()
+            records = list(reversed(session.scalars(
+                select(Feedback).order_by(Feedback.created_at.desc(), Feedback.id.desc()).limit(recent_limit)
+            ).all()))
+            issue_ids = {record.issue_id for record in records if record.issue_id is not None}
+            order_ids = {record.work_order_id for record in records if record.work_order_id is not None}
+            issue_numbers = dict(
+                session.execute(select(Issue.id, Issue.issue_no).where(Issue.id.in_(issue_ids))).all()
+            ) if issue_ids else {}
+            order_numbers = dict(
+                session.execute(select(WorkOrder.id, WorkOrder.work_order_no).where(WorkOrder.id.in_(order_ids))).all()
+            ) if order_ids else {}
+            return {
+                "total": int(totals[0] or 0),
+                "good": int(totals[1] or 0),
+                "bad": int(totals[2] or 0),
+                "correctness_total": int(totals[3] or 0),
+                "correct": int(totals[4] or 0),
+                "coverage_total": int(totals[5] or 0),
+                "complete": int(totals[6] or 0),
+                "technician_feedback": int(totals[7] or 0),
+                "entries": [
+                    feedback_dict(record, issue_numbers.get(record.issue_id, ""), order_numbers.get(record.work_order_id, ""))
+                    for record in records
+                ],
+            }
 
 
 class PostgresSettingsRepository:

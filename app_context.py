@@ -786,4 +786,8 @@ def log_query(collection: str, query: str, source: str = "web", elapsed_ms: int 
     query_log.append(entry)
     if len(query_log) > 500:
         query_log.pop(0)
-    append_jsonl(QUERY_LOG_PATH, entry)
+    append_jsonl(
+        QUERY_LOG_PATH,
+        entry,
+        max_records=env_int("ALARM_RAG_QUERY_LOG_MAX_RECORDS", 5000, minimum=1, maximum=1_000_000),
+    )

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api_schemas import (
     API_ERROR_RESPONSES,
@@ -31,11 +31,14 @@ from audit_history import append_history, field_changes, history_list
 from auth import actor_id, actor_role, can_reference_rag_answer, can_update_issue, can_view_issue, get_actor
 from pagination import InvalidCursor, decode_cursor, encode_cursor, paginate_records
 from repositories.postgres_workflow import PostgresIssueRepository
+from repositories.postgres_content import PostgresSettingsRepository
 from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
+from services.json_file_store import write_json_atomic
 from services.postgres_workflow import create_issue as postgres_create_issue
 from services.postgres_workflow import escalate_issue as postgres_escalate_issue
-from services.transactions import postgres_transactional
+from services.transactions import json_transactional, postgres_transactional
+from services.system_settings import load_effective_settings
 from work_orders import create_order_dict, get_order_dict, sync_work_order_from_issue, validate_issue_verification
 
 
@@ -43,6 +46,7 @@ logger = logging.getLogger("alarm_rag.issues")
 router = APIRouter()
 postgres_issues = PostgresIssueRepository()
 rag_answers = RagAnswerRepository()
+postgres_settings = PostgresSettingsRepository()
 
 DB_DIR = os.getenv("DB_PATH", "./alarm_db")
 ISSUE_FILE = os.path.join(DB_DIR, "issues.json")
@@ -70,17 +74,17 @@ class CreateIssue(BaseModel):
 
 
 class UpdateIssue(BaseModel):
-    status: Optional[str] = None
-    severity: Optional[str] = None
-    assigned_to: Optional[str] = None
-    line_id: Optional[str] = None
-    machine_id: Optional[str] = None
-    alarm_code: Optional[str] = None
-    description: Optional[str] = None
-    work_order_id: Optional[str] = None
-    resolution_summary: Optional[str] = None
-    operator_note: Optional[str] = None
-    updated_by: Optional[str] = None
+    status: Optional[str] = Field(default=None, max_length=32)
+    severity: Optional[str] = Field(default=None, max_length=32)
+    assigned_to: Optional[str] = Field(default=None, max_length=128)
+    line_id: Optional[str] = Field(default=None, max_length=128)
+    machine_id: Optional[str] = Field(default=None, max_length=255)
+    alarm_code: Optional[str] = Field(default=None, max_length=128)
+    description: Optional[str] = Field(default=None, max_length=10_000)
+    work_order_id: Optional[str] = Field(default=None, max_length=128)
+    resolution_summary: Optional[str] = Field(default=None, max_length=20_000)
+    operator_note: Optional[str] = Field(default=None, max_length=10_000)
+    updated_by: Optional[str] = Field(default=None, max_length=128)
     version: Optional[int] = None
 
 
@@ -109,22 +113,21 @@ def _save_issues(issues: List[dict]) -> None:
         postgres_issues.save_all(issues)
         return
     os.makedirs(DB_DIR, exist_ok=True)
-    with open(ISSUE_FILE, "w", encoding="utf-8") as file:
-        json.dump(issues, file, ensure_ascii=False, indent=2)
+    write_json_atomic(ISSUE_FILE, issues)
 
 
 def _operator_reopen_enabled() -> bool:
     settings_file = os.path.join(DB_DIR, "system_settings.json")
-    if not os.path.exists(settings_file):
-        return True
     try:
-        with open(settings_file, "r", encoding="utf-8") as file:
-            payload = json.load(file)
-    except (json.JSONDecodeError, OSError):
-        return True
-    if not isinstance(payload, dict):
-        return True
-    return bool(payload.get("allow_operator_reopen", True))
+        settings = load_effective_settings(
+            settings_file,
+            postgres_reader=postgres_settings,
+            use_postgres=postgres_store_enabled(),
+        )
+    except Exception:
+        logger.exception("Failed to load operator reopen policy")
+        return False
+    return settings.get("allow_operator_reopen") is True
 
 
 def _find_issue(issue_id: str) -> Tuple[int, Optional[dict]]:
@@ -219,7 +222,7 @@ def _append_operator_note(issue: dict, note: str, user_id: str = "") -> None:
         "created_by": user_id,
         "created_at": datetime.now().isoformat(),
     })
-    issue["operator_notes"] = notes
+    issue["operator_notes"] = notes[-200:]
     _append_issue_history(
         issue,
         "operator_note_added",
@@ -431,6 +434,10 @@ def sync_issue_from_work_order(order: dict) -> Optional[dict]:
         )
         if postgres_store_enabled():
             return postgres_issues.save_one(issue)
+        try:
+            issue["version"] = max(int(before_issue.get("version") or 1), 1) + 1
+        except (TypeError, ValueError):
+            issue["version"] = 2
         issues[index] = issue
         _save_issues(issues)
         return issue
@@ -442,6 +449,7 @@ def sync_issue_from_work_order(order: dict) -> Optional[dict]:
     responses={200: {"model": IssueMutationResponse}, **API_ERROR_RESPONSES},
 )
 @postgres_transactional
+@json_transactional(lambda: DB_DIR)
 async def api_create_issue(req: CreateIssue, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -506,6 +514,7 @@ async def api_create_issue(req: CreateIssue, actor: dict = Depends(get_actor)):
 
 @router.get("/issues", responses={200: {"model": IssuesResponse}, **API_ERROR_RESPONSES})
 async def api_list_issues(
+    limit: int = Query(default=100, ge=1, le=200),
     status: Optional[str] = None,
     line_id: Optional[str] = None,
     machine_id: Optional[str] = None,
@@ -513,8 +522,22 @@ async def api_list_issues(
     unresolved: Optional[bool] = None,
     actor: dict = Depends(get_actor),
 ):
+    page_limit = limit if isinstance(limit, int) else 100
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
+    if postgres_store_enabled():
+        items, total, _ = postgres_issues.load_page(
+            limit=page_limit,
+            role=actor_role(actor),
+            user_id=actor_id(actor),
+            line_scope=[str(value) for value in actor.get("line_scope", []) if isinstance(value, str)],
+            status=status or "",
+            line_id=line_id or "",
+            machine_id=machine_id or "",
+            assigned_to=assigned_to or "",
+            unresolved=bool(unresolved),
+        )
+        return {"total": total, "issues": items}
     issues = [issue for issue in _load_issues() if can_view_issue(actor, issue)]
     if unresolved:
         issues = [issue for issue in issues if issue.get("status") not in ("completed", "verified", "cancelled")]
@@ -526,7 +549,7 @@ async def api_list_issues(
         issues = [issue for issue in issues if issue.get("machine_id") == machine_id]
     if assigned_to:
         issues = [issue for issue in issues if issue.get("assigned_to") == assigned_to]
-    return {"total": len(issues), "issues": issues}
+    return {"total": len(issues), "issues": issues[:page_limit]}
 
 
 @router.get(
@@ -696,13 +719,14 @@ async def api_get_issue_history(issue_id: str, actor: dict = Depends(get_actor))
     responses={200: {"model": IssueMutationResponse}, **API_ERROR_RESPONSES},
 )
 @postgres_transactional
+@json_transactional(lambda: DB_DIR)
 async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
     use_postgres = postgres_store_enabled()
     issues = [] if use_postgres else _load_issues()
     index = -1
-    issue = postgres_issues.get_one(issue_id) if use_postgres else None
+    issue = postgres_issues.get_one(issue_id, for_update=True) if use_postgres else None
     if not use_postgres:
         for current_index, current_issue in enumerate(issues):
             if current_issue.get("issue_id") == issue_id:
@@ -727,16 +751,26 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
     updated_by = actor_id(actor)
     before_issue = copy.deepcopy(issue)
     linked_order_id = str(issue.get("work_order_id") or "")
-    linked_order = get_order_dict(linked_order_id) if linked_order_id else None
+    if linked_order_id and use_postgres:
+        from work_orders import postgres_work_orders
+
+        linked_order = postgres_work_orders.get_one(linked_order_id, for_update=True)
+    else:
+        linked_order = get_order_dict(linked_order_id) if linked_order_id else None
     linked_order_snapshot = copy.deepcopy(linked_order) if linked_order is not None else None
     previous_status = issue.get("status", "open")
-    if actor_role(actor) == "operator" and req.status == "open" and previous_status in ("completed", "verified"):
-        if not _operator_reopen_enabled():
-            return {"status": "error", "message": "Operator reopen is disabled by system settings."}
-    if req.status == "open" and previous_status in ("completed", "verified") and not (req.operator_note or "").strip():
+    normalized_requested_status = req.status.strip().lower() if req.status is not None else None
+    linked_order_terminal = bool(linked_order and linked_order.get("status") in {"completed", "verified"})
+    is_reopen = bool(
+        normalized_requested_status in {"open", "assigned", "in_progress"}
+        and (previous_status in {"completed", "verified"} or linked_order_terminal)
+    )
+    if is_reopen and actor_role(actor) == "operator" and not _operator_reopen_enabled():
+        return {"status": "error", "message": "Operator reopen is disabled by system settings."}
+    if is_reopen and not (req.operator_note or "").strip():
         return {"status": "error", "message": "Reopening a completed issue requires an operator note."}
     if req.status is not None:
-        normalized_status = req.status.strip().lower()
+        normalized_status = normalized_requested_status or ""
         if normalized_status not in ISSUE_STATUSES:
             return {"status": "error", "message": f"Invalid status: {req.status}"}
         if normalized_status == "completed":
@@ -797,7 +831,12 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
     synced_work_order = None
     if "status" in changed_fields and issue.get("work_order_id"):
         try:
-            synced_work_order = sync_work_order_from_issue(issue, updated_by, req.operator_note or "")
+            synced_work_order = sync_work_order_from_issue(
+                issue,
+                updated_by,
+                req.operator_note or "",
+                is_reopen,
+            )
             if synced_work_order is None:
                 raise RuntimeError(f"Linked work order {issue['work_order_id']} was not synchronized")
         except Exception as exc:
@@ -820,6 +859,7 @@ async def api_update_issue(issue_id: str, req: UpdateIssue, actor: dict = Depend
     responses={200: {"model": IssueEscalatedResponse}, **API_ERROR_RESPONSES},
 )
 @postgres_transactional
+@json_transactional(lambda: DB_DIR)
 async def api_escalate_issue(issue_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}

@@ -217,6 +217,8 @@ class AlarmRAGEngine:
         self.bm25: BM25Okapi | None = None
         self.title_bm25: BM25Okapi | None = None
         self.sections: List[dict] = []
+        self._code_index: dict[str, dict] = {}
+        self._code_index_size: int = 0
         self.tokenizer_version: str = "none"
         self.ready: bool = False
         self.next_id: int = 0
@@ -249,6 +251,15 @@ class AlarmRAGEngine:
             else None
         )
 
+    def _refresh_code_index(self) -> None:
+        index: dict[str, dict] = {}
+        for section in self.sections:
+            code = str(section.get("code") or "")
+            if code and code not in index and _is_manual_alarm_match(section, code):
+                index[code] = section
+        self._code_index = index
+        self._code_index_size = len(self.sections)
+
     def _try_load_index(self):
         pkl_path = f"{DB_PATH}/bm25_{self.collection_name}.pkl"
         if not os.path.exists(pkl_path):
@@ -263,6 +274,7 @@ class AlarmRAGEngine:
             self.bm25 = data["bm25"]
             self.sections = data["sections"]
             self._refresh_title_bm25()
+            self._refresh_code_index()
             self.tokenizer_version = str(data.get("tokenizer_version") or "legacy-whitespace-v0")
             self.next_id = len(self.sections)
             try:
@@ -376,6 +388,8 @@ class AlarmRAGEngine:
         except Exception as exc:
             print(f"[WARN][{self.collection_name}] {VECTOR_STORE_ERROR} Detail: {exc}")
         self.sections = []
+        self._code_index = {}
+        self._code_index_size = 0
         self.bm25 = None
         self.title_bm25 = None
         self.tokenizer_version = "none"
@@ -387,31 +401,9 @@ class AlarmRAGEngine:
         code_clean = re.sub(r"\D", "", code or "")
         if not code_clean or not self.sections:
             return None
-
-        if self.embedder is not None:
-            try:
-                results = self.store.query(
-                    collection=self.collection_name,
-                    query_embeddings=self.embedder.encode([code_clean]).tolist(),
-                    n_results=min(20, len(self.sections)),
-                    where={"code": {"$eq": code_clean}},
-                )
-                docs = results.get("documents", [[]])[0]
-                metas = results.get("metadatas", [[]])[0]
-                match = next(
-                    (
-                        {"text": doc, "meta": meta}
-                        for doc, meta in zip(docs, metas)
-                        if _is_manual_alarm_match(meta, code_clean)
-                    ),
-                    None,
-                )
-                if match:
-                    return match
-            except Exception as exc:
-                print(f"Metadata query error: {exc}")
-
-        section = next((item for item in self.sections if _is_manual_alarm_match(item, code_clean)), None)
+        if getattr(self, "_code_index_size", -1) != len(self.sections):
+            self._refresh_code_index()
+        section = self._code_index.get(code_clean)
         if not section:
             return None
         return {"text": section.get("text", ""), "meta": {key: value for key, value in section.items() if key != "text"}}
@@ -431,6 +423,7 @@ class AlarmRAGEngine:
     def _persist_bm25_index(self, texts: List[str]):
         self.bm25 = BM25Okapi([tokenize_bm25(text) for text in texts])
         self._refresh_title_bm25()
+        self._refresh_code_index()
         self.tokenizer_version = BM25_TOKENIZER_VERSION
         pkl_path = f"{DB_PATH}/bm25_{self.collection_name}.pkl"
         dump_signed_pickle(

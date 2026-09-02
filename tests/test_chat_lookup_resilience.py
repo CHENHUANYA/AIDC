@@ -214,12 +214,19 @@ def test_stream_completion_survives_query_telemetry_failure(monkeypatch):
 def test_ollama_adapter_sends_bounded_payload(monkeypatch):
     calls = []
 
-    class Response:
+    class StreamResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
         def raise_for_status(self):
             return None
 
-        def json(self):
-            return {"message": {"content": "ollama answer"}}
+        async def aiter_lines(self):
+            yield json.dumps({"message": {"content": "ollama "}})
+            yield json.dumps({"message": {"content": "answer"}})
 
     class Client:
         def __init__(self, *, timeout):
@@ -231,9 +238,9 @@ def test_ollama_adapter_sends_bounded_payload(monkeypatch):
         async def __aexit__(self, *_args):
             return False
 
-        async def post(self, url, *, json):
-            calls.append((url, json))
-            return Response()
+        def stream(self, method, url, *, json):
+            calls.append((method, url, json))
+            return StreamResponse()
 
     monkeypatch.setattr(chat_lookup_routes.httpx, "AsyncClient", Client)
     monkeypatch.setattr(chat_lookup_routes, "RAG_MAX_OUTPUT_TOKENS", 128)
@@ -241,9 +248,10 @@ def test_ollama_adapter_sends_bounded_payload(monkeypatch):
     answer = asyncio.run(chat_lookup_routes.call_ollama([{"role": "user", "content": "q"}], 0.2, 999))
 
     assert answer == "ollama answer"
-    assert calls[0][0].endswith("/api/chat")
-    assert calls[0][1]["options"]["num_predict"] == 128
-    assert calls[0][1]["stream"] is False
+    assert calls[0][0] == "POST"
+    assert calls[0][1].endswith("/api/chat")
+    assert calls[0][2]["options"]["num_predict"] == 128
+    assert calls[0][2]["stream"] is True
 
 
 @pytest.mark.parametrize(
@@ -340,11 +348,17 @@ def test_school_adapter_requires_url_and_sends_auth_header(monkeypatch):
     calls = []
 
     class Response:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
         def raise_for_status(self):
             return None
 
-        def json(self):
-            return {"choices": [{"message": {"content": "school answer"}}]}
+        async def aiter_bytes(self):
+            yield json.dumps({"choices": [{"message": {"content": "school answer"}}]}).encode()
 
     class Client:
         def __init__(self, *, timeout):
@@ -356,7 +370,8 @@ def test_school_adapter_requires_url_and_sends_auth_header(monkeypatch):
         async def __aexit__(self, *_args):
             return False
 
-        async def post(self, url, *, headers, json):
+        def stream(self, method, url, *, headers, json):
+            assert method == "POST"
             calls.append((url, headers, json))
             return Response()
 
@@ -369,3 +384,52 @@ def test_school_adapter_requires_url_and_sends_auth_header(monkeypatch):
     assert answer == "school answer"
     assert calls[0][0] == "https://school.example/chat/completions"
     assert calls[0][1]["Authorization"] == "Bearer secret"
+
+
+def test_provider_adapters_reject_oversized_responses(monkeypatch):
+    class OllamaResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            yield json.dumps({"message": {"content": "x" * 2000}})
+
+    class SchoolResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_bytes(self):
+            yield json.dumps({"choices": [{"message": {"content": "x" * 2000}}]}).encode()
+
+    class Client:
+        def __init__(self, *, timeout):
+            del timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def stream(self, _method, url, **_kwargs):
+            return SchoolResponse() if url.endswith("/chat/completions") else OllamaResponse()
+
+    monkeypatch.setattr(chat_lookup_routes.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(chat_lookup_routes, "SCHOOL_API_BASE_URL", "https://school.example")
+    with patch.dict("os.environ", {"ALARM_RAG_LLM_RESPONSE_MAX_BYTES": "1024"}):
+        with pytest.raises(RuntimeError, match="size limits"):
+            asyncio.run(chat_lookup_routes.call_ollama([], 0.1, 64))
+        with pytest.raises(RuntimeError, match="size limits"):
+            asyncio.run(chat_lookup_routes.call_school_api([], 0.1, 64))

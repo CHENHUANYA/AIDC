@@ -52,7 +52,12 @@ class AlarmTriggerRouteTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {"ALARM_RAG_TRIGGER_TOKEN": "secret"}, clear=False):
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 result = await alarm_routes.trigger_alarm(
-                    AlarmTrigger(alarm_code="3000", manual="808d", source="n8n-mock"),
+                    AlarmTrigger(
+                        alarm_code="3000",
+                        manual="808d",
+                        source="n8n-mock",
+                        external_event_id="evt-description",
+                    ),
                     actor={"user_id": "", "role": ""},
                     trigger_token="secret",
                 )
@@ -108,7 +113,11 @@ class AlarmTriggerRouteTests(unittest.IsolatedAsyncioTestCase):
             patch.object(alarm_routes, "alarm_history", history),
             patch.object(alarm_routes, "pending_alarms", pending),
             patch.object(alarm_routes, "read_jsonl", return_value=[]),
-            patch.object(alarm_routes, "append_jsonl", side_effect=lambda _path, entry: logs.append(dict(entry))),
+            patch.object(
+                alarm_routes,
+                "append_jsonl",
+                side_effect=lambda _path, entry, **_kwargs: logs.append(dict(entry)),
+            ),
             patch.object(alarm_routes, "create_issue_dict", return_value=issue),
             patch.object(alarm_routes, "create_order_dict", return_value=order),
             patch.object(alarm_routes, "set_issue_work_order", return_value=issue),

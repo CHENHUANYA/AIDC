@@ -207,7 +207,7 @@ def test_empty_initialization_and_lookup_fallbacks(tmp_path, monkeypatch):
     assert engine.lookup_code("not-a-code") is None
 
 
-def test_lookup_prefers_vector_metadata_match():
+def test_lookup_uses_exact_in_memory_index_without_vector_work():
     engine = bare_engine()
     engine.sections = [{"text": "fallback", "code": "3000", "type": "alarm"}]
     engine.embedder = Embedder()
@@ -219,9 +219,10 @@ def test_lookup_prefers_vector_metadata_match():
         ]],
     }
     assert engine.lookup_code("3000") == {
-        "text": "manual",
-        "meta": {"code": "3000", "type": "alarm", "page": 3},
+        "text": "fallback",
+        "meta": {"code": "3000", "type": "alarm"},
     }
+    engine.store.query.assert_not_called()
 
 
 def test_rebuild_and_progress_support_bm25_only_vector_failure_and_cancellation():

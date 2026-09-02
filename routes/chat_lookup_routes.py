@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import time
@@ -28,6 +29,8 @@ from app_context import (
     OLLAMA_KEEP_ALIVE,
     OLLAMA_URL,
     RAG_MAX_OUTPUT_TOKENS,
+    RAG_CHAT_TOP_K,
+    RAG_CONTEXT_CHARS_PER_DOC,
     RAG_OLLAMA_NUM_CTX,
     SCHOOL_API_BASE_URL,
     SCHOOL_API_FALLBACK_TO_OLLAMA,
@@ -51,6 +54,7 @@ from app_context import (
     retrieval_citations,
 )
 from auth import actor_id, get_actor
+from config_values import env_float
 from observability import runtime_metrics
 from repositories.rag_answers import RagAnswerRepository
 from rag_engine import extract_alarm_codes
@@ -95,6 +99,45 @@ def require_authenticated(actor: dict) -> dict | None:
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
     return None
+
+
+def _usage_limit_response(exc: AIUsageLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        headers={"Retry-After": str(exc.retry_after)},
+        content={"status": "error", "message": str(exc)},
+    )
+
+
+def _release_timed_out_work(task, lease) -> None:
+    try:
+        task.exception()
+    except (asyncio.CancelledError, Exception):
+        pass
+    finally:
+        lease.release()
+
+
+async def _run_bounded_retrieval(actor: dict, reserved_tokens: int, operation):
+    try:
+        lease = await ai_usage_guard.acquire(actor_id(actor), reserved_tokens)
+    except AIUsageLimitExceeded as exc:
+        return None, _usage_limit_response(exc)
+    task = asyncio.create_task(run_in_threadpool(operation))
+    timeout = env_float("ALARM_RAG_RETRIEVAL_TIMEOUT_SECONDS", 10, minimum=0.1, maximum=120)
+    try:
+        result = await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+    except TimeoutError:
+        task.add_done_callback(lambda completed: _release_timed_out_work(completed, lease))
+        return None, JSONResponse(
+            status_code=504,
+            content={"status": "error", "message": "Retrieval deadline exceeded"},
+        )
+    except Exception:
+        lease.release()
+        raise
+    lease.release()
+    return result, None
 
 
 def validate_collection_name(collection_name: str) -> dict | None:
@@ -354,20 +397,9 @@ def classify_answer_state(provider: str) -> str:
 
 
 def answer_source_tags(docs: list[dict]) -> str:
-    if not docs:
-        return ""
-    meta = docs[0].get("meta", {})
-    raw_page = meta.get("page")
-    try:
-        page = raw_page if int(raw_page) > 0 else None
-    except (TypeError, ValueError):
-        page = None
-    values = [
-        ("PAGE", page),
-        ("TITLE", meta.get("title")),
-        ("CODE", meta.get("code")),
-    ]
-    return "".join(f"<!-- {name}:{value} -->" for name, value in values if value not in {None, ""})
+    # Citations are transported exclusively in the structured `rag` envelope.
+    # Assistant-controlled HTML comments must never be treated as provenance.
+    return ""
 
 
 def record_chat_error(collection_name: str, user_query: str, docs: list[dict], exc: Exception) -> None:
@@ -491,8 +523,7 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
     max_tokens = req.max_tokens or 1024
     grounded_answer = build_grounded_diagnostic_answer(user_query, docs)
     if grounded_answer:
-        tags = answer_source_tags(docs)
-        content = f"{tags}\n{grounded_answer}" if tags else grounded_answer
+        content = grounded_answer
         elapsed_ms = int((time.time() - start_ts) * 1000)
         record_query(collection_name, user_query, source="api-grounded", elapsed_ms=elapsed_ms)
         await save_rag_answer_async(
@@ -578,7 +609,15 @@ async def handle_chat(req: ChatRequest, collection_name: str, actor: dict | None
 async def limited_chat(req: ChatRequest, collection_name: str, actor: dict):
     try:
         lease = await ai_usage_guard.acquire(
-            actor_id(actor), estimate_reserved_tokens(req.messages, req.max_tokens or 1024)
+            actor_id(actor),
+            estimate_reserved_tokens(
+                req.messages,
+                req.max_tokens or 1024,
+                additional_utf8_bytes=(
+                    len(CHAT_SYSTEM_PROMPT.encode("utf-8"))
+                    + RAG_CHAT_TOP_K * RAG_CONTEXT_CHARS_PER_DOC * 4
+                ),
+            ),
         )
     except AIUsageLimitExceeded as exc:
         return JSONResponse(
@@ -616,7 +655,12 @@ async def free_chat(req: ChatRequest, actor: dict = Depends(get_actor)):
         return denied
     try:
         lease = await ai_usage_guard.acquire(
-            actor_id(actor), estimate_reserved_tokens(req.messages, req.max_tokens or 1024)
+            actor_id(actor),
+            estimate_reserved_tokens(
+                req.messages,
+                req.max_tokens or 1024,
+                additional_utf8_bytes=len(FREE_CHAT_SYSTEM.encode("utf-8")),
+            ),
         )
     except AIUsageLimitExceeded as exc:
         return JSONResponse(
@@ -686,7 +730,20 @@ async def retrieve_collection(
         }
 
     start_ts = time.time()
-    docs = engine.retrieve(clean_query, top_k=top_k)
+    effective_top_k = top_k if isinstance(top_k, int) and not isinstance(top_k, bool) else 5
+    reserved_tokens = max((len(clean_query) + 3) // 4 + effective_top_k * 64, 1)
+    try:
+        docs, admission_error = await _run_bounded_retrieval(
+            actor, reserved_tokens, lambda: engine.retrieve(clean_query, top_k=effective_top_k)
+        )
+    except Exception as exc:
+        record_chat_error(collection_name, clean_query, [], exc)
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "message": "Retrieval service unavailable"},
+        )
+    if admission_error is not None:
+        return admission_error
     citations = retrieval_citations(collection_name, docs)
     results = [
         {**citation, "text": str(doc.get("text") or "")}
@@ -746,23 +803,24 @@ async def lookup_alarm(collection_name: str, code: str, actor: dict = Depends(ge
     invalid = validate_collection_name(collection_name)
     if invalid:
         return invalid
+    code_match = re.fullmatch(r"(?:alarm[\s:#-]*)?(\d{1,12})", code.strip(), flags=re.IGNORECASE)
+    if code_match is None:
+        return JSONResponse(
+            status_code=400,
+            content={"found": False, "error": "Invalid alarm code"},
+        )
+    code_clean = code_match.group(1)
     engine = get_existing_engine(collection_name)
     if engine is None or not engine.ready:
         return {"found": False, "error": NOT_READY_TEMPLATE.format(name=collection_name)}
 
     start_ts = time.time()
-    code_clean = re.sub(r"\D", "", code)
-    if not code_clean:
-        record_query(
-            collection_name,
-            code,
-            source="lookup",
-            elapsed_ms=int((time.time() - start_ts) * 1000),
-        )
-        return {"found": False, "error": "Invalid alarm code"}
-
     try:
-        result = engine.lookup_code(code_clean)
+        result, admission_error = await _run_bounded_retrieval(
+            actor, 64, lambda: engine.lookup_code(code_clean)
+        )
+        if admission_error is not None:
+            return admission_error
         if result:
             doc = result["text"]
             meta = result["meta"]

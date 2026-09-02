@@ -118,11 +118,17 @@ def test_save_feedback_uses_jsonl_helper_and_authenticated_identity() -> None:
         query="alarm 3000",
         collection="808d",
         feedback="good",
+        answer_id="answer-1",
         user_id="spoofed",
         role="admin",
     )
     with (
         patch.object(stats_routes, "postgres_store_enabled", return_value=False),
+        patch.object(
+            stats_routes.rag_answers,
+            "get",
+            return_value={"query": "alarm 3000", "collection": "808d", "created_by": "operator01"},
+        ),
         patch.object(stats_routes, "append_jsonl") as append,
     ):
         result = asyncio.run(stats_routes.save_feedback(request, actor=OPERATOR))
@@ -135,8 +141,15 @@ def test_save_feedback_uses_jsonl_helper_and_authenticated_identity() -> None:
 
 
 def test_save_feedback_returns_service_unavailable_on_write_failure() -> None:
-    request = FeedbackRequest(query="alarm", collection="808d", feedback="bad")
-    with patch.object(stats_routes, "_persist_feedback", side_effect=OSError("disk full")):
+    request = FeedbackRequest(query="alarm", collection="808d", feedback="bad", answer_id="answer-1")
+    with (
+        patch.object(
+            stats_routes.rag_answers,
+            "get",
+            return_value={"query": "alarm", "collection": "808d", "created_by": "operator01"},
+        ),
+        patch.object(stats_routes, "_persist_feedback", side_effect=OSError("disk full")),
+    ):
         response = asyncio.run(stats_routes.save_feedback(request, actor=OPERATOR))
 
     assert response.status_code == 503

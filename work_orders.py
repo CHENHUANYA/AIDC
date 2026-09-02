@@ -15,11 +15,14 @@ import os
 import shutil
 import tempfile
 import uuid
+import asyncio
+import threading
 from datetime import datetime
 from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from api_schemas import (
     API_ERROR_RESPONSES,
@@ -41,6 +44,7 @@ from auth import (
     actor_role,
     can_reference_rag_answer,
     can_update_work_order,
+    can_view_issue,
     can_view_work_order,
     can_verify,
     get_actor,
@@ -53,7 +57,7 @@ from repositories.postgres_workflow import PostgresWorkOrderRepository
 from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
 from services.json_file_store import write_json_atomic
-from services.transactions import postgres_transactional
+from services.transactions import json_transactional, postgres_transactional
 from services import work_order_lifecycle
 from services import work_order_issue_sync
 from services import work_order_mutations
@@ -95,7 +99,7 @@ KB_REVIEW_STATUSES = [
     "ingested",
     "validation_failed",
 ]
-OPERATOR_WORK_ORDER_PATCH_FIELDS = {"status", "verified_by", "notes", "updated_by", "version"}
+OPERATOR_WORK_ORDER_PATCH_FIELDS = {"status", "notes", "version"}
 MAINTENANCE_WORK_ORDER_PATCH_FIELDS = {
     "status",
     "priority",
@@ -104,8 +108,6 @@ MAINTENANCE_WORK_ORDER_PATCH_FIELDS = {
     "description",
     "resolution",
     "notes",
-    "accepted_by",
-    "completed_by",
     "root_cause",
     "repair_action",
     "failure_category",
@@ -114,9 +116,35 @@ MAINTENANCE_WORK_ORDER_PATCH_FIELDS = {
     "llm_missing_info",
     "llm_expected_fix",
     "llm_answer_used",
-    "updated_by",
     "version",
 }
+LIFECYCLE_IDENTITY_FIELDS = {"accepted_by", "completed_by", "verified_by", "updated_by"}
+_archive_scan_lock = threading.Lock()
+_archive_active_total = 0
+_archive_active_by_actor: dict[str, int] = {}
+
+
+def _acquire_archive_scan(user_id: str) -> bool:
+    global _archive_active_total
+    global_limit = env_int("ALARM_RAG_ARCHIVE_CONCURRENCY", 2, minimum=1, maximum=32)
+    per_actor_limit = env_int("ALARM_RAG_ARCHIVE_PER_ACTOR_CONCURRENCY", 1, minimum=1, maximum=global_limit)
+    with _archive_scan_lock:
+        if _archive_active_total >= global_limit or _archive_active_by_actor.get(user_id, 0) >= per_actor_limit:
+            return False
+        _archive_active_total += 1
+        _archive_active_by_actor[user_id] = _archive_active_by_actor.get(user_id, 0) + 1
+        return True
+
+
+def _release_archive_scan(user_id: str) -> None:
+    global _archive_active_total
+    with _archive_scan_lock:
+        _archive_active_total = max(_archive_active_total - 1, 0)
+        remaining = _archive_active_by_actor.get(user_id, 0) - 1
+        if remaining > 0:
+            _archive_active_by_actor[user_id] = remaining
+        else:
+            _archive_active_by_actor.pop(user_id, None)
 
 
 def upload_limit_bytes(env_name: str, default_mb: float) -> int:
@@ -290,15 +318,26 @@ def _restore_json_issue(snapshot: dict) -> None:
             return
 
 
-def _operation_dependencies() -> work_order_operations.OperationDependencies:
-    from issues import get_issue_dict, sync_issue_from_work_order, unlink_issue_from_work_order
+def _operation_dependencies(*, lock_rows: bool = False) -> work_order_operations.OperationDependencies:
+    from issues import get_issue_dict, postgres_issues, sync_issue_from_work_order, unlink_issue_from_work_order
+
+    get_order = (
+        (lambda order_id: postgres_work_orders.get_one(order_id, for_update=True))
+        if lock_rows
+        else postgres_work_orders.get_one
+    )
+    get_issue = (
+        (lambda issue_id: postgres_issues.get_one(issue_id, for_update=True))
+        if lock_rows
+        else get_issue_dict
+    )
 
     return work_order_operations.OperationDependencies(
-        get_one=postgres_work_orders.get_one,
+        get_one=get_order,
         save_one=postgres_work_orders.save_one,
         load_all=_load_orders,
         save_all=_save_orders,
-        get_issue=get_issue_dict,
+        get_issue=get_issue,
         sync_issue=sync_issue_from_work_order,
         unlink_issue=unlink_issue_from_work_order,
         restore_issue=_restore_json_issue,
@@ -316,6 +355,7 @@ def _query_dependencies() -> work_order_queries.QueryDependencies:
         find_order=_find_order,
         get_issue=get_issue_dict,
         can_view=can_view_work_order,
+        can_view_issue=can_view_issue,
         history_list=history_list,
         logger=logger,
     )
@@ -353,40 +393,40 @@ def _load_archived_orders() -> Tuple[List[dict], List[dict]]:
 
 # ----------------- Models -----------------
 class CreateWorkOrder(BaseModel):
-    alarm_code: str
-    manual: Optional[str] = "808d"
-    issue_id: Optional[str] = ""
-    machine_id: Optional[str] = ""
-    priority: Optional[str] = "medium"
-    assigned_to: Optional[str] = ""
-    description: Optional[str] = ""
-    rag_suggestion: Optional[str] = ""
-    rag_answer_id: Optional[str] = ""
-    source: Optional[str] = "manual"  # manual | auto | n8n
-    created_by: Optional[str] = ""
+    alarm_code: str = Field(min_length=1, max_length=128)
+    manual: Optional[str] = Field(default="808d", max_length=64)
+    issue_id: Optional[str] = Field(default="", max_length=128)
+    machine_id: Optional[str] = Field(default="", max_length=255)
+    priority: Optional[str] = Field(default="medium", max_length=32)
+    assigned_to: Optional[str] = Field(default="", max_length=128)
+    description: Optional[str] = Field(default="", max_length=10_000)
+    rag_suggestion: Optional[str] = Field(default="", max_length=20_000)
+    rag_answer_id: Optional[str] = Field(default="", max_length=255)
+    source: Optional[str] = Field(default="manual", max_length=128)  # manual | auto | n8n
+    created_by: Optional[str] = Field(default="", max_length=128)
 
 
 class UpdateWorkOrder(BaseModel):
-    status: Optional[str] = None
-    priority: Optional[str] = None
-    assigned_to: Optional[str] = None
-    machine_id: Optional[str] = None
-    description: Optional[str] = None
-    resolution: Optional[str] = None
-    notes: Optional[str] = None
-    accepted_by: Optional[str] = None
-    completed_by: Optional[str] = None
-    verified_by: Optional[str] = None
-    root_cause: Optional[str] = None
-    repair_action: Optional[str] = None
-    failure_category: Optional[str] = None
-    llm_correctness: Optional[str] = None
-    llm_coverage: Optional[str] = None
-    llm_missing_info: Optional[str] = None
-    llm_expected_fix: Optional[str] = None
+    status: Optional[str] = Field(default=None, max_length=32)
+    priority: Optional[str] = Field(default=None, max_length=32)
+    assigned_to: Optional[str] = Field(default=None, max_length=128)
+    machine_id: Optional[str] = Field(default=None, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=10_000)
+    resolution: Optional[str] = Field(default=None, max_length=20_000)
+    notes: Optional[str] = Field(default=None, max_length=10_000)
+    accepted_by: Optional[str] = Field(default=None, max_length=128)
+    completed_by: Optional[str] = Field(default=None, max_length=128)
+    verified_by: Optional[str] = Field(default=None, max_length=128)
+    root_cause: Optional[str] = Field(default=None, max_length=10_000)
+    repair_action: Optional[str] = Field(default=None, max_length=10_000)
+    failure_category: Optional[str] = Field(default=None, max_length=128)
+    llm_correctness: Optional[str] = Field(default=None, max_length=64)
+    llm_coverage: Optional[str] = Field(default=None, max_length=64)
+    llm_missing_info: Optional[str] = Field(default=None, max_length=10_000)
+    llm_expected_fix: Optional[str] = Field(default=None, max_length=10_000)
     llm_answer_used: Optional[bool] = None
     kb_candidate: Optional[bool] = None
-    updated_by: Optional[str] = None
+    updated_by: Optional[str] = Field(default=None, max_length=128)
     version: Optional[int] = None
 
 
@@ -518,7 +558,12 @@ def _append_order_history(
     append_history(order, "work_order_history", action, user_id, fields, from_status, to_status, changes)
 
 
-def sync_work_order_from_issue(issue: dict, user_id: str = "", note: str = "") -> Optional[dict]:
+def sync_work_order_from_issue(
+    issue: dict,
+    user_id: str = "",
+    note: str = "",
+    allow_reopen: bool = False,
+) -> Optional[dict]:
     work_order_id = str(issue.get("work_order_id") or "")
     if not work_order_id:
         return None
@@ -543,6 +588,8 @@ def sync_work_order_from_issue(issue: dict, user_id: str = "", note: str = "") -
             status_transition_error=_status_transition_error,
             append_history=_append_order_history,
             calculate_field_changes=field_changes,
+            allow_reopen=allow_reopen,
+            increment_version=not postgres_store_enabled(),
         )
         break
 
@@ -560,6 +607,7 @@ def sync_work_order_from_issue(issue: dict, user_id: str = "", note: str = "") -
     responses={200: {"model": WorkOrderSuccessResponse}, **API_ERROR_RESPONSES},
 )
 @postgres_transactional
+@json_transactional(lambda: DB_DIR)
 async def api_create_order(req: CreateWorkOrder, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -572,6 +620,8 @@ async def api_create_order(req: CreateWorkOrder, actor: dict = Depends(get_actor
         linked_issue = get_issue_dict(req.issue_id)
         if linked_issue is None:
             return {"status": "error", "message": "Issue not found"}
+        if not can_view_issue(actor, linked_issue):
+            return {"status": "error", "message": "Permission denied"}
         if not can_view_work_order(actor, {"status": "pending", "assigned_to": ""}, linked_issue):
             return {"status": "error", "message": "Permission denied"}
     rag_answer_id = req.rag_answer_id or str((linked_issue or {}).get("rag_answer_id") or "")
@@ -606,13 +656,27 @@ async def api_create_order(req: CreateWorkOrder, actor: dict = Depends(get_actor
     "/work-orders",
     responses={200: {"model": WorkOrdersResponse}, **API_ERROR_RESPONSES},
 )
-async def api_list_orders(status: Optional[str] = None, actor: dict = Depends(get_actor)):
+async def api_list_orders(
+    status: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=200),
+    actor: dict = Depends(get_actor),
+):
+    page_limit = limit if isinstance(limit, int) else 100
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
+    if postgres_store_enabled():
+        items, total, _ = postgres_work_orders.load_page(
+            limit=page_limit,
+            role=actor_role(actor),
+            user_id=actor_id(actor),
+            line_scope=[str(value) for value in actor.get("line_scope", []) if isinstance(value, str)],
+            status=status or "",
+        )
+        return {"total": total, "orders": items}
     orders = _visible_orders(actor)
     if status:
         orders = [o for o in orders if o["status"] == status]
-    return {"total": len(orders), "orders": orders}
+    return {"total": len(orders), "orders": orders[:page_limit]}
 
 
 @router.get(
@@ -690,10 +754,33 @@ async def api_order_stats(actor: dict = Depends(get_actor)):
     "/work-orders/archive",
     responses={200: {"model": WorkOrderArchiveResponse}, **API_ERROR_RESPONSES},
 )
-async def api_work_order_archive(actor: dict = Depends(get_actor)):
+async def api_work_order_archive(
+    limit: int = Query(default=200, ge=1, le=500),
+    actor: dict = Depends(get_actor),
+):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
-    archives, orders = _load_archived_orders()
+    archive_limit = limit if isinstance(limit, int) else 200
+    user_id = actor_id(actor)
+    if not _acquire_archive_scan(user_id):
+        return {"status": "error", "message": "Archive scan capacity exceeded"}
+    scan_task = asyncio.create_task(run_in_threadpool(_load_archived_orders))
+    try:
+        archives, orders = await asyncio.wait_for(
+            asyncio.shield(scan_task),
+            timeout=env_float("ALARM_RAG_ARCHIVE_REQUEST_TIMEOUT_SECONDS", 5, minimum=0.5, maximum=30),
+        )
+    except TimeoutError:
+        scan_task.add_done_callback(lambda _completed: _release_archive_scan(user_id))
+        return {"status": "error", "message": "Archive query deadline exceeded"}
+    except asyncio.CancelledError:
+        scan_task.add_done_callback(lambda _completed: _release_archive_scan(user_id))
+        raise
+    except Exception:
+        _release_archive_scan(user_id)
+        raise
+    else:
+        _release_archive_scan(user_id)
     issues_by_id = _issue_map_by_id()
     return work_order_reporting.build_archive_response(
         archives,
@@ -701,6 +788,7 @@ async def api_work_order_archive(actor: dict = Depends(get_actor)):
         actor=actor,
         issues_by_id=issues_by_id,
         can_view=can_view_work_order,
+        limit=archive_limit,
     )
 
 
@@ -737,11 +825,12 @@ async def api_get_order_history(order_id: str, actor: dict = Depends(get_actor))
     responses={200: {"model": WorkOrderMutationResponse}, **API_ERROR_RESPONSES},
 )
 @postgres_transactional
+@json_transactional(lambda: DB_DIR)
 async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
     use_postgres = postgres_store_enabled()
-    operation_dependencies = _operation_dependencies()
+    operation_dependencies = _operation_dependencies(lock_rows=use_postgres)
     loaded = work_order_operations.load_order(
         order_id,
         use_postgres=use_postgres,
@@ -763,6 +852,21 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
     field_permission_error = _work_order_patch_permission_error(actor, req)
     if field_permission_error:
         return {"status": "error", "message": field_permission_error}
+    forged_identity_fields = _request_fields(req) & LIFECYCLE_IDENTITY_FIELDS
+    if forged_identity_fields:
+        return {
+            "status": "error",
+            "message": f"Lifecycle attribution is server-managed: {', '.join(sorted(forged_identity_fields))}",
+        }
+    if actor_role(actor) in {"operator", "maintenance"} and order.get("status") in {"completed", "verified", "cancelled"}:
+        exact_verification = (
+            actor_role(actor) == "operator"
+            and order.get("status") == "completed"
+            and req.status == "verified"
+            and _request_fields(req) <= {"status", "version"}
+        )
+        if not exact_verification:
+            return {"status": "error", "message": "Terminal work orders are immutable for this role"}
     current_version = work_order_mutations.normalized_version(order)
     if req.version is not None and req.version != current_version:
         return {"status": "error", "message": WORK_ORDER_STALE_UPDATE_MESSAGE}
@@ -821,6 +925,7 @@ async def api_update_order(order_id: str, req: UpdateWorkOrder, actor: dict = De
     responses={200: {"model": WorkOrderDeleteResponse}, **API_ERROR_RESPONSES},
 )
 @postgres_transactional
+@json_transactional(lambda: DB_DIR)
 async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
@@ -831,7 +936,7 @@ async def api_delete_order(order_id: str, actor: dict = Depends(get_actor)):
         order_id,
         deleted_by=actor_id(actor),
         use_postgres=use_postgres,
-        dependencies=_operation_dependencies(),
+        dependencies=_operation_dependencies(lock_rows=use_postgres),
     )
 
 
@@ -912,6 +1017,7 @@ async def _auto_feedback_to_kb(order: dict) -> dict:
     },
 )
 @postgres_transactional
+@json_transactional(lambda: DB_DIR)
 async def review_work_order_knowledge(
     order_id: str,
     req: KnowledgeReviewRequest,
@@ -1042,20 +1148,7 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
         if not rows:
             return {"status": "error", "message": "Excel 檔案為空"}
 
-        summary = import_workbook_rows(
-            rows,
-            field_map=EXCEL_FIELD_MAP,
-            positional_fields=POSITIONAL_FIELDS,
-            priorities=PRIORITIES,
-            statuses=STATUSES,
-            created_by=actor_id(actor),
-            build_order=_build_order_dict,
-            closure_error=_closure_error,
-            refresh_knowledge_state=_refresh_knowledge_review_state,
-            append_order_history=_append_order_history,
-            calculate_field_changes=field_changes,
-            persist_order=_persist_new_order,
-        )
+        summary = await _persist_import_rows(rows, actor_id(actor))
 
         return {
             "status": "ok",
@@ -1075,3 +1168,22 @@ async def import_excel(file: UploadFile = File(...), actor: dict = Depends(get_a
             except Exception as exc:
                 logger.warning("Failed to close imported workbook: %s", exc)
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@postgres_transactional
+@json_transactional(lambda: DB_DIR)
+async def _persist_import_rows(rows: list, importer_id: str):
+    return import_workbook_rows(
+        rows,
+        field_map=EXCEL_FIELD_MAP,
+        positional_fields=POSITIONAL_FIELDS,
+        priorities=PRIORITIES,
+        statuses=STATUSES,
+        created_by=importer_id,
+        build_order=_build_order_dict,
+        closure_error=_closure_error,
+        refresh_knowledge_state=_refresh_knowledge_review_state,
+        append_order_history=_append_order_history,
+        calculate_field_changes=field_changes,
+        persist_order=_persist_new_order,
+    )

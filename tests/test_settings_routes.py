@@ -1,4 +1,5 @@
 import shutil
+import os
 import unittest
 import uuid
 from pathlib import Path
@@ -18,6 +19,7 @@ class SettingsRouteTests(unittest.IsolatedAsyncioTestCase):
         self.patches = [
             patch.object(settings_routes, "DB_DIR", str(self.tmp_root)),
             patch.object(settings_routes, "SETTINGS_FILE", str(self.tmp_root / "system_settings.json")),
+            patch.dict(os.environ, {"SESSION_TTL_HOURS": ""}, clear=False),
         ]
         for item in self.patches:
             item.start()
@@ -74,6 +76,18 @@ class SettingsRouteTests(unittest.IsolatedAsyncioTestCase):
         current = await settings_routes.get_system_settings(actor=ADMIN)
         self.assertEqual(first["settings"]["revision"], current["settings"]["revision"])
         self.assertEqual(12, current["settings"]["session_hours"])
+
+    async def test_environment_session_ttl_is_visible_and_read_only(self):
+        with patch.dict(os.environ, {"SESSION_TTL_HOURS": "3"}, clear=False):
+            current = await settings_routes.get_system_settings(actor=ADMIN)
+            rejected = await settings_routes.update_system_settings(
+                settings_routes.UpdateSystemSettings(session_hours=4), actor=ADMIN
+            )
+
+        self.assertEqual(3, current["settings"]["session_hours"])
+        self.assertEqual("environment", current["settings"]["session_hours_source"])
+        self.assertEqual("error", rejected["status"])
+        self.assertIn("SESSION_TTL_HOURS", rejected["message"])
 
 
 if __name__ == "__main__":
