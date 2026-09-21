@@ -19,7 +19,6 @@ REQUIRED_SCREENSHOTS = {
     "flow-admin-answer-trace.png",
     "flow-admin-kb-ingest.png",
     "flow-admin-kb-delete.png",
-    "flow-admin-kb-rebuild.png",
     "flow-operations-tabs.png",
     "mobile-operator.png",
     "mobile-maintenance.png",

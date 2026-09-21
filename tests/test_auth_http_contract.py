@@ -36,6 +36,70 @@ def test_current_user_without_session_returns_401_with_bearer_challenge() -> Non
     assert response.json() == {"status": "error", "message": "Not authenticated"}
 
 
+def test_public_login_config_does_not_disclose_bootstrap_account_ids() -> None:
+    response = asyncio.run(request("GET", "/auth/login-config"))
+
+    assert response.status_code == 200
+    assert response.json()["bootstrap_users"] == []
+
+
+def test_bootstrap_password_must_be_rotated_before_first_session() -> None:
+    users = {
+        "admin01": {
+            "user_id": "admin01",
+            "name": "Admin",
+            "role": "admin",
+            "line_scope": ["*"],
+            "team": "admin",
+            "active": True,
+            "credential_epoch": 1,
+            "must_change_password": True,
+            "password_hash": auth.hash_password("InitialStrong!"),
+            "updated_at": "v1",
+        }
+    }
+    session_store = {}
+
+    def save_user(user_id, payload, expected_updated_at=None):
+        assert expected_updated_at == "v1"
+        users[user_id] = {**payload, "updated_at": "v2"}
+        return users[user_id]
+
+    with (
+        patch.object(auth, "load_users", side_effect=lambda: users),
+        patch.object(auth, "save_user", side_effect=save_user),
+        patch.object(auth, "revoke_user_sessions", return_value=0),
+        patch.object(auth, "postgres_store_enabled", return_value=False),
+        patch.object(
+            auth.auth_sessions,
+            "mutate_sessions",
+            side_effect=lambda _path, mutation: mutation(session_store),
+        ),
+    ):
+        blocked = asyncio.run(request(
+            "POST", "/auth/login", json={"username": "admin01", "password": "InitialStrong!"}
+        ))
+        changed = asyncio.run(request(
+            "POST",
+            "/auth/initial-password",
+            json={
+                "username": "admin01",
+                "current_password": "InitialStrong!",
+                "new_password": "DistinctStrong!2",
+            },
+        ))
+        logged_in = asyncio.run(request(
+            "POST", "/auth/login", json={"username": "admin01", "password": "DistinctStrong!2"}
+        ))
+
+    assert blocked.status_code == 403
+    assert blocked.json()["error_code"] == "PASSWORD_CHANGE_REQUIRED"
+    assert changed.status_code == 200
+    assert users["admin01"]["must_change_password"] is False
+    assert users["admin01"]["credential_epoch"] == 2
+    assert logged_in.status_code == 200
+
+
 def test_browser_login_uses_http_only_cookie_and_hashes_json_session_at_rest() -> None:
     user = {
         "user_id": "operator01",
@@ -48,12 +112,8 @@ def test_browser_login_uses_http_only_cookie_and_hashes_json_session_at_rest() -
     }
     session_store = {}
 
-    def load_sessions():
-        return dict(session_store)
-
-    def save_sessions(sessions):
-        session_store.clear()
-        session_store.update(sessions)
+    def mutate_sessions(_path, mutation):
+        return mutation(session_store)
 
     async def scenario():
         transport = httpx.ASGITransport(app=app)
@@ -72,8 +132,7 @@ def test_browser_login_uses_http_only_cookie_and_hashes_json_session_at_rest() -
     with (
         patch.object(auth, "load_users", return_value={"operator01": user}),
         patch.object(auth, "postgres_store_enabled", return_value=False),
-        patch.object(auth, "load_sessions", side_effect=load_sessions),
-        patch.object(auth, "save_sessions", side_effect=save_sessions),
+        patch.object(auth.auth_sessions, "mutate_sessions", side_effect=mutate_sessions),
         patch.object(auth.runtime_metrics, "record_auth") as record_auth,
     ):
         login_response, stored_keys_after_login, me_response, logout_response, expired_response = asyncio.run(scenario())
@@ -97,7 +156,7 @@ def test_browser_login_uses_http_only_cookie_and_hashes_json_session_at_rest() -
 
 def test_repeated_invalid_logins_are_rate_limited() -> None:
     username = "rate-limited-user"
-    auth.clear_login_failures(username)
+    auth.clear_login_failures(username, client_identity="127.0.0.1")
     with (
         patch.object(auth, "LOGIN_FAILURE_LIMIT", 2),
         patch.object(auth, "LOGIN_LOCKOUT_SECONDS", 60),
@@ -113,7 +172,7 @@ def test_repeated_invalid_logins_are_rate_limited() -> None:
         third = asyncio.run(
             request("POST", "/auth/login", json={"username": username, "password": "invalid-password"})
         )
-    auth.clear_login_failures(username)
+    auth.clear_login_failures(username, client_identity="127.0.0.1")
 
     assert first.status_code == 401
     assert second.status_code == 429
@@ -124,6 +183,24 @@ def test_repeated_invalid_logins_are_rate_limited() -> None:
         call("throttled"),
         call("throttled"),
     ]
+
+
+def test_login_throttle_enforces_account_bucket_across_client_identities() -> None:
+    username = "shared-account"
+    first_source = "198.51.100.10"
+    second_source = "198.51.100.11"
+    with (
+        patch.object(auth, "LOGIN_FAILURE_LIMIT", 2),
+        patch.object(auth, "LOGIN_LOCKOUT_SECONDS", 60),
+        patch.object(auth, "postgres_store_enabled", return_value=False),
+    ):
+        assert auth.record_login_failure(username, client_identity=first_source, now=100.0) == 0
+        assert auth.record_login_failure(username, client_identity=first_source, now=101.0) == 60
+        assert auth.login_retry_after(username, client_identity=first_source, now=102.0) == 59
+        assert auth.login_retry_after(username, client_identity=second_source, now=102.0) == 59
+
+    auth.clear_login_failures(username, client_identity=first_source)
+    auth.clear_login_failures(username, client_identity=second_source)
 
 
 def test_login_rate_state_evicts_oldest_key_at_capacity() -> None:
@@ -144,8 +221,30 @@ def test_login_rate_state_evicts_oldest_key_at_capacity() -> None:
     with auth._login_rate_lock:
         active_keys = set(auth._login_failures) | set(auth._login_lockouts)
         assert len(active_keys) == 2
-        assert "first-user" not in active_keys
-        assert {"second-user", "third-user"} == active_keys
+        assert "account:first-user" not in active_keys
+        assert {"account:second-user", "account:third-user"} == active_keys
+        auth._login_failures.clear()
+        auth._login_lockouts.clear()
+        auth._login_last_seen.clear()
+        auth._login_last_pruned_at = 0.0
+
+
+def test_login_rate_capacity_never_evicts_active_lockouts() -> None:
+    with auth._login_rate_lock:
+        auth._login_failures.clear()
+        auth._login_lockouts.clear()
+        auth._login_last_seen.clear()
+        auth._login_last_pruned_at = 0.0
+    with (
+        patch.object(auth, "LOGIN_FAILURE_LIMIT", 1),
+        patch.object(auth, "LOGIN_LOCKOUT_SECONDS", 60),
+        patch.object(auth, "LOGIN_RATE_MAX_KEYS", 2),
+    ):
+        assert auth.record_login_failure("first", now=100.0) == 60
+        assert auth.record_login_failure("second", now=101.0) == 60
+        assert auth.record_login_failure("third", now=102.0) == 60
+    assert set(auth._login_lockouts) == {"account:first", "account:second"}
+    with auth._login_rate_lock:
         auth._login_failures.clear()
         auth._login_lockouts.clear()
         auth._login_last_seen.clear()
@@ -154,8 +253,8 @@ def test_login_rate_state_evicts_oldest_key_at_capacity() -> None:
 
 def test_postgresql_login_rate_functions_use_shared_repository() -> None:
     repository = Mock()
-    repository.retry_after.return_value = 17
-    repository.record_failure.return_value = 23
+    repository.retry_after_many.return_value = 17
+    repository.record_failures.return_value = 23
 
     with (
         patch.object(auth, "postgres_store_enabled", return_value=True),
@@ -165,11 +264,15 @@ def test_postgresql_login_rate_functions_use_shared_repository() -> None:
         assert auth.record_login_failure(" Operator01 ") == 23
         auth.clear_login_failures(" Operator01 ")
 
-    repository.retry_after.assert_called_once_with("operator01", auth.LOGIN_FAILURE_WINDOW_SECONDS)
-    repository.record_failure.assert_called_once_with(
-        "operator01",
+    repository.retry_after_many.assert_called_once_with(
+        ("account:operator01", "global:login"),
+        auth.LOGIN_FAILURE_WINDOW_SECONDS,
+    )
+    repository.record_failures.assert_called_once_with(
+        ("account:operator01", "global:login"),
         auth.LOGIN_FAILURE_LIMIT,
         auth.LOGIN_FAILURE_WINDOW_SECONDS,
         auth.LOGIN_LOCKOUT_SECONDS,
+        max_keys=auth.LOGIN_RATE_MAX_KEYS,
     )
-    repository.clear.assert_called_once_with("operator01")
+    repository.clear_many.assert_called_once_with(("account:operator01",))

@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -210,17 +211,16 @@ def test_json_session_for_inactive_user_is_rejected_and_removed():
     }
     with (
         patch.object(auth, "postgres_store_enabled", return_value=False),
-        patch.object(auth, "load_sessions", return_value=sessions),
+        patch.object(auth.auth_sessions, "mutate_sessions", side_effect=lambda _path, mutation: mutation(sessions)),
         patch.object(
             auth,
-            "resolve_user",
-            return_value={"user_id": "operator01", "role": "operator", "active": False},
+            "load_users",
+            return_value={"operator01": {"user_id": "operator01", "role": "operator", "active": False}},
         ),
-        patch.object(auth, "save_sessions") as save_sessions,
     ):
         assert auth.actor_from_token(f"Bearer {token}") is None
 
-    save_sessions.assert_called_once_with({})
+    assert sessions == {}
 
 
 def test_postgresql_session_for_inactive_user_is_rejected():
@@ -301,6 +301,7 @@ def test_postgresql_single_user_save_does_not_load_or_rewrite_other_accounts():
 
 
 def test_readiness_returns_503_when_postgresql_is_unavailable():
+    stats_routes._reset_readiness_cache()
     with (
         patch.object(stats_routes, "postgres_store_enabled", return_value=True),
         patch.object(stats_routes, "get_engine", side_effect=RuntimeError("db down")),
@@ -316,6 +317,7 @@ def test_readiness_returns_503_when_postgresql_is_unavailable():
 
 
 def test_readiness_checks_postgresql_connection():
+    stats_routes._reset_readiness_cache()
     connection = MagicMock()
     connection.scalar.return_value = 1
     engine = MagicMock()
@@ -338,6 +340,7 @@ def test_readiness_checks_postgresql_connection():
 
 
 def test_readiness_returns_503_when_required_vector_store_is_unavailable():
+    stats_routes._reset_readiness_cache()
     with (
         patch.object(stats_routes, "postgres_store_enabled", return_value=False),
         patch.object(stats_routes, "_vector_store_readiness_status", return_value="unavailable"),
@@ -349,6 +352,33 @@ def test_readiness_returns_503_when_required_vector_store_is_unavailable():
         "database": "not-required",
         "vector_store": "unavailable",
     }
+
+
+def test_concurrent_readiness_requests_share_cached_dependency_probe():
+    calls = 0
+
+    def dependency_probe():
+        nonlocal calls
+        calls += 1
+        time.sleep(0.05)
+        return "ok", "ok"
+
+    async def scenario():
+        responses = await asyncio.gather(*(stats_routes.ready() for _ in range(20)))
+        cached = await stats_routes.ready()
+        return responses, cached
+
+    stats_routes._reset_readiness_cache()
+    with (
+        patch.dict("os.environ", {"ALARM_RAG_READINESS_CACHE_SECONDS": "5"}),
+        patch.object(stats_routes, "_readiness_statuses", side_effect=dependency_probe),
+    ):
+        responses, cached = asyncio.run(scenario())
+
+    assert calls == 1
+    assert all(response["status"] == "ok" for response in responses)
+    assert cached["checks"] == {"database": "ok", "vector_store": "ok"}
+    stats_routes._reset_readiness_cache()
 
 
 def test_vector_store_readiness_pings_qdrant_only_when_configured():
@@ -377,7 +407,7 @@ def test_vector_store_readiness_hides_connection_error_details():
         assert stats_routes._vector_store_readiness_status() == "unavailable"
 
 
-def test_health_does_not_disclose_upstream_service_urls():
+def test_public_health_is_minimal_and_details_do_not_disclose_upstream_service_urls():
     with (
         patch.object(stats_routes, "engines", {}),
         patch.object(
@@ -400,8 +430,9 @@ def test_health_does_not_disclose_upstream_service_urls():
         ),
         patch.object(stats_routes, "_last_llm_source", return_value="none"),
     ):
-        response = asyncio.run(stats_routes.health())
+        response = asyncio.run(stats_routes.health_details({"user_id": "admin01", "role": "admin"}))
 
+    assert asyncio.run(stats_routes.health()) == {"status": "ok"}
     assert "ollama_url" not in response
     assert "school_api_base_url" not in response
     assert response["model_cache"] == {
@@ -415,6 +446,19 @@ def test_health_does_not_disclose_upstream_service_urls():
             },
         ],
     }
+
+
+def test_health_details_requires_admin():
+    unauthenticated = asyncio.run(stats_routes.health_details({"user_id": "", "role": ""}))
+    forbidden = asyncio.run(
+        stats_routes.health_details({"user_id": "operator01", "role": "operator"})
+    )
+
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.headers["www-authenticate"] == "Bearer"
+    assert json.loads(unauthenticated.body) == {"status": "error", "message": "Not authenticated"}
+    assert forbidden.status_code == 403
+    assert json.loads(forbidden.body) == {"status": "error", "message": "Permission denied"}
 
 
 def test_qdrant_client_receives_required_api_key():
@@ -441,7 +485,13 @@ def test_qdrant_client_receives_required_api_key():
     ):
         QdrantStore()
 
-    client_class.assert_called_once_with(host="qdrant", port=6333, api_key="secret-key", https=False)
+    client_class.assert_called_once_with(
+        host="qdrant",
+        port=6333,
+        api_key="secret-key",
+        https=False,
+        timeout=5,
+    )
 
 
 def test_qdrant_https_is_explicitly_opt_in():
@@ -473,7 +523,13 @@ def test_qdrant_https_is_explicitly_opt_in():
     ):
         QdrantStore()
 
-    client_class.assert_called_once_with(host="qdrant.example.com", port=443, api_key="secret-key", https=True)
+    client_class.assert_called_once_with(
+        host="qdrant.example.com",
+        port=443,
+        api_key="secret-key",
+        https=True,
+        timeout=5,
+    )
 
 
 def test_qdrant_rejects_api_key_over_untrusted_remote_http():
@@ -519,5 +575,23 @@ def test_qdrant_and_postgresql_container_boundaries_are_declared():
     assert "${N8N_BIND_ADDRESS:-127.0.0.1}" in compose
     assert "QDRANT__SERVICE__API_KEY" in compose
     assert "QDRANT_API_KEY: ${QDRANT_API_KEY:?" in compose
+    assert "qdrant/qdrant:v1.16.1@sha256:" in compose
+    assert "n8nio/n8n:1.123.68@sha256:" in compose
+    assert "read_only: true" in compose
+    assert compose.count("no-new-privileges:true") == 3
+    assert compose.count("- ALL") >= 3
+    assert "condition: service_healthy" in compose
+    assert "DB_SQLITE_POOL_SIZE" in compose
+    assert 'N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"' in compose
+    assert 'N8N_GIT_NODE_DISABLE_BARE_REPOS: "true"' in compose
+    assert "QDRANT__TELEMETRY_DISABLED" in compose
+    assert "N8N_DIAGNOSTICS_ENABLED" in compose
+    assert "N8N_PERSONALIZATION_ENABLED" in compose
+    assert "N8N_VERSION_NOTIFICATIONS_ENABLED" in compose
+    assert "http://127.0.0.1:5678/healthz" in compose
+    assert "./n8n_data:/app/n8n_data" not in compose
+    assert "./qdrant_data:/app/qdrant_data" not in compose
     assert "USER alarm-rag" in base_dockerfile
     assert "USER alarm-rag" in postgres_dockerfile
+    assert "python:3.11-slim@sha256:" in base_dockerfile
+    assert "python:3.11-slim@sha256:" in postgres_dockerfile

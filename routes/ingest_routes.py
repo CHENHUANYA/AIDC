@@ -1,6 +1,6 @@
 import json
+import hashlib
 import os
-import pickle
 import shutil
 import tempfile
 import threading
@@ -33,13 +33,13 @@ from api_schemas import (
 )
 from auth import actor_id, actor_role, get_actor, is_admin
 from config_values import env_float, env_int
+from signed_pickle import load_signed_pickle
 from repositories.postgres_content import ConcurrentContentUpdateError
 from storage import (
     DB_PATH,
     INGEST_LOG_PATH,
     append_jsonl,
     apply_doc_meta,
-    compute_sha256_bytes,
     document_revision,
     find_document_by_hash,
     generate_doc_id,
@@ -64,6 +64,11 @@ def upload_limit_bytes(env_name: str, default_mb: float) -> int:
 PDF_UPLOAD_MAX_BYTES = upload_limit_bytes("ALARM_RAG_PDF_UPLOAD_MAX_MB", 50)
 PDF_MAGIC = b"%PDF"
 PDF_MAX_PAGES = env_int("ALARM_RAG_PDF_MAX_PAGES", 1000, minimum=1)
+PDF_READ_CHUNK_BYTES = env_int("ALARM_RAG_PDF_READ_CHUNK_BYTES", 64 * 1024, minimum=4096)
+PDF_MAX_EXTRACTED_CHARS = env_int("ALARM_RAG_PDF_MAX_EXTRACTED_CHARS", 5_000_000, minimum=1)
+PDF_MAX_EXTRACTED_LINES = env_int("ALARM_RAG_PDF_MAX_EXTRACTED_LINES", 500_000, minimum=1)
+PDF_MAX_SECTIONS = env_int("ALARM_RAG_PDF_MAX_SECTIONS", 20_000, minimum=1)
+PDF_MAX_PROCESS_SECONDS = env_float("ALARM_RAG_PDF_MAX_PROCESS_SECONDS", 60.0, minimum=0.1)
 
 
 def _job_public(job: dict) -> dict:
@@ -78,12 +83,7 @@ def _load_rebuild_sections(collection_name: str) -> list[dict]:
     pkl_path = f"{DB_PATH}/bm25_{collection_name}.pkl"
     if not os.path.exists(pkl_path):
         raise FileNotFoundError("Index file not found")
-    try:
-        with open(pkl_path, "rb") as file:
-            data = json.load(file)
-    except Exception:
-        with open(pkl_path, "rb") as file:
-            data = pickle.load(file)
+    data = load_signed_pickle(pkl_path)
     return data.get("sections", [])
 
 
@@ -216,11 +216,30 @@ def ingest_pdf_file(collection_name: str, tmp_path: str, safe_filename: str, sou
         "kind": "pdf",
     }
 
-    from ingest import extract_alarm_sections, extract_general_chunks
+    from ingest import IngestBudgetExceeded, extract_alarm_sections, extract_general_chunks
 
-    alarm_sections = extract_alarm_sections(tmp_path)
-    general_chunks = extract_general_chunks(tmp_path)
+    deadline = time.monotonic() + PDF_MAX_PROCESS_SECONDS
+    try:
+        alarm_sections = extract_alarm_sections(
+            tmp_path,
+            max_chars=PDF_MAX_EXTRACTED_CHARS,
+            max_lines=PDF_MAX_EXTRACTED_LINES,
+            max_sections=PDF_MAX_SECTIONS,
+            deadline=deadline,
+        )
+        general_chunks = extract_general_chunks(
+            tmp_path,
+            max_chars=PDF_MAX_EXTRACTED_CHARS,
+            max_lines=PDF_MAX_EXTRACTED_LINES,
+            max_sections=PDF_MAX_SECTIONS,
+            deadline=deadline,
+        )
+    except IngestBudgetExceeded:
+        return {"status": "error", "message": "PDF processing budget exceeded"}
     all_sections = apply_doc_meta(alarm_sections + general_chunks, doc_meta)
+    extracted_chars = sum(len(str(section.get("text") or "")) for section in all_sections)
+    if len(all_sections) > PDF_MAX_SECTIONS or extracted_chars > PDF_MAX_EXTRACTED_CHARS:
+        return {"status": "error", "message": "PDF processing budget exceeded"}
     if not all_sections:
         return {"status": "error", "message": "No content extracted from PDF"}
 
@@ -290,19 +309,36 @@ async def ingest_pdf(
     tmp_dir = tempfile.mkdtemp()
     tmp_path = os.path.join(tmp_dir, safe_filename)
     try:
-        content = await file.read()
-        if len(content) > PDF_UPLOAD_MAX_BYTES:
-            max_mb = PDF_UPLOAD_MAX_BYTES / 1024 / 1024
-            return {"status": "error", "message": f"PDF upload exceeds {max_mb:g} MB limit"}
-        if not content.startswith(PDF_MAGIC):
-            return {"status": "error", "message": "Invalid PDF file signature"}
+        total_bytes = 0
+        signature = b""
+        digest = hashlib.sha256()
+        legacy_reader = False
         with open(tmp_path, "wb") as output:
-            output.write(content)
+            while True:
+                try:
+                    chunk = await file.read(PDF_READ_CHUNK_BYTES)
+                except TypeError:
+                    chunk = await file.read()
+                    legacy_reader = True
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > PDF_UPLOAD_MAX_BYTES:
+                    max_mb = PDF_UPLOAD_MAX_BYTES / 1024 / 1024
+                    return {"status": "error", "message": f"PDF upload exceeds {max_mb:g} MB limit"}
+                if len(signature) < len(PDF_MAGIC):
+                    signature = (signature + chunk)[:len(PDF_MAGIC)]
+                digest.update(chunk)
+                output.write(chunk)
+                if legacy_reader:
+                    break
+        if not signature.startswith(PDF_MAGIC):
+            return {"status": "error", "message": "Invalid PDF file signature"}
         pdf_error = validate_pdf_structure(tmp_path)
         if pdf_error:
             return {"status": "error", "message": pdf_error}
 
-        source_hash = compute_sha256_bytes(content)
+        source_hash = digest.hexdigest()
         existing = find_document_by_hash(collection_name, source_hash)
         if existing and not force:
             return {

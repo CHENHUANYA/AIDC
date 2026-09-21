@@ -34,12 +34,14 @@ class BootstrapEnvTests(unittest.TestCase):
         saved = {}
         revoked = []
 
-        def save_users(payload):
-            saved.update(payload)
+        def save_user(user_id, payload, expected_updated_at=None):
+            del expected_updated_at
+            saved[user_id] = dict(payload)
+            return payload
 
         with (
             patch("auth.load_users", return_value=users),
-            patch("auth.save_users", side_effect=save_users),
+            patch("auth.save_user", side_effect=save_user),
             patch("auth.hash_password", side_effect=lambda password: f"hash:{password}"),
             patch("auth.revoke_user_sessions", side_effect=lambda user_id: revoked.append(user_id)),
         ):
@@ -52,6 +54,7 @@ class BootstrapEnvTests(unittest.TestCase):
         self.assertEqual("hash:new-secret", saved["operator01"]["password_hash"])
         self.assertEqual("hash:new-secret", saved["admin01"]["password_hash"])
         self.assertTrue(saved["operator01"]["active"])
+        self.assertEqual(2, saved["operator01"]["credential_epoch"])
         self.assertEqual(["operator01", "admin01"], revoked)
 
     def test_reset_bootstrap_passwords_targets_seeded_role_accounts(self):

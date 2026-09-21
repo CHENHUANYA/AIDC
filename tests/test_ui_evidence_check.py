@@ -52,6 +52,7 @@ def test_valid_report_and_screenshot_set_passes():
 
     assert result
     assert all(status == "PASS" for status in result.values())
+    assert "flow-admin-kb-rebuild.png" not in ui_evidence_check.REQUIRED_SCREENSHOTS
 
 
 def test_browser_error_fails():

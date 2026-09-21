@@ -118,72 +118,137 @@
     </section>
 
     <section class="admin-section-panel" data-admin-section="knowledge">
+      <div class="admin-hero">
+        <div class="admin-hero-icon kb">📚</div>
+        <div class="admin-hero-body">
+          <h2>知識庫</h2>
+          <p>把手冊和維修經驗整理起來，AI 就能根據這些資料回答問題。<br>先選設備，就能查看現有內容或新增資料。</p>
+        </div>
+      </div>
+
+      <div class="admin-steps">
+        <div class="admin-step active"><span class="step-num">1</span> 選擇設備</div>
+        <div class="admin-step"><span class="step-num">2</span> 瀏覽已有文件</div>
+        <div class="admin-step"><span class="step-num">3</span> 上傳或新增內容</div>
+      </div>
+
       <div class="admin-card accent-purple">
-        <div class="section-label">📚 知識庫管理</div>
         <div class="admin-kb-filter">
-          <select class="wo-select" id="adminKbCollection" aria-label="知識庫集合">
+          <label class="wo-field-label" for="adminKbCollection">設備／手冊</label>
+          <select class="wo-select" id="adminKbCollection">
             <option value="808d">808D</option>
             <option value="840d">840D / 840Di / 810D</option>
             <option value="840dsl">840D sl</option>
             <option value="furnace_b85t">FURNACE B85T</option>
           </select>
-          <button class="wo-btn alt" type="button" data-on-click="loadAdminKb">🔄 重整 KB</button>
-          <button class="wo-btn alt" type="button" data-on-click="rebuildAdminKb">⚡ 重建索引</button>
-          <button class="wo-btn alt" type="button" data-on-click="rebuildAllAdminKb">全部重建</button>
-          <button class="wo-btn alt" type="button" data-on-click="exportAdminKbCsv">匯出文件</button>
+          <button class="wo-btn alt" type="button" data-on-click="loadAdminKb">🔄 重新整理</button>
+          <button class="wo-btn alt" type="button" data-on-click="exportAdminKbCsv">📄 匯出文件</button>
         </div>
-        <div class="admin-upload-zone u-mb-16" data-file-trigger="adminPdfFile">
-          <div class="uz-icon pdf">PDF</div>
-          <div class="uz-title">上傳 PDF 手冊或維修文件至目前知識庫</div>
-          <div class="uz-sub">支援技術手冊、維修 SOP、故障排除文件</div>
+
+        <div class="admin-tip">
+          <span class="tip-icon">💡</span>
+          <span>下方顯示的是目前選擇設備已收錄的知識內容。如果 AI 的回答不夠完整，通常是這裡缺少對應的資料。</span>
         </div>
-        <input class="u-hidden" type="file" id="adminPdfFile" accept=".pdf" aria-label="選擇 PDF 文件" data-on-change="uploadAdminPdf" data-action-target>
-        <div id="adminKbHealth" class="admin-health-grid">
-          <div class="wo-empty">載入中...</div>
-        </div>
+
         <div class="role-kpi-grid compact" id="adminKbSummary"></div>
-        <div class="admin-ingest-form">
-          <div class="section-label u-mb-10">✏️ 文字寫入</div>
-          <div class="ingest-inputs">
-            <input type="text" id="adminIngestCode" placeholder="Alarm code（選填）" aria-label="知識內容警報代碼">
-            <input type="text" id="adminIngestTitle" placeholder="標題（選填）" aria-label="知識內容標題">
-          </div>
-          <textarea id="adminIngestText" placeholder="新增 SOP、公告或已驗證維修紀錄" aria-label="知識內容"></textarea>
-          <div class="wo-actions u-mt-0">
-            <button class="wo-btn" id="adminIngestBtn" type="button" data-on-click="ingestAdminText">📝 寫入知識庫</button>
-          </div>
+        <div class="admin-subheading">
+          <h3>📂 已收錄的文件</h3>
+          <span id="adminKbDocCount" class="admin-help" role="status" aria-live="polite"></span>
         </div>
-        <div class="upload-result" id="adminKbResult"></div>
-        <div id="adminKbDocs" class="kb-doc-list u-mt-16"><div class="log-empty">載入中...</div></div>
+        <label class="wo-field-label" for="adminKbSearch">搜尋文件</label>
+        <input class="wo-input admin-document-search" id="adminKbSearch" type="search" placeholder="🔍 輸入文件名稱、標題或關鍵字…">
+        <div id="adminKbDocs" class="kb-doc-list u-mt-16"><div class="log-empty">正在載入文件…</div></div>
+
+        <details class="admin-disclosure admin-add-knowledge" open>
+          <summary>✨ 新增知識 <span>上傳 PDF 或貼上已確認的維修內容，讓 AI 學習新資料</span></summary>
+          <div class="admin-tip">
+            <span class="tip-icon">📌</span>
+            <span>新增的內容會存入上方選擇的設備知識庫，AI 之後回答相關問題時就會引用。</span>
+          </div>
+          <button type="button" class="admin-upload-zone admin-upload-zone-enhanced admin-pdf-upload u-mb-16" data-file-trigger="adminPdfFile">
+            <span class="uz-icon pdf">PDF</span>
+            <span class="uz-title">選擇 PDF 文件</span>
+            <span class="uz-sub">適合技術手冊、維修 SOP、故障排除文件</span>
+            <span class="uz-hint"><span class="hint-dot"></span> 點擊或拖曳上傳</span>
+          </button>
+          <input class="u-hidden" type="file" id="adminPdfFile" accept=".pdf" aria-label="選擇 PDF 文件" data-on-change="uploadAdminPdf" data-action-target>
+          <div class="admin-ingest-form">
+            <h3>✏️ 或直接新增文字</h3>
+            <div class="ingest-inputs">
+              <label class="admin-input-label" for="adminIngestCode">警報代碼（選填）<input type="text" id="adminIngestCode" placeholder="例如：3000"></label>
+              <label class="admin-input-label" for="adminIngestTitle">內容標題（選填）<input type="text" id="adminIngestTitle" placeholder="例如：設備異常的檢查流程"></label>
+            </div>
+            <label class="wo-field-label" for="adminIngestText">知識內容（必填）</label>
+            <textarea id="adminIngestText" placeholder="💬 建議包含：
+• 遇到什麼問題？
+• 確認的原因是什麼？
+• 處理步驟有哪些？
+• 完成後如何檢查？" aria-describedby="adminIngestHelp" required></textarea>
+            <p id="adminIngestHelp" class="admin-help">請填入已確認的 SOP、公告或維修紀錄，方便後續查詢與引用。</p>
+            <div class="wo-actions u-mt-0">
+              <button class="wo-btn" id="adminIngestBtn" type="button" data-on-click="ingestAdminText">📥 新增至知識庫</button>
+            </div>
+          </div>
+        </details>
+        <div class="upload-result" id="adminKbResult" role="status" aria-live="polite"></div>
+        <details class="admin-disclosure">
+          <summary>🔧 進階維護 <span>查看各設備狀態與重建搜尋索引</span></summary>
+          <div class="admin-tip">
+            <span class="tip-icon">⚙️</span>
+            <span>索引讓系統能快速搜尋文件內容。通常新增或刪除文件後會自動更新，但如果搜尋結果不正確，可以手動重建。</span>
+          </div>
+          <div id="adminKbHealth" class="admin-health-grid"><div class="wo-empty">正在載入狀態…</div></div>
+          <div class="wo-actions">
+            <button class="wo-btn alt" type="button" data-on-click="rebuildAdminKb">🔄 重建目前設備索引</button>
+            <button class="wo-btn alt" type="button" data-on-click="rebuildAllAdminKb">🔄 重建全部設備索引</button>
+          </div>
+        </details>
       </div>
     </section>
 
     <section class="admin-section-panel" data-admin-section="quality">
-      <div class="admin-card accent-red">
-        <div class="section-label">🎯 RAG 品質審核</div>
+      <div class="admin-hero">
+        <div class="admin-hero-icon quality">🎯</div>
+        <div class="admin-hero-body">
+          <h2>RAG 品質管理</h2>
+          <p>看看 AI 回答得好不好、哪裡需要補充，還有待確認的維修經驗可以加入知識庫。</p>
+        </div>
+      </div>
+
+      <div class="admin-card accent-blue">
+        <div class="admin-steps">
+          <div class="admin-step active"><span class="step-num">1</span> 檢視待處理項目</div>
+          <div class="admin-step"><span class="step-num">2</span> 查看回答與回饋</div>
+          <div class="admin-step"><span class="step-num">3</span> 補充缺少的資料或核准知識</div>
+        </div>
+
+        <div class="admin-tip">
+          <span class="tip-icon">💡</span>
+          <span><strong>從待處理項目開始：</strong>先查看 AI 原來的回答和使用者回饋，再決定是否需要補充知識庫的資料。待審核的維修紀錄，確認內容正確後就能核准加入。</span>
+        </div>
+
+        <div class="quality-kpi-enhanced" id="adminQualitySummary"><div class="wo-empty">正在整理品質概況…</div></div>
+
         <div class="rag-quality-toolbar">
-          <select class="wo-select" id="adminQualityFilter" aria-label="品質篩選">
-            <option value="gaps">待處理缺口</option>
-            <option value="candidates">候選知識</option>
-            <option value="feedback">最近回饋</option>
-            <option value="all">全部</option>
-          </select>
-          <input class="wo-input" id="adminQualitySearch" placeholder="搜尋 alarm code、manual、工單、缺漏說明" aria-label="搜尋品質清單">
-          <button class="wo-btn alt u-m-0" type="button" data-on-click="exportAdminQualityCsv">匯出品質清單</button>
+          <label class="admin-input-label" for="adminQualityFilter">📋 查看項目<select class="wo-select" id="adminQualityFilter">
+            <option value="gaps">⚠️ 待處理項目</option>
+            <option value="candidates">📝 待審核知識</option>
+            <option value="feedback">💬 最近回饋</option>
+            <option value="all">📊 全部</option>
+          </select></label>
+          <label class="admin-input-label" for="adminQualitySearch">🔍 搜尋清單<input class="wo-input" id="adminQualitySearch" type="search" placeholder="輸入警報代碼、設備、工單或回饋內容…"></label>
+          <button class="wo-btn alt u-m-0" type="button" data-on-click="exportAdminQualityCsv">📄 匯出品質清單</button>
         </div>
-        <div class="role-kpi-grid compact" id="adminQualitySummary">
-          <div class="wo-empty">載入中...</div>
-        </div>
-        <div class="upload-result" id="adminQualityResult"></div>
+        <div class="upload-result" id="adminQualityResult" role="status" aria-live="polite"></div>
         <div class="rag-quality-split">
           <div>
-            <div class="section-label small">待處理缺口與候選知識</div>
+            <div class="admin-subheading"><h3 id="adminQualityListTitle">⚠️ 待處理項目</h3><span id="adminQualityCount" class="admin-help" role="status" aria-live="polite"></span></div>
             <div id="adminQualityList" class="role-list"><div class="wo-empty">載入中...</div></div>
           </div>
-          <div>
-            <div class="section-label small">最近 RAG 回饋</div>
+          <details class="admin-disclosure admin-recent-feedback">
+            <summary>💬 最近使用者回饋 <span>查看最近 12 筆回饋，不受上方篩選影響</span></summary>
             <div id="adminQualityFeedbackList" class="role-list"><div class="wo-empty">載入中...</div></div>
-          </div>
+          </details>
         </div>
       </div>
     </section>

@@ -120,13 +120,31 @@ def test_feedback_repository_resolves_business_ids_and_loads_payload(content_ses
         "expected_fix": "",
         "kb_candidate": True,
     })
+    repository.add({
+        "time": "2026-08-14T10:00:00Z",
+        "query": "How do I recover?",
+        "collection": "808d",
+        "alarm_code": "3000",
+        "feedback": "bad",
+        "answer_id": "ans-1",
+        "issue_id": "ISS-1",
+        "work_order_id": "WO-1",
+        "user_id": "operator01",
+        "role": "operator",
+        "correctness": "incorrect",
+        "coverage": "missing_steps",
+        "missing_info": "step",
+        "expected_fix": "fix",
+        "kb_candidate": False,
+    })
 
     records = repository.load_all()
     assert len(records) == 1
+    assert records[0]["feedback"] == "bad"
     assert records[0]["issue_id"] == "ISS-1"
     assert records[0]["work_order_id"] == "WO-1"
     assert records[0]["user_id"] == "operator01"
-    assert records[0]["kb_candidate"] is True
+    assert records[0]["kb_candidate"] is False
     stored = content_session.scalar(select(Feedback))
     assert stored is not None and stored.user_id == user.id
 

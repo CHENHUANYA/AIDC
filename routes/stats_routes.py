@@ -1,8 +1,10 @@
+import asyncio
 import logging
 import math
 import os
 import re
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Dict
 
 import numpy as np
@@ -34,13 +36,23 @@ from app_context import (
     engines,
     error_log,
 )
-from auth import actor_id, actor_role, get_actor
+from auth import (
+    actor_id,
+    actor_role,
+    can_reference_rag_answer,
+    can_view_issue,
+    can_view_work_order,
+    api_error,
+    get_actor,
+)
+from config_values import env_float, env_int
 from db.session import get_engine
 from observability import runtime_metrics
 from rag_engine import model_cache_status
 from repositories.postgres_content import PostgresAlarmRepository, PostgresFeedbackRepository
 from repositories.rag_answers import RagAnswerRepository
 from repositories.runtime import postgres_store_enabled
+from services.ai_usage import AIUsageGuard, AIUsageLimitExceeded
 from storage import ALARM_LOG_PATH, QUERY_LOG_PATH, append_jsonl, read_jsonl
 from vector_store import get_store
 
@@ -50,6 +62,10 @@ logger = logging.getLogger("alarm_rag.stats")
 postgres_alarms = PostgresAlarmRepository()
 postgres_feedback = PostgresFeedbackRepository()
 rag_answers = RagAnswerRepository()
+feedback_usage_guard = AIUsageGuard("ALARM_RAG_FEEDBACK")
+_readiness_cache_value: tuple[str, str] | None = None
+_readiness_cache_expires_at = 0.0
+_readiness_probe_task: asyncio.Task[tuple[str, str]] | None = None
 
 
 @router.get(
@@ -135,6 +151,11 @@ def _clear_persisted_alarm_stats() -> None:
 async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
     if not actor_id(actor):
         return {"status": "error", "message": "Not authenticated"}
+    if not any((req.answer_id, req.issue_id, req.work_order_id)):
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Feedback must reference an answer, issue, or work order"},
+        )
     if req.answer_id:
         answer = rag_answers.get(req.answer_id)
         if answer is None:
@@ -144,6 +165,37 @@ async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
                 status_code=409,
                 content={"status": "error", "message": "Feedback query or collection does not match the RAG answer"},
             )
+        if not can_reference_rag_answer(actor, answer):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Permission denied"})
+    else:
+        answer = None
+
+    from issues import get_issue_dict
+    from work_orders import get_order_dict
+
+    issue = get_issue_dict(req.issue_id) if req.issue_id else None
+    if req.issue_id and issue is None:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Issue not found"})
+    if issue is not None and not can_view_issue(actor, issue):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Permission denied"})
+
+    work_order = get_order_dict(req.work_order_id) if req.work_order_id else None
+    if req.work_order_id and work_order is None:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Work order not found"})
+    linked_issue = issue
+    if work_order is not None and linked_issue is None and work_order.get("issue_id"):
+        linked_issue = get_issue_dict(str(work_order.get("issue_id") or ""))
+    if work_order is not None and not can_view_work_order(actor, work_order, linked_issue):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Permission denied"})
+    if issue is not None and work_order is not None and str(work_order.get("issue_id") or "") != req.issue_id:
+        return JSONResponse(status_code=409, content={"status": "error", "message": "Issue and work order do not match"})
+    if answer is not None:
+        for resource in (issue, work_order):
+            if resource is not None and str(resource.get("rag_answer_id") or "") != req.answer_id:
+                return JSONResponse(
+                    status_code=409,
+                    content={"status": "error", "message": "Workflow object does not belong to the RAG answer"},
+                )
     entry = {
         "time": datetime.now().isoformat(),
         "query": req.query,
@@ -162,6 +214,15 @@ async def save_feedback(req: FeedbackRequest, actor: dict = Depends(get_actor)):
         "kb_candidate": req.kb_candidate,
     }
     try:
+        admission = await feedback_usage_guard.acquire(actor_id(actor), 1)
+    except AIUsageLimitExceeded as exc:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(exc.retry_after)},
+            content={"status": "error", "message": str(exc)},
+        )
+    admission.release()
+    try:
         await run_in_threadpool(_persist_feedback, entry)
     except Exception:
         logger.exception("Failed to persist feedback")
@@ -176,7 +237,12 @@ def _persist_feedback(entry: dict) -> None:
     if postgres_store_enabled():
         postgres_feedback.add(entry)
     else:
-        append_jsonl(FEEDBACK_LOG, entry)
+        append_jsonl(
+            FEEDBACK_LOG,
+            entry,
+            max_records=env_int("ALARM_RAG_FEEDBACK_MAX_RECORDS", 10_000, minimum=1, maximum=1_000_000),
+            identity_fields=("user_id", "answer_id", "issue_id", "work_order_id"),
+        )
 
 
 @router.get(
@@ -188,6 +254,28 @@ async def feedback_stats(actor: dict = Depends(get_actor)):
         return {"status": "error", "message": "Not authenticated"}
     if actor_role(actor) not in ("supervisor", "admin"):
         return {"status": "error", "message": "Permission denied"}
+    if postgres_store_enabled():
+        try:
+            summary = await run_in_threadpool(postgres_feedback.stats, 20)
+        except Exception:
+            logger.exception("Failed to load feedback statistics")
+            return JSONResponse(
+                status_code=503,
+                content={"status": "error", "message": "Feedback statistics are unavailable"},
+            )
+        total = summary["total"]
+        correctness_total = summary["correctness_total"]
+        coverage_total = summary["coverage_total"]
+        return {
+            **summary,
+            "rate": f"{round(summary['good'] / total * 100)}%" if total else "0%",
+            "correctness_rate": (
+                f"{round(summary['correct'] / correctness_total * 100)}%" if correctness_total else "0%"
+            ),
+            "coverage_rate": (
+                f"{round(summary['complete'] / coverage_total * 100)}%" if coverage_total else "0%"
+            ),
+        }
     try:
         entries = await run_in_threadpool(_load_feedback_entries)
     except Exception:
@@ -226,10 +314,11 @@ async def feedback_stats(actor: dict = Depends(get_actor)):
 
 
 def _load_feedback_entries() -> list[dict]:
+    limit = env_int("ALARM_RAG_FEEDBACK_MAX_RECORDS", 10_000, minimum=1, maximum=1_000_000)
     if postgres_store_enabled():
-        entries = postgres_feedback.load_all()
+        entries = postgres_feedback.load_all(limit=limit)
     else:
-        entries = read_jsonl(FEEDBACK_LOG)
+        entries = read_jsonl(FEEDBACK_LOG, limit=limit)
     return [entry for entry in entries if isinstance(entry, dict)]
 
 
@@ -349,13 +438,32 @@ def _postgres_pool_metrics() -> dict:
         return {"enabled": True, "status": "unavailable"}
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get("/health", response_model=StatusOkResponse)
 async def health():
+    """Minimal unauthenticated liveness probe."""
+    return {"status": "ok"}
+
+
+@router.get(
+    "/health/details",
+    response_model=HealthResponse,
+    responses=API_ERROR_RESPONSES,
+)
+async def health_details(actor: dict = Depends(get_actor)):
+    if not actor_id(actor):
+        return JSONResponse(
+            status_code=401,
+            content=api_error("Not authenticated"),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if actor_role(actor) != "admin":
+        return JSONResponse(status_code=403, content=api_error("Permission denied"))
     collections = {
         name: {
             "ready": engine.ready,
             "alarms_indexed": len(engine.sections),
             "retrieval_runtime": engine.retrieval_runtime_status(),
+            "traceability": engine.traceability_coverage(),
         }
         for name, engine in engines.items()
     }
@@ -377,7 +485,7 @@ async def health():
     responses={503: {"model": ReadyUnavailableResponse, "description": "Required dependency unavailable"}},
 )
 async def ready():
-    database_status, vector_store_status = await run_in_threadpool(_readiness_statuses)
+    database_status, vector_store_status = await _cached_readiness_statuses()
     checks = {
         "database": database_status,
         "vector_store": vector_store_status,
@@ -388,6 +496,45 @@ async def ready():
             content={"status": "unavailable", "checks": checks},
         )
     return {"status": "ok", "checks": checks}
+
+
+async def _cached_readiness_statuses() -> tuple[str, str]:
+    """Share one short-lived dependency probe between concurrent callers."""
+    global _readiness_probe_task
+
+    if _readiness_cache_value is not None and monotonic() < _readiness_cache_expires_at:
+        return _readiness_cache_value
+
+    # There is no await between inspecting and assigning the task, so callers on
+    # this worker's event loop cannot create duplicate dependency probes.
+    task = _readiness_probe_task
+    if task is None or task.done():
+        task = asyncio.create_task(_refresh_readiness_cache())
+        _readiness_probe_task = task
+
+    # A disconnected client must not cancel the shared probe for other callers.
+    return await asyncio.shield(task)
+
+
+async def _refresh_readiness_cache() -> tuple[str, str]:
+    global _readiness_cache_value, _readiness_cache_expires_at
+
+    statuses = await run_in_threadpool(_readiness_statuses)
+    ttl = env_float("ALARM_RAG_READINESS_CACHE_SECONDS", 2.0, minimum=0.1, maximum=30.0)
+    if not math.isfinite(ttl):
+        ttl = 2.0
+    _readiness_cache_value = statuses
+    _readiness_cache_expires_at = monotonic() + ttl
+    return statuses
+
+
+def _reset_readiness_cache() -> None:
+    """Clear process-local readiness state for controlled reloads and tests."""
+    global _readiness_cache_value, _readiness_cache_expires_at, _readiness_probe_task
+
+    _readiness_cache_value = None
+    _readiness_cache_expires_at = 0.0
+    _readiness_probe_task = None
 
 
 def _readiness_statuses() -> tuple[str, str]:
@@ -405,7 +552,7 @@ def _database_readiness_status() -> str:
 
 
 def _vector_store_readiness_status() -> str:
-    if os.getenv("VECTOR_STORE", "chroma").strip().lower() != "qdrant":
+    if os.getenv("VECTOR_STORE", "qdrant").strip().lower() != "qdrant":
         return "not-required"
     try:
         get_store().ping()

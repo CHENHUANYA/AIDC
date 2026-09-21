@@ -22,7 +22,8 @@ def response_schema(spec: dict[str, Any], path: str, method: str, status: str) -
 def test_stable_endpoints_publish_response_schemas() -> None:
     spec = app.openapi()
 
-    assert response_schema(spec, "/health", "get", "200")["$ref"].endswith("/HealthResponse")
+    assert response_schema(spec, "/health", "get", "200")["$ref"].endswith("/StatusOkResponse")
+    assert response_schema(spec, "/health/details", "get", "200")["$ref"].endswith("/HealthResponse")
     assert response_schema(spec, "/ready", "get", "200")["$ref"].endswith("/ReadyResponse")
     assert response_schema(spec, "/ready", "get", "503")["$ref"].endswith("/ReadyUnavailableResponse")
     assert response_schema(spec, "/auth/login-config", "get", "200")["$ref"].endswith("/LoginConfigResponse")

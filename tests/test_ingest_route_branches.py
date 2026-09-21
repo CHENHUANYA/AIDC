@@ -10,6 +10,7 @@ import ingest
 from app_context import IngestTextRequest
 from repositories.postgres_content import ConcurrentContentUpdateError
 from routes import ingest_routes
+from signed_pickle import SignedPickleError
 
 
 ADMIN = {"user_id": "admin01", "role": "admin"}
@@ -77,11 +78,12 @@ def test_validate_pdf_structure_handles_parser_failure(monkeypatch):
     assert ingest_routes.validate_pdf_structure("manual.pdf") == "Invalid or corrupt PDF file"
 
 
-def test_rebuild_section_loader_supports_json_and_missing_file(tmp_path, monkeypatch):
+def test_rebuild_section_loader_rejects_unsigned_content_and_missing_file(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest_routes, "DB_PATH", str(tmp_path))
     (tmp_path / "bm25_json.pkl").write_text('{"sections": [{"code": "3000"}]}', encoding="utf-8")
 
-    assert ingest_routes._load_rebuild_sections("json") == [{"code": "3000"}]
+    with pytest.raises(SignedPickleError, match="signature is missing"):
+        ingest_routes._load_rebuild_sections("json")
     with pytest.raises(FileNotFoundError, match="Index file not found"):
         ingest_routes._load_rebuild_sections("missing")
 

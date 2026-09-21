@@ -8,6 +8,7 @@ from typing import Any, Iterable, List
 
 from sqlalchemy import and_, false, func, or_, select
 
+from config_values import env_int
 from db.models import AuditEvent, Issue, IssueNote, User, WorkOrder
 from db.session import session_scope
 
@@ -48,12 +49,7 @@ def user_maps(session) -> tuple[dict[str, Any], dict[Any, str]]:
     return ({user_id: user_pk for user_pk, user_id in pairs}, {user_pk: user_id for user_pk, user_id in pairs})
 
 
-def audits_for(session, entity_type: str, entity_id) -> list[dict]:
-    records = session.scalars(
-        select(AuditEvent)
-        .where(AuditEvent.entity_type == entity_type, AuditEvent.entity_id == entity_id)
-        .order_by(AuditEvent.created_at, AuditEvent.id)
-    ).all()
+def audit_dicts(records: Iterable[AuditEvent]) -> list[dict]:
     return [
         {
             "action": record.action,
@@ -69,10 +65,28 @@ def audits_for(session, entity_type: str, entity_id) -> list[dict]:
     ]
 
 
-def issue_dict(session, issue: Issue, users_by_pk: dict, work_order_no: str = "") -> dict:
-    notes = session.scalars(
-        select(IssueNote).where(IssueNote.issue_id == issue.id).order_by(IssueNote.created_at, IssueNote.id)
+def audits_for(session, entity_type: str, entity_id) -> list[dict]:
+    records = session.scalars(
+        select(AuditEvent)
+        .where(AuditEvent.entity_type == entity_type, AuditEvent.entity_id == entity_id)
+        .order_by(AuditEvent.created_at, AuditEvent.id)
     ).all()
+    return audit_dicts(records)
+
+
+def issue_dict(
+    session,
+    issue: Issue,
+    users_by_pk: dict,
+    work_order_no: str = "",
+    *,
+    notes: Iterable[IssueNote] | None = None,
+    audits: Iterable[AuditEvent] | None = None,
+) -> dict:
+    if notes is None:
+        notes = session.scalars(
+            select(IssueNote).where(IssueNote.issue_id == issue.id).order_by(IssueNote.created_at, IssueNote.id)
+        ).all()
     return {
         "issue_id": issue.issue_no,
         "source": issue.source,
@@ -94,7 +108,7 @@ def issue_dict(session, issue: Issue, users_by_pk: dict, work_order_no: str = ""
             {"note": note.note, "created_by": note.created_by_ref, "created_at": iso(note.created_at)}
             for note in notes
         ],
-        "issue_history": audits_for(session, "issue", issue.id),
+        "issue_history": audits_for(session, "issue", issue.id) if audits is None else audit_dicts(audits),
         "resolution_summary": issue.resolution_summary,
         "created_at": iso(issue.created_at),
         "updated_at": iso(issue.updated_at),
@@ -103,7 +117,14 @@ def issue_dict(session, issue: Issue, users_by_pk: dict, work_order_no: str = ""
     }
 
 
-def order_dict(session, order: WorkOrder, users_by_pk: dict, issue_no: str = "") -> dict:
+def order_dict(
+    session,
+    order: WorkOrder,
+    users_by_pk: dict,
+    issue_no: str = "",
+    *,
+    audits: Iterable[AuditEvent] | None = None,
+) -> dict:
     return {
         "id": order.work_order_no,
         "issue_id": issue_no,
@@ -144,7 +165,7 @@ def order_dict(session, order: WorkOrder, users_by_pk: dict, issue_no: str = "")
         "updated_at": iso(order.updated_at),
         "completed_at": iso(order.completed_at),
         "deleted_at": iso(order.deleted_at),
-        "work_order_history": audits_for(session, "work_order", order.id),
+        "work_order_history": audits_for(session, "work_order", order.id) if audits is None else audit_dicts(audits),
         "version": order.version,
     }
 
@@ -181,9 +202,12 @@ def add_missing_audits(session, entity_type: str, entity_id, business_key: str, 
 
 
 class PostgresIssueRepository:
-    def get_one(self, issue_id: str) -> dict | None:
+    def get_one(self, issue_id: str, *, for_update: bool = False) -> dict | None:
         with session_scope() as session:
-            issue = session.scalar(select(Issue).where(Issue.issue_no == issue_id))
+            statement = select(Issue).where(Issue.issue_no == issue_id)
+            if for_update:
+                statement = statement.with_for_update()
+            issue = session.scalar(statement)
             if issue is None:
                 return None
             _, users_by_pk = user_maps(session)
@@ -278,7 +302,34 @@ class PostgresIssueRepository:
                     )
                 ).all()
             }
-            items = [issue_dict(session, issue, users_by_pk, order_numbers.get(issue.id, "")) for issue in records]
+            notes_by_issue: dict[Any, list[IssueNote]] = {record_id: [] for record_id in record_ids}
+            related_limit = env_int("WORKFLOW_LIST_MAX_RELATED_ROWS", 5000, minimum=1, maximum=50_000)
+            for note in session.scalars(
+                select(IssueNote)
+                .where(IssueNote.issue_id.in_(record_ids or [None]))
+                .order_by(IssueNote.created_at, IssueNote.id)
+                .limit(related_limit)
+            ).all():
+                notes_by_issue.setdefault(note.issue_id, []).append(note)
+            audits_by_issue: dict[Any, list[AuditEvent]] = {record_id: [] for record_id in record_ids}
+            for audit in session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.entity_type == "issue", AuditEvent.entity_id.in_(record_ids or [None]))
+                .order_by(AuditEvent.created_at, AuditEvent.id)
+                .limit(related_limit)
+            ).all():
+                audits_by_issue.setdefault(audit.entity_id, []).append(audit)
+            items = [
+                issue_dict(
+                    session,
+                    issue,
+                    users_by_pk,
+                    order_numbers.get(issue.id, ""),
+                    notes=notes_by_issue.get(issue.id, []),
+                    audits=audits_by_issue.get(issue.id, []),
+                )
+                for issue in records
+            ]
             next_key = None
             if has_more and records:
                 next_key = (records[-1].created_at.isoformat(), str(records[-1].id))
@@ -289,7 +340,12 @@ class PostgresIssueRepository:
             users, _ = user_maps(session)
             existing = {
                 issue.issue_no: issue
-                for issue in session.scalars(select(Issue).where(Issue.issue_no.in_([str(item.get("issue_id")) for item in issues] or [""]))).all()
+                for issue in session.scalars(
+                    select(Issue)
+                    .where(Issue.issue_no.in_([str(item.get("issue_id")) for item in issues] or [""]))
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                ).all()
             }
             for payload in issues:
                 issue_no = str(payload.get("issue_id") or "")
@@ -363,9 +419,27 @@ class PostgresIssueRepository:
 
 
 class PostgresWorkOrderRepository:
-    def get_one(self, order_id: str) -> dict | None:
+    def get_one(
+        self,
+        order_id: str,
+        *,
+        for_update: bool = False,
+    ) -> dict | None:
+        return self._get_one(order_id, for_update=for_update, include_deleted=False)
+
+    def get_one_including_deleted(self, order_id: str, *, for_update: bool = False) -> dict | None:
+        """Privileged internal recovery lookup; ordinary routes must use get_one."""
+        return self._get_one(order_id, for_update=for_update, include_deleted=True)
+
+    @staticmethod
+    def _get_one(order_id: str, *, for_update: bool, include_deleted: bool) -> dict | None:
         with session_scope() as session:
-            order = session.scalar(select(WorkOrder).where(WorkOrder.work_order_no == order_id))
+            statement = select(WorkOrder).where(WorkOrder.work_order_no == order_id)
+            if not include_deleted:
+                statement = statement.where(WorkOrder.deleted_at.is_(None))
+            if for_update:
+                statement = statement.with_for_update()
+            order = session.scalar(statement)
             if order is None:
                 return None
             _, users_by_pk = user_maps(session)
@@ -441,7 +515,26 @@ class PostgresWorkOrderRepository:
             has_more = len(rows) > limit
             rows = rows[:limit]
             _, users_by_pk = user_maps(session)
-            items = [order_dict(session, order, users_by_pk, issue_no or "") for order, issue_no in rows]
+            record_ids = [order.id for order, _ in rows]
+            related_limit = env_int("WORKFLOW_LIST_MAX_RELATED_ROWS", 5000, minimum=1, maximum=50_000)
+            audits_by_order: dict[Any, list[AuditEvent]] = {record_id: [] for record_id in record_ids}
+            for audit in session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.entity_type == "work_order", AuditEvent.entity_id.in_(record_ids or [None]))
+                .order_by(AuditEvent.created_at, AuditEvent.id)
+                .limit(related_limit)
+            ).all():
+                audits_by_order.setdefault(audit.entity_id, []).append(audit)
+            items = [
+                order_dict(
+                    session,
+                    order,
+                    users_by_pk,
+                    issue_no or "",
+                    audits=audits_by_order.get(order.id, []),
+                )
+                for order, issue_no in rows
+            ]
             next_key = None
             if has_more and rows:
                 last_order = rows[-1][0]
@@ -464,7 +557,12 @@ class PostgresWorkOrderRepository:
             }
             existing = {
                 order.work_order_no: order
-                for order in session.scalars(select(WorkOrder).where(WorkOrder.work_order_no.in_([str(item.get("id")) for item in orders] or [""]))).all()
+                for order in session.scalars(
+                    select(WorkOrder)
+                    .where(WorkOrder.work_order_no.in_([str(item.get("id")) for item in orders] or [""]))
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                ).all()
             }
             for payload in orders:
                 order_no = str(payload.get("id") or "")
@@ -532,7 +630,7 @@ class PostgresWorkOrderRepository:
         if not order_id:
             raise ValueError("work order id is required")
         self.save_all([payload])
-        saved = self.get_one(order_id)
+        saved = self.get_one_including_deleted(order_id)
         if saved is None:
             raise LookupError(f"Work order {order_id} not found after save")
         return saved

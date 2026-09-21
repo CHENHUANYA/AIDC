@@ -31,7 +31,6 @@ The latest local run completed with no browser errors, no HTTP errors, no horizo
 | `mobile-admin-answer-trace.png` / `mobile-admin-answer-trace-scrolled.png` | The Answer Trace card fits the 390 x 844 viewport; its citations remain reachable through internal scrolling without page overflow. |
 | `flow-admin-kb-ingest.png` | Admin can ingest a knowledge document. |
 | `flow-admin-kb-delete.png` | Admin can delete a knowledge document. |
-| `flow-admin-kb-rebuild.png` | Admin can trigger knowledge index rebuild. |
 | `flow-operations-tabs.png` | Legacy Operations page tabs still load for dashboard/lookup/work-order/BI review. |
 
 ## Responsive Evidence

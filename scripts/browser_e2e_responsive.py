@@ -1,9 +1,10 @@
 """
 Browser E2E and responsive acceptance check for the Alarm RAG UI.
 
-The script starts FastAPI against an isolated test DB, drives a real browser
-through role login and issue/work-order flows, and captures screenshots plus a
-JSON report under tests_tmp/browser_e2e/.
+By default the script starts FastAPI against an isolated test DB and drives a
+real browser through role login and mutation flows. ``--remote-base-url`` uses
+a read-only role/responsive scan against an already deployed environment.
+Both modes capture screenshots plus a JSON report under tests_tmp/browser_e2e/.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "tests_tmp" / "browser_e2e"
 SCREENSHOT_DIR = OUT_DIR / "screenshots"
 TEST_PASSWORD = "BrowserPass123"
+LOGIN_PASSWORD = TEST_PASSWORD
 ROLES = {
     "operator01": "/operator",
     "maintenance01": "/maintenance",
@@ -95,6 +97,20 @@ def wait_for_server(base_url: str, process: subprocess.Popen[str], seconds: int 
     raise RuntimeError(f"server did not become ready: {last_error}")
 
 
+def wait_for_remote(base_url: str, seconds: int = 45) -> None:
+    deadline = time.time() + seconds
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            data = http_json(f"{base_url}/auth/login-config")
+            if data.get("status") == "ok":
+                return
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            last_error = str(exc)
+        time.sleep(0.4)
+    raise RuntimeError(f"remote deployment did not become ready: {last_error}")
+
+
 def start_server(port: int, preserve_db: bool) -> subprocess.Popen[str]:
     db_dir = OUT_DIR / "db"
     if not preserve_db:
@@ -115,6 +131,9 @@ def start_server(port: int, preserve_db: bool) -> subprocess.Popen[str]:
             "ALARM_RAG_LOG_LEVEL": "WARNING",
             "ADMIN_INITIAL_PASSWORD": TEST_PASSWORD,
             "DB_PATH": str(db_dir),
+            "DATA_STORE": "json",
+            "POSTGRES_ENABLED": "false",
+            "DATABASE_URL": "",
             "ALARM_RAG_CORS_ORIGINS": f"http://127.0.0.1:{port},http://localhost:{port}",
             "RAG_PRELOAD_MODELS": "0",
             "VECTOR_STORE": "none",
@@ -232,7 +251,7 @@ def assert_no_browser_errors(report: dict[str, Any], context: str) -> None:
 def login(page, base_url: str, username: str, report: dict[str, Any]) -> None:
     page.goto(f"{base_url}/login", wait_until="domcontentloaded")
     page.fill("#loginUsername", username)
-    page.fill("#loginPassword", TEST_PASSWORD)
+    page.fill("#loginPassword", LOGIN_PASSWORD)
     page.click("#loginSubmit", no_wait_after=True)
     page.wait_for_function(
         "(expectedPath) => window.location.pathname === expectedPath",
@@ -966,7 +985,7 @@ def run_admin_password_reset_flow(playwright, base_url: str, report: dict[str, A
             '#adminUserList .role-row:has-text("operator01") '
             '[data-on-click="resetAdminPassword"]'
         )
-        page.once("dialog", lambda dialog: dialog.accept(TEST_PASSWORD))
+        page.once("dialog", lambda dialog: dialog.accept(LOGIN_PASSWORD))
         with page.expect_response(
             lambda response: response.url.endswith("/users/operator01/password")
             and response.request.method == "PATCH"
@@ -991,7 +1010,7 @@ def run_admin_password_reset_flow(playwright, base_url: str, report: dict[str, A
             '#adminUserList .role-row:has-text("operator01") '
             '[data-on-click="resetAdminPassword"]'
         )
-        page.once("dialog", lambda dialog: dialog.accept(TEST_PASSWORD))
+        page.once("dialog", lambda dialog: dialog.accept(LOGIN_PASSWORD))
         with page.expect_response(
             lambda response: response.url.endswith("/users/operator01/password")
             and response.request.method == "PATCH"
@@ -1016,7 +1035,7 @@ def run_admin_password_reset_flow(playwright, base_url: str, report: dict[str, A
                 body=json.dumps({"status": "error", "message": "Injected persistence failure"}),
             ),
         )
-        page.once("dialog", lambda dialog: dialog.accept(TEST_PASSWORD))
+        page.once("dialog", lambda dialog: dialog.accept(LOGIN_PASSWORD))
         reset_button.click()
         result.filter(has_text="Injected persistence failure").wait_for(state="visible", timeout=10000)
         if "error" not in (result.get_attribute("class") or ""):
@@ -1040,16 +1059,50 @@ def write_report(report: dict[str, Any]) -> Path:
     return path
 
 
+def run_browser_flows(playwright, base_url: str, report: dict[str, Any], *, responsive_only: bool) -> None:
+    if responsive_only:
+        scan_responsive(playwright, base_url, report)
+        return
+    run_core_smoke(playwright, base_url, report)
+    run_issue_flow(playwright, base_url, report)
+    run_admin_password_reset_flow(playwright, base_url, report)
+    scan_responsive(playwright, base_url, report)
+
+
 def main() -> int:
+    global LOGIN_PASSWORD
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--preserve-db", action="store_true")
+    parser.add_argument(
+        "--remote-base-url",
+        default="",
+        help="scan an existing deployment without starting a server or running mutation flows",
+    )
     args = parser.parse_args()
 
-    port = args.port or find_free_port()
-    base_url = f"http://127.0.0.1:{port}"
+    if args.remote_base_url and (args.port or args.preserve_db):
+        parser.error("--remote-base-url cannot be combined with --port or --preserve-db")
+
+    responsive_only = bool(args.remote_base_url)
+    if responsive_only:
+        LOGIN_PASSWORD = os.getenv("ADMIN_INITIAL_PASSWORD", "").strip()
+        if not LOGIN_PASSWORD:
+            parser.error("ADMIN_INITIAL_PASSWORD is required with --remote-base-url")
+        base_url = args.remote_base_url.rstrip("/")
+        shutil.rmtree(SCREENSHOT_DIR, ignore_errors=True)
+        SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        server = None
+    else:
+        LOGIN_PASSWORD = TEST_PASSWORD
+        port = args.port or find_free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        server = start_server(port, args.preserve_db)
+
     report: dict[str, Any] = {
         "base_url": base_url,
+        "mode": "remote-responsive" if responsive_only else "isolated-full",
         "flows": [],
         "responsive": [],
         "browser_errors": [],
@@ -1062,17 +1115,16 @@ def main() -> int:
         "server_output_tail": "",
     }
 
-    server = start_server(port, args.preserve_db)
     server_output = ""
     try:
-        wait_for_server(base_url, server)
+        if server is None:
+            wait_for_remote(base_url)
+        else:
+            wait_for_server(base_url, server)
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
-            run_core_smoke(playwright, base_url, report)
-            run_issue_flow(playwright, base_url, report)
-            run_admin_password_reset_flow(playwright, base_url, report)
-            scan_responsive(playwright, base_url, report)
+            run_browser_flows(playwright, base_url, report, responsive_only=responsive_only)
 
         layout_failures = [
             item
@@ -1102,7 +1154,8 @@ def main() -> int:
         print(f"[FAIL] {exc}")
         return 1
     finally:
-        server_output = stop_server(server)
+        if server is not None:
+            server_output = stop_server(server)
         report["server_output_tail"] = server_output[-4000:]
         if "status" not in report:
             report["status"] = "ok"

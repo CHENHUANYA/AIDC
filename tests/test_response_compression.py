@@ -25,7 +25,7 @@ def test_main_application_compresses_large_static_assets() -> None:
     assert response.headers["content-encoding"] == "gzip"
     assert "accept-encoding" in response.headers["vary"].lower()
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
-    assert response.text == (ROOT / "static" / "css" / "tokens.css").read_text(encoding="utf-8")
+    assert response.content == (ROOT / "static" / "css" / "tokens.css").read_bytes()
 
 
 def test_gzip_middleware_does_not_compress_event_streams() -> None:

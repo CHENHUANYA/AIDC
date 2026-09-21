@@ -1,6 +1,12 @@
 (() => {
   const TOKEN_KEY = 'alarmAuthToken';
   const USER_KEY = 'alarmAuthUser';
+  const ROLE_NEXT_PATHS = {
+    operator: new Set(['/operator', '/assistant']),
+    maintenance: new Set(['/maintenance', '/assistant']),
+    supervisor: new Set(['/supervisor', '/dashboard', '/assistant']),
+    admin: new Set(['/admin', '/dashboard', '/assistant', '/operations']),
+  };
 
   function $(id) {
     return document.getElementById(id);
@@ -33,9 +39,26 @@
     return api.roleHome ? api.roleHome(role) : '/dashboard';
   }
 
+  function safeNextPath(rawNext, user) {
+    const fallback = defaultPathForRole(user?.role);
+    if (!rawNext) {
+      return fallback;
+    }
+    try {
+      const candidate = new URL(rawNext, window.location.origin);
+      const allowedPaths = ROLE_NEXT_PATHS[user?.role] || new Set();
+      if (candidate.origin !== window.location.origin || !allowedPaths.has(candidate.pathname)) {
+        return fallback;
+      }
+      return `${candidate.pathname}${candidate.search}${candidate.hash}`;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
   function nextPath(user) {
     const url = new URL(window.location.href);
-    return url.searchParams.get('next') || defaultPathForRole(user?.role);
+    return safeNextPath(url.searchParams.get('next'), user);
   }
 
   function saveAuth(token, user) {
@@ -67,22 +90,6 @@
       }
     } catch (_) {
       // Login still works without this optional hint.
-    }
-  }
-
-  function preselectUserFromNextPath() {
-    const url = new URL(window.location.href);
-    const next = url.searchParams.get('next') || '';
-    const username = $('loginUsername');
-    if (!username || username.value.trim()) {
-      return;
-    }
-    if (next.startsWith('/admin')) {
-      username.value = 'admin01';
-      return;
-    }
-    if (next.startsWith('/supervisor') || next.startsWith('/dashboard')) {
-      username.value = 'supervisor01';
     }
   }
 
@@ -133,10 +140,10 @@
     });
   }
 
+  window.AlarmLogin = { nextPath, safeNextPath };
+
   document.addEventListener('DOMContentLoaded', () => {
-    preselectUserFromNextPath();
     loadLoginConfig();
     $('loginForm')?.addEventListener('submit', submitLogin);
-    bindQuickAccounts();
   });
 })();

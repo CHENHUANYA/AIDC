@@ -9,7 +9,7 @@ from scripts.database_check import REQUIRED_INDEXES, REQUIRED_TABLES, missing_re
 def test_alembic_has_one_expected_head():
     script = ScriptDirectory.from_config(Config("alembic.ini"))
 
-    assert script.get_heads() == ["20260729_0007"]
+    assert script.get_heads() == ["20260902_0009"]
 
 
 def test_revision_chain_is_linear_and_starts_at_base():
@@ -17,6 +17,8 @@ def test_revision_chain_is_linear_and_starts_at_base():
     revisions = list(script.walk_revisions())
 
     assert [revision.revision for revision in revisions] == [
+        "20260902_0009",
+        "20260902_0008",
         "20260729_0007",
         "20260713_0006",
         "20260712_0005",

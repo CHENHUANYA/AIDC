@@ -44,7 +44,6 @@ class KnowledgeReviewTests(unittest.IsolatedAsyncioTestCase):
                 order["id"],
                 work_orders.UpdateWorkOrder(
                     status="in_progress",
-                    accepted_by="maintenance01",
                     version=order["version"],
                 ),
                 actor=MAINTENANCE,
@@ -57,13 +56,14 @@ class KnowledgeReviewTests(unittest.IsolatedAsyncioTestCase):
                     root_cause="Door interlock sensor was dirty",
                     repair_action="Cleaned sensor and reset emergency stop",
                     resolution="Alarm cleared and spindle started normally",
-                    completed_by="maintenance01",
                     version=started["order"]["version"],
                 ),
                 actor=MAINTENANCE,
             )
             ingest.assert_not_awaited()
         self.assertEqual("ok", result["status"])
+        self.assertEqual("maintenance01", started["order"]["accepted_by"])
+        self.assertEqual("maintenance01", result["order"]["completed_by"])
         return result["order"]
 
     async def test_completed_order_becomes_pending_candidate_without_ingest(self):

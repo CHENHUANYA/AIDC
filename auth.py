@@ -8,7 +8,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Cookie, Depends, Header, Request, Response
+from fastapi import APIRouter, Cookie, Depends, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -30,13 +30,18 @@ from config_values import env_int
 from observability import runtime_metrics
 from repositories.postgres_auth import (
     ConcurrentUserUpdateError,
+    CredentialChangedError,
     PostgresLoginThrottleRepository,
     PostgresSessionRepository,
     PostgresUserRepository,
+    SessionCapacityError,
 )
+from repositories.postgres_content import PostgresSettingsRepository
 from repositories.runtime import postgres_store_enabled
 from secret_values import secret_value
 from services import account_management, auth_sessions
+from services.json_file_store import exclusive_file_lock, write_json_atomic
+from services.system_settings import load_effective_settings, session_hours_override
 from services.login_throttle import (
     LoginThrottleLimits,
     LoginThrottleState,
@@ -107,6 +112,7 @@ router = APIRouter()
 postgres_users = PostgresUserRepository()
 postgres_sessions = PostgresSessionRepository()
 postgres_login_throttles = PostgresLoginThrottleRepository()
+postgres_settings = PostgresSettingsRepository()
 _login_failures: dict[str, deque[float]] = {}
 _login_lockouts: dict[str, float] = {}
 _login_last_seen: dict[str, float] = {}
@@ -117,6 +123,12 @@ _login_rate_lock = threading.Lock()
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class InitialPasswordChangeRequest(BaseModel):
+    username: str
+    current_password: str
+    new_password: str
 
 
 class LogoutRequest(BaseModel):
@@ -288,8 +300,34 @@ def login_rate_limit_error(retry_after: int) -> JSONResponse:
     )
 
 
-def _login_rate_key(username: str) -> str:
-    return normalize_login_key(username)
+def login_client_identity(request: Request) -> str:
+    """Use the ASGI peer identity so one source cannot lock an account for everyone."""
+    host = str(request.client.host if request.client else "").strip().casefold()
+    return host or "unknown"
+
+
+def _login_rate_key(username: str, client_identity: str | None = None) -> str:
+    normalized_username = normalize_login_key(username)
+    if client_identity is None:
+        return normalized_username
+    identity_digest = hashlib.sha256(client_identity.encode("utf-8")).hexdigest()[:16]
+    return f"{normalized_username}:{identity_digest}"
+
+
+def _login_rate_keys(username: str, client_identity: str | None = None) -> tuple[str, ...]:
+    normalized_username = normalize_login_key(username)
+    if client_identity is None:
+        return (f"account:{normalized_username}",)
+    identity_digest = hashlib.sha256(client_identity.encode("utf-8")).hexdigest()[:16]
+    return (
+        f"account:{normalized_username}",
+        f"pair:{normalized_username}:{identity_digest}",
+        f"source:{identity_digest}",
+    )
+
+
+def _postgres_login_rate_keys(username: str, client_identity: str | None = None) -> tuple[str, ...]:
+    return (*_login_rate_keys(username, client_identity), "global:login")
 
 
 def _login_rate_state() -> LoginThrottleState:
@@ -322,44 +360,62 @@ def _prune_login_rate_state(current: float, *, incoming_key: str | None = None) 
     _login_last_pruned_at = state.last_pruned_at
 
 
-def login_retry_after(username: str, *, now: float | None = None) -> int:
-    key = _login_rate_key(username)
+def login_retry_after(
+    username: str,
+    *,
+    client_identity: str | None = None,
+    now: float | None = None,
+) -> int:
+    keys = _login_rate_keys(username, client_identity)
     if postgres_store_enabled() and now is None:
-        return postgres_login_throttles.retry_after(key, LOGIN_FAILURE_WINDOW_SECONDS)
-    current = time.monotonic() if now is None else now
-    with _login_rate_lock:
-        global _login_last_pruned_at
-        state = _login_rate_state()
-        result = local_login_retry_after(state, _login_rate_limits(), key, current)
-        _login_last_pruned_at = state.last_pruned_at
-        return result
-
-
-def record_login_failure(username: str, *, now: float | None = None) -> int:
-    key = _login_rate_key(username)
-    if postgres_store_enabled() and now is None:
-        return postgres_login_throttles.record_failure(
-            key,
-            LOGIN_FAILURE_LIMIT,
+        return postgres_login_throttles.retry_after_many(
+            _postgres_login_rate_keys(username, client_identity),
             LOGIN_FAILURE_WINDOW_SECONDS,
-            LOGIN_LOCKOUT_SECONDS,
         )
     current = time.monotonic() if now is None else now
     with _login_rate_lock:
         global _login_last_pruned_at
         state = _login_rate_state()
-        result = record_local_login_failure(state, _login_rate_limits(), key, current)
+        result = max(local_login_retry_after(state, _login_rate_limits(), key, current) for key in keys)
         _login_last_pruned_at = state.last_pruned_at
         return result
 
 
-def clear_login_failures(username: str) -> None:
-    key = _login_rate_key(username)
+def record_login_failure(
+    username: str,
+    *,
+    client_identity: str | None = None,
+    now: float | None = None,
+) -> int:
+    keys = _login_rate_keys(username, client_identity)
+    if postgres_store_enabled() and now is None:
+        return postgres_login_throttles.record_failures(
+            _postgres_login_rate_keys(username, client_identity),
+            LOGIN_FAILURE_LIMIT,
+            LOGIN_FAILURE_WINDOW_SECONDS,
+            LOGIN_LOCKOUT_SECONDS,
+            max_keys=LOGIN_RATE_MAX_KEYS,
+        )
+    current = time.monotonic() if now is None else now
+    with _login_rate_lock:
+        global _login_last_pruned_at
+        state = _login_rate_state()
+        result = max(
+            record_local_login_failure(state, _login_rate_limits(), key, current)
+            for key in keys
+        )
+        _login_last_pruned_at = state.last_pruned_at
+        return result
+
+
+def clear_login_failures(username: str, *, client_identity: str | None = None) -> None:
+    keys = _login_rate_keys(username, client_identity)
     if postgres_store_enabled():
-        postgres_login_throttles.clear(key)
+        postgres_login_throttles.clear_many(keys)
         return
     with _login_rate_lock:
-        _discard_login_rate_key(key)
+        for key in keys:
+            _discard_login_rate_key(key)
 
 
 def session_cookie_secure(request: Request) -> bool:
@@ -405,6 +461,13 @@ def same_user_version(expected: Optional[str], user: dict) -> bool:
     return str(user.get("updated_at") or "") == expected
 
 
+def credential_epoch(user: dict) -> int:
+    try:
+        return max(int(user.get("credential_epoch") or 1), 1)
+    except (TypeError, ValueError):
+        return 1
+
+
 def permission_denied() -> dict:
     return api_error("Permission denied")
 
@@ -434,7 +497,7 @@ async def _api_create_user(req: CreateUserRequest, actor: dict) -> dict:
     if validation_error:
         return api_error(validation_error)
 
-    user = build_user(req, user_id, req.password or configured_initial_password())
+    user = build_user(req, user_id, str(req.password))
     users[user_id] = user
     saved_user = save_user(user_id, user)
     return api_ok(user=public_user(saved_user))
@@ -454,7 +517,7 @@ async def _api_update_user(user_id: str, req: UpdateUserRequest, actor: dict) ->
     users = load_users()
     key = user_id.strip()
     user = users.get(key)
-    if not user:
+    if user is None:
         return api_error(f"User {user_id} not found")
     validation_error = validate_admin_role_change(key, user, req, actor, users)
     if validation_error:
@@ -472,6 +535,8 @@ async def _api_update_user(user_id: str, req: UpdateUserRequest, actor: dict) ->
         user["line_scope"] = normalize_line_scope(req.line_scope)
     if req.active is not None:
         user["active"] = req.active
+        if req.active is False:
+            user["credential_epoch"] = credential_epoch(user) + 1
 
     users[key] = user
     try:
@@ -504,14 +569,14 @@ async def _api_reset_user_password(user_id: str, req: ResetPasswordRequest, acto
     if not same_user_version(req.expected_updated_at, user):
         return concurrency_error()
     if not req.password:
-        password_error = implicit_initial_password_error()
-        if password_error:
-            return api_error(password_error)
-    password = req.password or configured_initial_password()
+        return api_error("Password is required")
+    password = req.password
     if not valid_password(password):
         return api_error("Password must be at least 8 characters and not use a common placeholder")
     read_version = str(user.get("updated_at") or "") or None
     user["password_hash"] = hash_password(password)
+    user["credential_epoch"] = credential_epoch(user) + 1
+    user["must_change_password"] = False
     users[key] = user
     try:
         saved_user = save_user(key, user, expected_updated_at=read_version)
@@ -543,8 +608,15 @@ async def _api_revoke_user_sessions(user_id: str, actor: dict) -> dict:
     if key == actor_id(actor):
         return api_error("The current admin account cannot revoke its own sessions")
     users = load_users()
-    if key not in users:
+    user = users.get(key)
+    if user is None:
         return api_error(f"User {user_id} not found")
+    read_version = str(user.get("updated_at") or "") or None
+    user["credential_epoch"] = credential_epoch(user) + 1
+    try:
+        save_user(key, user, expected_updated_at=read_version)
+    except ConcurrentUserUpdateError:
+        return concurrency_error()
     return api_ok(revoked=revoke_user_sessions(key))
 
 
@@ -557,18 +629,32 @@ async def api_revoke_user_sessions(user_id: str, actor: dict = Depends(get_actor
 
 
 @router.get("/sessions", responses={200: {"model": SessionsResponse}, **API_ERROR_RESPONSES})
-async def api_list_sessions(actor: dict = Depends(get_actor)):
+async def api_list_sessions(
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    actor: dict = Depends(get_actor),
+):
+    page_limit = limit if isinstance(limit, int) else 200
+    page_offset = offset if isinstance(offset, int) else 0
     if not actor_id(actor):
         return api_error("Not authenticated")
     if not is_admin(actor):
         return permission_denied()
     if postgres_store_enabled():
-        entries = postgres_sessions.list_active()
-        return api_ok(total=len(entries), sessions=entries)
+        entries, total = postgres_sessions.list_active_page(limit=page_limit, offset=page_offset)
+        return api_ok(
+            total=total,
+            limit=page_limit,
+            offset=page_offset,
+            has_more=page_offset + len(entries) < total,
+            sessions=entries,
+        )
     users = load_users()
-    sessions = prune_expired_sessions(load_sessions())
-    save_sessions(sessions)
-    entries = [
+    sessions = auth_sessions.mutate_sessions(
+        SESSION_FILE,
+        lambda current: _replace_sessions(current, prune_expired_sessions(current)),
+    )
+    all_entries = [
         {
             "token_prefix": token[:SESSION_TOKEN_PREFIX_LENGTH],
             "user_id": str(session.get("user_id") or ""),
@@ -578,7 +664,14 @@ async def api_list_sessions(actor: dict = Depends(get_actor)):
         }
         for token, session in sorted(sessions.items(), key=lambda item: str(item[1].get("expires_at") or ""))
     ]
-    return api_ok(total=len(entries), sessions=entries)
+    entries = all_entries[page_offset:page_offset + page_limit]
+    return api_ok(
+        total=len(all_entries),
+        limit=page_limit,
+        offset=page_offset,
+        has_more=page_offset + len(entries) < len(all_entries),
+        sessions=entries,
+    )
 
 
 @router.delete(
@@ -598,14 +691,18 @@ async def api_revoke_session(token_prefix: str, actor: dict = Depends(get_actor)
             return api_ok(revoked=postgres_sessions.revoke_prefix(prefix))
         except ValueError as exc:
             return api_error(str(exc))
-    sessions = load_sessions()
-    matched = [token for token in sessions if token.startswith(prefix)]
-    if len(matched) > 1:
-        return api_error("Ambiguous token prefix")
-    for token in matched:
-        sessions.pop(token, None)
-    save_sessions(sessions)
-    return api_ok(revoked=len(matched))
+    def revoke_prefix(sessions: Dict[str, dict]) -> int:
+        matched = [token for token in sessions if token.startswith(prefix)]
+        if len(matched) > 1:
+            raise ValueError("Ambiguous token prefix")
+        for token in matched:
+            sessions.pop(token, None)
+        return len(matched)
+
+    try:
+        return api_ok(revoked=auth_sessions.mutate_sessions(SESSION_FILE, revoke_prefix))
+    except ValueError as exc:
+        return api_error(str(exc))
 
 
 @router.post(
@@ -617,7 +714,8 @@ async def api_revoke_session(token_prefix: str, actor: dict = Depends(get_actor)
     },
 )
 async def login(req: LoginRequest, request: Request, response: Response):
-    retry_after = login_retry_after(req.username)
+    client_identity = login_client_identity(request)
+    retry_after = login_retry_after(req.username, client_identity=client_identity)
     if retry_after:
         runtime_metrics.record_auth("throttled")
         return login_rate_limit_error(retry_after)
@@ -625,39 +723,121 @@ async def login(req: LoginRequest, request: Request, response: Response):
     users = load_users()
     user = users.get(req.username.strip())
     if not user or not user.get("active", True):
-        retry_after = record_login_failure(req.username)
+        retry_after = record_login_failure(req.username, client_identity=client_identity)
         if retry_after:
             runtime_metrics.record_auth("throttled")
             return login_rate_limit_error(retry_after)
         runtime_metrics.record_auth("failure")
         return authentication_error("Invalid username or password")
     if not verify_password(req.password, str(user.get("password_hash") or "")):
-        retry_after = record_login_failure(req.username)
+        retry_after = record_login_failure(req.username, client_identity=client_identity)
         if retry_after:
             runtime_metrics.record_auth("throttled")
             return login_rate_limit_error(retry_after)
         runtime_metrics.record_auth("failure")
         return authentication_error("Invalid username or password")
+    if user.get("must_change_password"):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "status": "error",
+                "message": "Initial password must be changed before login",
+                "error_code": "PASSWORD_CHANGE_REQUIRED",
+                "change_endpoint": "/auth/initial-password",
+            },
+        )
 
-    clear_login_failures(req.username)
+    clear_login_failures(req.username, client_identity=client_identity)
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     created_at = now.isoformat()
     expires_at_value = now + timedelta(hours=session_hours())
     expires_at = expires_at_value.isoformat()
-    sessions = prune_expired_sessions(load_sessions())
-    sessions[session_token_digest(token)] = {
-        "user_id": user["user_id"],
-        "created_at": created_at,
-        "expires_at": expires_at,
-    }
     if postgres_store_enabled():
-        postgres_sessions.create(token, user["user_id"], created_at, expires_at)
+        try:
+            postgres_sessions.create(
+                token,
+                user["user_id"],
+                created_at,
+                expires_at,
+                expected_credential_epoch=credential_epoch(user),
+            )
+        except (CredentialChangedError, ValueError):
+            runtime_metrics.record_auth("failure")
+            return authentication_error("Invalid username or password")
+        except SessionCapacityError:
+            runtime_metrics.record_auth("throttled")
+            return JSONResponse(
+                status_code=503,
+                content=api_error("Session capacity reached; retry later"),
+                headers={"Retry-After": "60"},
+            )
     else:
-        save_sessions(sessions)
+        def create_session(sessions: Dict[str, dict]) -> bool:
+            current_user = load_users().get(str(user["user_id"]))
+            if (
+                not current_user
+                or not current_user.get("active", True)
+                or credential_epoch(current_user) != credential_epoch(user)
+                or str(current_user.get("password_hash") or "") != str(user.get("password_hash") or "")
+            ):
+                return False
+            _replace_sessions(sessions, prune_expired_sessions(sessions))
+            sessions[session_token_digest(token)] = {
+                "user_id": user["user_id"],
+                "created_at": created_at,
+                "expires_at": expires_at,
+                "credential_epoch": credential_epoch(current_user),
+            }
+            return True
+
+        if not auth_sessions.mutate_sessions(SESSION_FILE, create_session):
+            runtime_metrics.record_auth("failure")
+            return authentication_error("Invalid username or password")
     set_session_cookie(response, request, token, expires_at_value)
     runtime_metrics.record_auth("success")
     return {"status": "ok", "token": token, "expires_at": expires_at, "user": public_user(user)}
+
+
+@router.post(
+    "/auth/initial-password",
+    response_model=StatusOkResponse,
+    responses={400: {"model": ApiErrorResponse}, 401: {"model": ApiErrorResponse}, 409: {"model": ApiErrorResponse}, 429: {"model": ApiErrorResponse}},
+)
+async def change_initial_password(req: InitialPasswordChangeRequest, request: Request):
+    client_identity = login_client_identity(request)
+    retry_after = login_retry_after(req.username, client_identity=client_identity)
+    if retry_after:
+        return login_rate_limit_error(retry_after)
+    users = load_users()
+    key = req.username.strip()
+    user = users.get(key)
+    if (
+        not user
+        or not user.get("active", True)
+        or not user.get("must_change_password")
+        or not verify_password(req.current_password, str(user.get("password_hash") or ""))
+    ):
+        retry_after = record_login_failure(req.username, client_identity=client_identity)
+        if retry_after:
+            return login_rate_limit_error(retry_after)
+        return authentication_error("Invalid username or password")
+    if req.new_password == req.current_password or not valid_password(req.new_password):
+        return JSONResponse(
+            status_code=400,
+            content=api_error("New password must be distinct, at least 8 characters, and not a common placeholder"),
+        )
+    read_version = str(user.get("updated_at") or "") or None
+    user["password_hash"] = hash_password(req.new_password)
+    user["credential_epoch"] = credential_epoch(user) + 1
+    user["must_change_password"] = False
+    try:
+        save_user(key, user, expected_updated_at=read_version)
+    except ConcurrentUserUpdateError:
+        return JSONResponse(status_code=409, content=concurrency_error())
+    revoke_user_sessions(key)
+    clear_login_failures(req.username, client_identity=client_identity)
+    return api_ok(message="Initial password changed; sign in with the new password")
 
 
 @router.get("/auth/login-config", response_model=LoginConfigResponse)
@@ -666,7 +846,8 @@ async def login_config():
         "status": "ok",
         "production": production_mode(),
         "initial_password_configured": not initial_password_is_placeholder(),
-        "bootstrap_users": bootstrap_user_summaries(),
+        # Keep the response shape stable without publishing valid account IDs.
+        "bootstrap_users": [],
     }
 
 
@@ -698,10 +879,11 @@ async def logout(
     if postgres_store_enabled():
         postgres_sessions.delete(token)
         return {"status": "ok"}
-    sessions = load_sessions()
-    sessions.pop(token, None)
-    sessions.pop(session_token_digest(token), None)
-    save_sessions(sessions)
+    def delete_session(sessions: Dict[str, dict]) -> None:
+        sessions.pop(token, None)
+        sessions.pop(session_token_digest(token), None)
+
+    auth_sessions.mutate_sessions(SESSION_FILE, delete_session)
     return {"status": "ok"}
 
 
@@ -713,9 +895,15 @@ def ensure_user_store() -> None:
         password_error = implicit_initial_password_error()
         if password_error:
             raise RuntimeError(password_error)
+        admin = BOOTSTRAP_USERS["admin01"]
         postgres_users.save_all({
-            user_id: {**user, "password_hash": hash_password(initial_password), "active": True}
-            for user_id, user in BOOTSTRAP_USERS.items()
+            "admin01": {
+                **admin,
+                "password_hash": hash_password(initial_password),
+                "active": True,
+                "credential_epoch": 1,
+                "must_change_password": True,
+            }
         })
         return
     os.makedirs(DB_DIR, exist_ok=True)
@@ -725,12 +913,18 @@ def ensure_user_store() -> None:
     password_error = implicit_initial_password_error()
     if password_error:
         raise RuntimeError(password_error)
+    admin = BOOTSTRAP_USERS["admin01"]
     users = {
-        user_id: {**user, "password_hash": hash_password(initial_password), "active": True}
-        for user_id, user in BOOTSTRAP_USERS.items()
+        "admin01": {
+            **admin,
+            "password_hash": hash_password(initial_password),
+            "active": True,
+            "credential_epoch": 1,
+            "must_change_password": True,
+        }
     }
-    with open(USER_FILE, "w", encoding="utf-8") as file:
-        json.dump(users, file, ensure_ascii=False, indent=2)
+    with exclusive_file_lock(USER_FILE + ".lock"):
+        write_json_atomic(USER_FILE, users)
 
 
 def load_users() -> Dict[str, dict]:
@@ -750,24 +944,30 @@ def save_users(users: Dict[str, dict]) -> None:
         postgres_users.save_all(users)
         return
     os.makedirs(DB_DIR, exist_ok=True)
-    with open(USER_FILE, "w", encoding="utf-8") as file:
-        json.dump(users, file, ensure_ascii=False, indent=2)
+    with exclusive_file_lock(USER_FILE + ".lock"):
+        write_json_atomic(USER_FILE, users)
 
 
 def save_user(user_id: str, user: dict, expected_updated_at: Optional[str] = None) -> dict:
     if postgres_store_enabled():
         return postgres_users.save_one(user_id, user, expected_updated_at=expected_updated_at)
-    users = load_users()
-    current = users.get(user_id, {})
-    if not same_user_version(expected_updated_at, current):
-        raise ConcurrentUserUpdateError(f"User {user_id} was updated by another request")
-    saved = dict(user)
-    if not saved.get("created_at"):
-        saved["created_at"] = current.get("created_at") or datetime.now(timezone.utc).isoformat()
-    saved["updated_at"] = datetime.now(timezone.utc).isoformat()
-    users[user_id] = saved
-    save_users(users)
-    return saved
+    with exclusive_file_lock(USER_FILE + ".lock"):
+        try:
+            with open(USER_FILE, "r", encoding="utf-8") as file:
+                payload = json.load(file)
+        except (json.JSONDecodeError, OSError):
+            payload = {}
+        users = payload if isinstance(payload, dict) else {}
+        current = users.get(user_id, {})
+        if not same_user_version(expected_updated_at, current):
+            raise ConcurrentUserUpdateError(f"User {user_id} was updated by another request")
+        saved = dict(user)
+        if not saved.get("created_at"):
+            saved["created_at"] = current.get("created_at") or datetime.now(timezone.utc).isoformat()
+        saved["updated_at"] = datetime.now(timezone.utc).isoformat()
+        users[user_id] = saved
+        write_json_atomic(USER_FILE, users)
+        return saved
 
 
 def load_sessions() -> Dict[str, dict]:
@@ -781,11 +981,18 @@ def save_sessions(sessions: Dict[str, dict]) -> None:
 def revoke_user_sessions(user_id: str) -> int:
     if postgres_store_enabled():
         return postgres_sessions.revoke_user(user_id)
-    sessions = load_sessions()
-    before = len(sessions)
-    sessions = auth_sessions.revoke_user_sessions(sessions, user_id)
-    save_sessions(sessions)
-    return before - len(sessions)
+    def revoke(sessions: Dict[str, dict]) -> int:
+        before = len(sessions)
+        _replace_sessions(sessions, auth_sessions.revoke_user_sessions(sessions, user_id))
+        return before - len(sessions)
+
+    return auth_sessions.mutate_sessions(SESSION_FILE, revoke)
+
+
+def _replace_sessions(target: Dict[str, dict], replacement: Dict[str, dict]) -> Dict[str, dict]:
+    target.clear()
+    target.update(replacement)
+    return dict(target)
 
 
 def prune_expired_sessions(sessions: Dict[str, dict]) -> Dict[str, dict]:
@@ -797,10 +1004,18 @@ def _parse_session_expiry(session: dict) -> datetime:
 
 
 def session_hours() -> int:
-    return auth_sessions.session_hours(
-        os.getenv("SESSION_TTL_HOURS", ""),
+    override = session_hours_override(os.getenv("SESSION_TTL_HOURS", ""))
+    if override is not None:
+        return override
+    settings = load_effective_settings(
         os.path.join(DB_DIR, "system_settings.json"),
+        postgres_reader=postgres_settings,
+        use_postgres=postgres_store_enabled(),
     )
+    value = settings.get("session_hours", 12)
+    if not isinstance(value, int) or isinstance(value, bool):
+        return 12
+    return min(max(value, 1), 72)
 
 
 def hash_password(password: str, salt: Optional[str] = None) -> str:
@@ -843,23 +1058,25 @@ def actor_from_session_token(token: str) -> Optional[dict]:
             return None
         actor = resolve_user(str(session.get("user_id") or ""))
         return actor if actor.get("user_id") and actor.get("active", True) else None
-    sessions = load_sessions()
-    session_key = session_token_digest(token)
-    stored_key = session_key if session_key in sessions else token
-    session = sessions.get(stored_key)
-    if not session:
-        return None
-    expires_at = _parse_session_expiry(session)
-    if expires_at < datetime.now(timezone.utc):
-        sessions.pop(stored_key, None)
-        save_sessions(sessions)
-        return None
-    actor = resolve_user(str(session.get("user_id") or ""))
-    if not actor.get("user_id") or not actor.get("active", True):
-        sessions.pop(stored_key, None)
-        save_sessions(sessions)
-        return None
-    return actor
+    def resolve_session(sessions: Dict[str, dict]) -> Optional[dict]:
+        session_key = session_token_digest(token)
+        stored_key = session_key if session_key in sessions else token
+        session = sessions.get(stored_key)
+        if not session:
+            return None
+        user = load_users().get(str(session.get("user_id") or ""), {})
+        invalid = (
+            _parse_session_expiry(session) < datetime.now(timezone.utc)
+            or not user.get("user_id")
+            or not user.get("active", True)
+            or credential_epoch(session) != credential_epoch(user)
+        )
+        if invalid:
+            sessions.pop(stored_key, None)
+            return None
+        return public_user(user)
+
+    return auth_sessions.mutate_sessions(SESSION_FILE, resolve_session)
 
 
 def has_full_access(actor: dict) -> bool:
@@ -917,6 +1134,20 @@ def can_view_work_order(actor: dict, order: dict, linked_issue: Optional[dict] =
         assigned_to = str(order.get("assigned_to") or "")
         return not assigned_to or assigned_to == actor_id(actor)
     return False
+
+
+def can_reference_rag_answer(actor: dict, answer: dict | None) -> bool:
+    """Allow an answer reference only to its creator or a privileged reviewer."""
+    if not answer or not actor_id(actor):
+        return False
+    if actor_role(actor) in FULL_ACCESS_ROLES:
+        return True
+    return bool(answer.get("created_by")) and str(answer.get("created_by")) == actor_id(actor)
+
+
+def can_trigger_alarm(actor: dict) -> bool:
+    """Authorize user-session callers that may originate operational workflows."""
+    return actor_role(actor) in {"operator", "supervisor", "admin"}
 
 
 def can_update_issue(actor: dict, issue: dict, next_status: Optional[str]) -> bool:

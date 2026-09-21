@@ -6,6 +6,8 @@
 
 | 需求 | 文件 |
 | --- | --- |
+| 跨公司共用模板改造計畫 | [plans/REUSABLE_COMPANY_TEMPLATE_PLAN_ZH_TW.md](plans/REUSABLE_COMPANY_TEMPLATE_PLAN_ZH_TW.md) |
+| 畢專架構與六條程式流程詳解（繁體中文） | [guides/GRADUATION_PROJECT_WALKTHROUGH_ZH_TW.md](guides/GRADUATION_PROJECT_WALKTHROUGH_ZH_TW.md) |
 | 安裝與部署 | [guides/DEPLOYMENT.md](guides/DEPLOYMENT.md) |
 | 基本驗證 | [guides/SMOKE_TEST.md](guides/SMOKE_TEST.md) |
 | 資料備份與還原 | [guides/DATA_MAINTENANCE.md](guides/DATA_MAINTENANCE.md) |
@@ -20,7 +22,6 @@
 - [`guides/`](guides/)：部署、維護、Demo 與驗收操作。
 - [`operations/`](operations/)：PostgreSQL runbook、檢查表、風險矩陣與維運索引。
 - [`plans/`](plans/)：尚在規劃或分階段執行的工作。
-- [下一階段本機工作計畫](plans/NEXT_LOCAL_WORK_PLAN_2026-06-24.md)
 - [`reference/`](reference/)：模擬資料與廠商整合規格。
 - [`reports/`](reports/)：已執行工作的狀態、交付證據與品質評測紀錄。
 

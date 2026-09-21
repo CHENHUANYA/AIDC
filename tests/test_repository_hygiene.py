@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -21,6 +22,7 @@ RUNTIME_IGNORE_ENTRIES = {
 GENERATED_WORK_ENTRIES = {
     "docx_work/",
     "outputs/",
+    "deliverables/",
 }
 NON_RUNTIME_IMAGE_ENTRIES = {
     ".git/",
@@ -32,6 +34,7 @@ NON_RUNTIME_IMAGE_ENTRIES = {
 SECRET_PLACEHOLDERS = {
     "ADMIN_INITIAL_PASSWORD": "change-me-now",
     "ALARM_RAG_TRIGGER_TOKEN": "replace-with-a-random-trigger-token",
+    "ALARM_RAG_INDEX_SIGNING_KEY": "replace-with-a-long-random-index-signing-key",
     "N8N_ENCRYPTION_KEY": "replace-with-a-long-random-string",
     "QDRANT_API_KEY": "replace-with-a-long-random-qdrant-api-key",
 }
@@ -53,14 +56,12 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertTrue(RUNTIME_IGNORE_ENTRIES <= gitignore)
         self.assertTrue(RUNTIME_IGNORE_ENTRIES <= dockerignore)
 
-    def test_generated_document_work_is_ignored_but_deliverables_remain_explicit(self):
+    def test_generated_document_work_and_deliverables_are_ignored(self):
         gitignore = ignore_entries(ROOT / ".gitignore")
         dockerignore = ignore_entries(ROOT / ".dockerignore")
 
         self.assertTrue(GENERATED_WORK_ENTRIES <= gitignore)
         self.assertTrue(GENERATED_WORK_ENTRIES <= dockerignore)
-        self.assertNotIn("deliverables/", gitignore)
-        self.assertIn("deliverables/", dockerignore)
 
     def test_source_control_and_validation_assets_are_not_packaged(self):
         dockerignore = ignore_entries(ROOT / ".dockerignore")
@@ -117,12 +118,23 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertIn("windows-latest", text)
         self.assertIn("coverage run -m pytest -q", text)
         self.assertIn("coverage report", text)
-        self.assertIn("actions/setup-node@v4", text)
+        self.assertIn("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", text)
         self.assertIn("node --test", text)
         self.assertIn("python -m pip_audit", text)
-        self.assertIn("--ignore-vuln PYSEC-2026-311", text)
+        self.assertNotIn("--ignore-vuln", text)
         self.assertIn("docker compose --env-file .env config --quiet", text)
         self.assertIn("docker-compose.postgresql-secrets.yml", text)
+
+    def test_github_actions_are_pinned_to_immutable_commits(self):
+        uses = []
+        for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
+            uses.extend(
+                re.findall(r"uses:\s+(actions/[^@\s]+)@([^\s#]+)", workflow.read_text(encoding="utf-8"))
+            )
+
+        self.assertTrue(uses)
+        for action, revision in uses:
+            self.assertRegex(revision, r"^[0-9a-f]{40}$", msg=f"{action} is not pinned")
 
     def test_browser_security_headers_are_enabled(self):
         text = (ROOT / "main.py").read_text(encoding="utf-8")

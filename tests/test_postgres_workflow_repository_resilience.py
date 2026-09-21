@@ -196,6 +196,6 @@ def test_single_record_saves_validate_keys_and_missing_reload(monkeypatch):
         issue_repository.save_one({"issue_id": "ISS-MISSING"})
 
     monkeypatch.setattr(order_repository, "save_all", lambda _payloads: None)
-    monkeypatch.setattr(order_repository, "get_one", lambda _order_id: None)
+    monkeypatch.setattr(order_repository, "get_one_including_deleted", lambda _order_id: None)
     with pytest.raises(LookupError, match="not found after save"):
         order_repository.save_one({"id": "WO-MISSING"})

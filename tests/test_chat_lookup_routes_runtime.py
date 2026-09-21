@@ -1,4 +1,5 @@
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -173,7 +174,7 @@ def test_free_chat_guards_and_builds_system_prompt(monkeypatch):
     assert asyncio.run(chat_lookup_routes.free_chat(REQUEST, actor={}))["message"] == "Not authenticated"
     response = asyncio.run(chat_lookup_routes.free_chat(REQUEST, actor=ACTOR))
 
-    assert response["choices"][0]["message"]["content"] == "Error: empty response from LLM."
+    assert response["choices"][0]["message"]["content"] == "LLM service unavailable."
     assert call.await_args.kwargs["messages"][0]["content"] == chat_lookup_routes.FREE_CHAT_SYSTEM
 
 
@@ -214,7 +215,9 @@ def test_lookup_route_covers_validation_success_missing_and_failure(monkeypatch)
             return self.outcome
 
     monkeypatch.setattr(chat_lookup_routes, "get_existing_engine", lambda _collection: Engine(None))
-    assert asyncio.run(chat_lookup_routes.lookup_alarm("808d", "abc", actor=ACTOR))["error"] == "Invalid alarm code"
+    invalid = asyncio.run(chat_lookup_routes.lookup_alarm("808d", "abc", actor=ACTOR))
+    assert invalid.status_code == 400
+    assert json.loads(invalid.body)["error"] == "Invalid alarm code"
     assert "not found" in asyncio.run(chat_lookup_routes.lookup_alarm("808d", "3000", actor=ACTOR))["error"]
 
     monkeypatch.setattr(chat_lookup_routes, "get_existing_engine", lambda _collection: Engine({"text": DOC["text"], "meta": DOC["meta"]}))
@@ -229,7 +232,11 @@ def test_lookup_route_covers_validation_success_missing_and_failure(monkeypatch)
         patch.object(chat_lookup_routes, "record_query"),
     ):
         failed = asyncio.run(chat_lookup_routes.lookup_alarm("808d", "3000", actor=ACTOR))
-    assert failed == {"found": False, "error": "lookup failed"}
+    assert failed == {
+        "found": False,
+        "error": "Lookup service unavailable",
+        "error_code": "LOOKUP_UNAVAILABLE",
+    }
 
 
 def test_answer_and_models_routes_cover_auth_and_validation(monkeypatch):

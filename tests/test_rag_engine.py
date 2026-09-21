@@ -8,6 +8,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 
 import rag_engine
+from bm25_text import tokenize_bm25
 from rag_engine import AlarmRAGEngine
 
 
@@ -87,6 +88,26 @@ class RagEngineRetrieveTests(unittest.TestCase):
 
         self.assertEqual(1, len(results))
         self.assertEqual(engine.sections[0], results[0]["meta"])
+
+    def test_title_bm25_strategy_uses_section_titles_without_vector_or_reranker(self):
+        engine = AlarmRAGEngine.__new__(AlarmRAGEngine)
+        engine.collection_name = "808d"
+        engine.sections = [
+            {"title": "Spindle temperature warning", "text": "long shared alarm body", "code": "200"},
+            {"title": "Hydraulic pressure low", "text": "long shared alarm body", "code": "100"},
+        ]
+        engine.bm25 = BM25Okapi([tokenize_bm25(section["text"]) for section in engine.sections])
+        engine._refresh_title_bm25()
+        engine.retrieval_strategy = "title_bm25"
+        engine.ready = True
+        engine.embedder = FakeEmbedder()
+        engine.reranker = UnexpectedReranker()
+
+        results = engine.retrieve("hydraulic pressure", top_k=1)
+
+        self.assertEqual("100", results[0]["meta"]["code"])
+        self.assertEqual("title-bm25", engine.last_retrieval_mode)
+        self.assertEqual("title_bm25", engine.retrieval_runtime_status()["retrieval_strategy"])
 
     def test_hydrates_vector_store_when_count_is_stale(self):
         previous = rag_engine.VECTOR_HYDRATE_ON_LOAD

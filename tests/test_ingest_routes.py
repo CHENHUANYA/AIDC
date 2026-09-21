@@ -1,5 +1,4 @@
 import unittest
-import pickle
 import shutil
 import uuid
 from pathlib import Path
@@ -7,6 +6,7 @@ from unittest.mock import patch
 
 import ingest
 from routes import ingest_routes
+from signed_pickle import dump_signed_pickle
 
 
 class FakeUploadFile:
@@ -125,8 +125,7 @@ class IngestRouteTests(unittest.IsolatedAsyncioTestCase):
         tmp_root.mkdir(parents=True, exist_ok=False)
         self.addCleanup(lambda: shutil.rmtree(tmp_root, ignore_errors=True))
         sections = [{"text": "alarm section", "code": "3000"}]
-        with (tmp_root / "bm25_808d.pkl").open("wb") as file:
-            pickle.dump({"sections": sections}, file)
+        dump_signed_pickle(tmp_root / "bm25_808d.pkl", {"sections": sections})
 
         class FakeEngine:
             def rebuild_with_progress(self, rebuild_sections):
@@ -157,8 +156,7 @@ class IngestRouteTests(unittest.IsolatedAsyncioTestCase):
         tmp_root.mkdir(parents=True, exist_ok=False)
         self.addCleanup(lambda: shutil.rmtree(tmp_root, ignore_errors=True))
         sections = [{"text": "alarm section", "code": "3000"}]
-        with (tmp_root / "bm25_808d.pkl").open("wb") as file:
-            pickle.dump({"sections": sections}, file)
+        dump_signed_pickle(tmp_root / "bm25_808d.pkl", {"sections": sections})
 
         fake_job = {
             "job_id": "job123",

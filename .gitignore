@@ -17,6 +17,7 @@ venv/
 tests_tmp/
 docx_work/
 outputs/
+deliverables/
 .pytest_cache/
 .coverage
 .coverage.*

@@ -43,7 +43,7 @@
     modal.querySelector('#answerTraceId').textContent = answer.answer_id || '';
     const citations = Array.isArray(answer.citations) ? answer.citations : [];
     const citationHtml = citations.length
-      ? citations.map((citation, index) => `<li><b>${alarmApp.esc(citation.code || citation.title || `Citation ${index + 1}`)}</b><span>${alarmApp.esc(citation.source_file || citation.source || '')}</span><small>${alarmApp.esc(citation.page ? `page ${citation.page}` : '')}</small></li>`).join('')
+      ? citations.map((citation, index) => `<li><b>${alarmApp.esc(citation.code || citation.title || `Citation ${index + 1}`)}</b><span>${alarmApp.esc(citation.source_file || citation.source || '')}</span><small>${alarmApp.esc(citation.locator || (citation.page ? `page ${citation.page}` : ''))}</small></li>`).join('')
       : '<li class="answer-trace-empty">無 citation</li>';
     modal.querySelector('#answerTraceBody').innerHTML = `
       <div class="answer-trace-state state-${state}">${alarmApp.esc(state)}</div>

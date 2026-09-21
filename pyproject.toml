@@ -57,7 +57,13 @@ files = [
     "scripts/postgresql_secret_rotation.py",
     "scripts/bm25_index_upgrade.py",
     "scripts/rag_offline_evaluation.py",
+    "scripts/rag_annotation_review.py",
+    "scripts/rag_blind_set.py",
+    "scripts/rag_experiment_freeze.py",
+    "scripts/rag_retrieval_benchmark.py",
     "scripts/rag_runtime_check.py",
+    "scripts/rag_source_traceability.py",
+    "scripts/vector_snapshot_rebuild.py",
     "vector_store.py",
 ]
 exclude = "(alarm_db|backups|data|exports|hf_cache|n8n_data|qdrant_data|tests_tmp)/"

@@ -40,10 +40,12 @@ def test_issue_json_loading_normalizes_versions_and_invalid_payloads(json_issue_
 
 def test_operator_reopen_setting_defaults_and_explicit_disable(json_issue_store):
     settings = json_issue_store / "system_settings.json"
-    assert issues._operator_reopen_enabled() is True
+    assert issues._operator_reopen_enabled() is False
     settings.write_text("not-json", encoding="utf-8")
-    assert issues._operator_reopen_enabled() is True
+    assert issues._operator_reopen_enabled() is False
     settings.write_text("[]", encoding="utf-8")
+    assert issues._operator_reopen_enabled() is False
+    settings.write_text('{"allow_operator_reopen": true}', encoding="utf-8")
     assert issues._operator_reopen_enabled() is True
     settings.write_text('{"allow_operator_reopen": false}', encoding="utf-8")
     assert issues._operator_reopen_enabled() is False

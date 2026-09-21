@@ -154,3 +154,45 @@ test('supervisor review modal opens with escaped data and restores focus when cl
   assert.equal(page.state.get('supervisorCurrentReviewOrderId'), null);
   assert.equal(page.trigger.focused, true);
 });
+
+test('supervisor timeline groups duplicate stored copies without changing the source history', () => {
+  const event = {
+    action: 'created', audit_source: 'work order', user_id: 'maintenance01',
+    created_at: '2026-08-14T08:00:00.123456Z', to_status: 'pending',
+  };
+  const mergedEvents = [
+    { ...event, _request_id: 'import-1' },
+    { ...event, from_status: '', fields: [], changes: [], _request_id: 'import-2' },
+    { ...event, _request_id: 'import-3' },
+  ];
+  const before = JSON.stringify(mergedEvents);
+  const { app, context, elements } = loadSupervisorPage({ mergedEvents });
+  context.renderSupervisorReviewTimeline(app, {}, {});
+  const html = elements.svReviewTimeline.innerHTML;
+  assert.equal((html.match(/class="audit-event"/g) || []).length, 1);
+  assert.match(html, /1 項事件 · 已合併 2 筆相同紀錄/);
+  assert.match(html, /相同紀錄 × 3/);
+  assert.equal(JSON.stringify(mergedEvents), before);
+});
+
+test('supervisor timeline preserves distinct sources, times, actors, statuses, and changes', () => {
+  const event = {
+    action: 'updated', audit_source: 'work order', user_id: 'maintenance01',
+    created_at: '2026-08-14T08:00:00.123456Z', from_status: 'pending', to_status: 'in_progress',
+    fields: ['notes'], changes: [{ field: 'notes', from: '', to: 'checked' }],
+  };
+  const events = [
+    event,
+    { ...event, audit_source: 'issue' },
+    { ...event, created_at: '2026-08-14T08:00:00.123457Z' },
+    { ...event, user_id: 'maintenance02' },
+    { ...event, to_status: 'completed' },
+    { ...event, changes: [{ field: 'notes', from: '', to: 'repaired' }] },
+    { ...event, action: 'reviewed' },
+    { ...event, fields: ['resolution'] },
+    { ...event, note: 'additional context' },
+  ];
+  const { context } = loadSupervisorPage();
+  assert.equal(context.groupSupervisorReviewEvents(events).length, events.length);
+  assert.equal(context.groupSupervisorReviewEvents([{ action: 'created' }, { action: 'created' }]).length, 2);
+});

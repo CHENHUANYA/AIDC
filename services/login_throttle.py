@@ -63,8 +63,12 @@ def prune_state(
             state.last_seen.pop(key, None)
 
     if incoming_key not in active_keys and len(active_keys) >= limits.max_keys:
-        oldest_key = min(active_keys, key=lambda key: state.last_seen.get(key, 0.0))
-        discard_key(state, oldest_key)
+        # Never make an active lockout disappear merely because an attacker
+        # sprayed enough fresh keys to hit the memory bound.
+        eviction_candidates = [key for key in active_keys if state.lockouts.get(key, 0.0) <= current]
+        if eviction_candidates:
+            oldest_key = min(eviction_candidates, key=lambda key: state.last_seen.get(key, 0.0))
+            discard_key(state, oldest_key)
     state.last_pruned_at = current
 
 
@@ -101,6 +105,10 @@ def record_failure(
     current: float,
 ) -> int:
     prune_state(state, limits, current, incoming_key=key)
+    active_keys = set(state.failures) | set(state.lockouts)
+    if key not in active_keys and len(active_keys) >= limits.max_keys:
+        # Fail closed at capacity instead of evicting a lockout for a new key.
+        return limits.lockout_seconds
     failures = state.failures.setdefault(key, deque())
     state.last_seen[key] = current
     cutoff = current - limits.failure_window_seconds

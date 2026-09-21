@@ -83,6 +83,23 @@ def test_postgres_single_record_repositories_do_not_change_siblings(monkeypatch)
         assert session.scalar(select(WorkOrder.priority).where(WorkOrder.work_order_no == "WO-ONE-B")) == "medium"
 
 
+def test_postgres_work_order_get_excludes_soft_deleted_by_default(monkeypatch):
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(WorkOrder(
+            work_order_no="WO-DELETED",
+            alarm_code="3000",
+            deleted_at=datetime.now(timezone.utc),
+        ))
+        session.commit()
+        monkeypatch.setattr("repositories.postgres_workflow.session_scope", lambda: scoped_session(session))
+        repository = PostgresWorkOrderRepository()
+
+        assert repository.get_one("WO-DELETED") is None
+        assert repository.get_one_including_deleted("WO-DELETED") is not None
+
+
 def test_postgres_issue_patch_uses_get_one_and_save_one():
     current = {
         "issue_id": "ISS-SINGLE",
@@ -109,7 +126,7 @@ def test_postgres_issue_patch_uses_get_one_and_save_one():
 
     assert result["status"] == "ok"
     assert result["issue"]["version"] == 2
-    get_one.assert_called_once_with("ISS-SINGLE")
+    get_one.assert_called_once_with("ISS-SINGLE", for_update=True)
     save_one.assert_called_once()
 
 
@@ -141,7 +158,7 @@ def test_postgres_work_order_patch_and_delete_use_single_record_methods():
 
     assert result["status"] == "ok"
     assert result["order"]["version"] == 2
-    get_one.assert_called_once_with("WO-SINGLE")
+    get_one.assert_called_once_with("WO-SINGLE", for_update=True)
     save_one.assert_called_once()
 
     delete_current = {**current, "version": 2}

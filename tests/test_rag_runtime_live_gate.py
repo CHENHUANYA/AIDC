@@ -1,4 +1,5 @@
 import json
+import hashlib
 from urllib import parse
 from unittest.mock import patch
 
@@ -6,7 +7,7 @@ from scripts import rag_runtime_check as runtime
 
 
 class FakeLiveClient:
-    def __init__(self, tokenizer_version="unicode-domain-v1"):
+    def __init__(self, tokenizer_version="unicode-domain-v2"):
         self.tokenizer_version = tokenizer_version
 
     def request_json(self, path, method="GET", payload=None):
@@ -69,6 +70,18 @@ def write_dataset(path):
     )
 
 
+def write_split(path, dataset):
+    digest = hashlib.sha256(dataset.read_bytes()).hexdigest()
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "split_version": "live-split-v1",
+        "dataset_version": "live-test-v1",
+        "dataset_sha256": digest,
+        "claim_boundary": "Test fixture only.",
+        "assignments": {"development": ["coolant"], "heldout": ["hydraulic"]},
+    }), encoding="utf-8")
+
+
 def test_live_gold_gate_uses_structured_retrieve_endpoint(tmp_path):
     dataset = tmp_path / "gold.json"
     write_dataset(dataset)
@@ -78,8 +91,28 @@ def test_live_gold_gate_uses_structured_retrieve_endpoint(tmp_path):
     assert check.status == "PASS"
     assert report["metrics"]["recall_at_k"] == 1.0
     assert report["metrics"]["evidence_coverage_rate"] == 1.0
-    assert report["runtime_tokenizer_versions"] == {"808d": ["unicode-domain-v1"]}
+    assert report["runtime_tokenizer_versions"] == {"808d": ["unicode-domain-v2"]}
     assert report["transport_errors"] == []
+
+
+def test_live_gold_gate_defaults_can_scope_to_development_without_calling_heldout(tmp_path):
+    dataset = tmp_path / "gold.json"
+    split = tmp_path / "split.json"
+    write_dataset(dataset)
+    write_split(split, dataset)
+
+    check, report = runtime.check_gold_retrieval(
+        FakeLiveClient(),
+        dataset,
+        top_k=5,
+        split_manifest_path=split,
+        scope="development",
+    )
+
+    assert check.status == "PASS"
+    assert report["scope"] == "development"
+    assert report["metrics"]["case_count"] == 1
+    assert [case["id"] for case in report["cases"]] == ["coolant"]
 
 
 def test_live_gold_gate_rejects_stale_runtime_tokenizer(tmp_path):
@@ -93,7 +126,7 @@ def test_live_gold_gate_rejects_stale_runtime_tokenizer(tmp_path):
     )
 
     assert check.status == "FAIL"
-    assert "expected=unicode-domain-v1" in report["transport_errors"][0]
+    assert "expected=unicode-domain-v2" in report["transport_errors"][0]
 
 
 def test_chat_gate_requires_structured_expected_citation():
@@ -104,7 +137,16 @@ def test_chat_gate_requires_structured_expected_citation():
                 "choices": [{"message": {"content": "A sufficiently detailed maintenance response."}}],
                 "rag": {
                     "answer_id": "chatcmpl_1",
-                    "citations": [{"code": "3000", "id": "ragcite_1"}],
+                    "citations": [{
+                        "code": "3000",
+                        "id": "ragcite_1",
+                        "source_id": "manual-v1",
+                        "source_file": "manual.pdf",
+                        "section_id": "manual-v1:s1",
+                        "locator": "p.58#alarm-3000",
+                        "source_hash": "a" * 64,
+                        "official_source": True,
+                    }],
                 },
             }
 
@@ -113,6 +155,57 @@ def test_chat_gate_requires_structured_expected_citation():
     assert check.status == "PASS"
     assert "citations=1" in check.detail
     assert "answer_id=True" in check.detail
+    assert "traceable=True" in check.detail
+
+
+def test_chat_gate_rejects_citation_without_traceability():
+    class ChatClient:
+        def request_json(self, _path, _method="GET", _payload=None):
+            return 200, {
+                "id": "chatcmpl_1",
+                "choices": [{"message": {"content": "A sufficiently detailed maintenance response."}}],
+                "rag": {"answer_id": "chatcmpl_1", "citations": [{"code": "3000"}]},
+            }
+
+    check = runtime.check_chat(ChatClient(), "808d", "Alarm 3000", "3000")
+
+    assert check.status == "FAIL"
+    assert "traceable=False" in check.detail
+
+
+def test_traceability_health_gate_requires_full_coverage():
+    health = {
+        "collections": {
+            "808d": {
+                "alarms_indexed": 2,
+                "traceability": {"traceable_sections": 2, "traceability_ready": True},
+            }
+        }
+    }
+    assert runtime.check_traceability_coverage(health).status == "PASS"
+    health["collections"]["808d"]["traceability"]["traceable_sections"] = 1
+    assert runtime.check_traceability_coverage(health).status == "FAIL"
+
+
+def test_answer_snapshot_provider_accepts_retrieval_and_rejects_missing_provider():
+    class SnapshotClient:
+        def __init__(self, provider):
+            self.provider = provider
+
+        def request_json(self, _path):
+            return 200, {
+                "answer": {
+                    "provider": self.provider,
+                    "answer_state": "complete",
+                }
+            }
+
+    check, provider = runtime.check_answer_snapshot_provider(SnapshotClient("retrieval"), "answer-1")
+    missing, _ = runtime.check_answer_snapshot_provider(SnapshotClient(""), "answer-2")
+
+    assert check.status == "PASS"
+    assert provider == "retrieval"
+    assert missing.status == "FAIL"
 
 
 def test_reranker_gate_requires_successful_runtime_inference():
@@ -140,6 +233,8 @@ def test_runtime_markdown_discloses_live_gate_boundary():
         "git_revision": "abc",
         "base_url": "http://localhost:8100",
         "gold_dataset": "mock_data/rag_gold_v1.json",
+        "gold_split_manifest": "mock_data/rag_evaluation_split_v1.json",
+        "gold_scope": "development",
         "checks": [{"name": "rag:gold-dataset", "status": "PASS", "detail": "ok"}],
         "gold_retrieval": {"metrics": {"recall_at_k": 1.0}},
     }
@@ -184,7 +279,16 @@ def test_stream_contract_requires_shared_answer_id_and_expected_citation():
             "choices": [{"delta": {"content": "answer"}, "finish_reason": None}],
             "rag": {
                 "answer_id": "chatcmpl_1",
-                "citations": [{"id": "ragcite_1", "code": "3000"}],
+                "citations": [{
+                    "id": "ragcite_1",
+                    "code": "3000",
+                    "source_id": "manual-v1",
+                    "source_file": "manual.pdf",
+                    "section_id": "manual-v1:s1",
+                    "locator": "p.58#alarm-3000",
+                    "source_hash": "b" * 64,
+                    "official_source": True,
+                }],
             },
         }),
         "data: " + json.dumps({
@@ -203,6 +307,7 @@ def test_stream_contract_requires_shared_answer_id_and_expected_citation():
         "ids": 1,
         "citations": 1,
         "expected_code": True,
+        "traceable": True,
         "answer_id": True,
         "done": True,
     }
@@ -219,7 +324,16 @@ def test_stream_gate_requires_multiple_content_events():
             if index == 0:
                 event["rag"] = {
                     "answer_id": "chatcmpl_1",
-                    "citations": [{"id": "ragcite_1", "code": "3000"}],
+                    "citations": [{
+                        "id": "ragcite_1",
+                        "code": "3000",
+                        "source_id": "manual-v1",
+                        "source_file": "manual.pdf",
+                        "section_id": "manual-v1:s1",
+                        "locator": "p.58#alarm-3000",
+                        "source_hash": "c" * 64,
+                        "official_source": True,
+                    }],
                 }
             events.append(f"data: {json.dumps(event)}\n\n")
         events.extend([
@@ -253,5 +367,6 @@ def test_stream_gate_requires_multiple_content_events():
 
     assert incremental.status == "PASS"
     assert "incremental=True" in incremental.detail
+    assert "traceable=True" in incremental.detail
     assert buffered.status == "FAIL"
     assert "incremental=False" in buffered.detail

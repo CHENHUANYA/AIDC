@@ -69,6 +69,8 @@ def test_excel_import_creates_missing_store_and_persists_each_valid_row_once(loc
     assert completed["status"] == "completed"
     assert completed["kb_review_status"] == "pending_review"
     assert completed["work_order_history"][-1]["action"] == "import_status_override"
+    assert completed["completed_by"] == "admin01"
+    assert completed["work_order_history"][-1]["user_id"] == "admin01"
     assert not [path for path in local_order_store.iterdir() if path.is_dir()]
 
 
@@ -87,6 +89,21 @@ def test_invalid_completed_postgres_import_never_persists_pending_artifact(local
     assert result["imported"] == 0
     assert result["skipped"] == 1
     save_one.assert_not_called()
+
+
+def test_imported_verified_status_requires_post_import_verification(local_order_store):
+    content = workbook_bytes([
+        ["alarm_code", "status", "root_cause", "repair_action", "resolution", "verified_by"],
+        ["2000", "verified", "sensor failed", "replaced sensor", "restored", "operator99"],
+    ])
+
+    result = asyncio.run(work_orders.import_excel(Upload("orders.xlsx", content), actor=ADMIN))
+    order = work_orders._load_orders()[0]
+
+    assert result["imported"] == 1
+    assert order["status"] == "completed"
+    assert order["verified_by"] == ""
+    assert order["completed_by"] == "admin01"
 
 
 def test_positional_import_reports_first_row_as_row_one(monkeypatch, local_order_store):

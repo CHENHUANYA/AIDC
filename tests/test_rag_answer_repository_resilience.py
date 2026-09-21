@@ -3,8 +3,11 @@ from datetime import datetime, timezone
 import json
 from unittest.mock import MagicMock, patch
 
+from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
+from db.base import Base
 from db.models import RagAnswer
 from repositories import rag_answers
 
@@ -73,6 +76,9 @@ def test_postgres_add_builds_record_and_treats_integrity_error_as_duplicate():
     @contextmanager
     def successful_scope():
         session = MagicMock()
+        session.get_bind.return_value.dialect.name = "sqlite"
+        session.scalars.return_value = []
+        session.execute.return_value.one.return_value = (0, 0, 0)
         session.add.side_effect = captured.append
         yield session
 
@@ -103,3 +109,25 @@ def test_postgres_add_builds_record_and_treats_integrity_error_as_duplicate():
 
     with patch.object(rag_answers, "session_scope", duplicate_scope):
         assert rag_answers.RagAnswerRepository._add_postgres(payload) is False
+
+
+def test_postgres_add_enforces_transactional_snapshot_quota(monkeypatch):
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    monkeypatch.setenv("ALARM_RAG_POSTGRES_ANSWER_MAX_RECORDS", "1")
+    monkeypatch.setenv("ALARM_RAG_POSTGRES_ANSWER_MAX_BYTES", "1048576")
+    monkeypatch.setenv("ALARM_RAG_POSTGRES_ANSWER_MAX_PER_USER", "10")
+
+    with Session(engine) as session:
+        @contextmanager
+        def scope():
+            yield session
+
+        first = {"answer_id": "answer-1", "answer": "first", "created_by": "operator01"}
+        second = {"answer_id": "answer-2", "answer": "second", "created_by": "operator01"}
+        with patch.object(rag_answers, "session_scope", scope):
+            assert rag_answers.RagAnswerRepository._add_postgres(first) is True
+            assert rag_answers.RagAnswerRepository._add_postgres(second) is False
+        stored = session.query(RagAnswer).one()
+        assert stored.answer_id == "answer-1"
+        assert stored.payload_bytes > 0

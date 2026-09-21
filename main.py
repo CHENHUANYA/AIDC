@@ -23,6 +23,10 @@ def load_dotenv_defaults(path: str = ".env") -> None:
 
 load_dotenv_defaults()
 
+from repositories.runtime import require_known_data_store
+
+require_known_data_store()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -41,6 +45,7 @@ from routes.settings_routes import router as settings_router
 from routes.static_reference_routes import router as static_reference_router
 from routes.stats_routes import router as stats_router
 from security_headers import SecurityHeadersMiddleware
+from security_limits import RequestBodyLimitMiddleware
 from work_orders import router as work_order_router
 
 
@@ -66,6 +71,9 @@ app.add_middleware(ApiContractMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+# Added last so this is the outermost application middleware and can reject
+# request bytes before multipart/JSON parsing allocates shared resources.
+app.add_middleware(RequestBodyLimitMiddleware)
 
 load_all_engines()
 

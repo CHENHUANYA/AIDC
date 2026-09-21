@@ -10,7 +10,7 @@ from rag_engine import AlarmRAGEngine
 def test_tokenizer_normalizes_unicode_and_adds_domain_aliases():
     tokens = tokenize_bm25("粗加工時冷卻液壓力過低，幫浦 READY 訊號消失")
 
-    assert BM25_TOKENIZER_VERSION == "unicode-domain-v1"
+    assert BM25_TOKENIZER_VERSION == "unicode-domain-v2"
     assert {"roughing", "coolant", "pressure", "low", "pump", "ready", "signal", "lost"} <= set(tokens)
     assert "冷卻" in tokens
 
@@ -36,6 +36,14 @@ def test_vector_query_expansion_appends_domain_aliases_once():
     } <= set(expanded.split())
 
 
+def test_tokenizer_adds_start_definition_and_escalation_aliases():
+    tokens = tokenize_bm25("PLC 尚未啟動，幾何軸重複定義，請走升級流程")
+
+    assert {"not", "started", "up"} <= set(tokens)
+    assert {"defined", "repeatedly"} <= set(tokens)
+    assert {"escalation", "contact", "service"} <= set(tokens)
+
+
 def test_runtime_retrieval_expands_chinese_query_for_legacy_english_index():
     sections = [
         {"text": "coolant pressure low pump ready signal lost", "code": "340100", "page": 1},
@@ -45,7 +53,7 @@ def test_runtime_retrieval_expands_chinese_query_for_legacy_english_index():
     engine = AlarmRAGEngine.__new__(AlarmRAGEngine)
     engine.collection_name = "demo"
     engine.sections = sections
-    # This deliberately models an index created before unicode-domain-v1.
+    # This deliberately models an index created before unicode-domain-v2.
     engine.bm25 = BM25Okapi([section["text"].lower().split() for section in sections])
     engine.ready = True
     engine.embedder = None

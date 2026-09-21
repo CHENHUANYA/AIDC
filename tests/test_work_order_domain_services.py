@@ -13,7 +13,7 @@ from services import (
 )
 
 
-def apply_issue_update(order, issue, *, validation_error="", transition_error="", note=""):
+def apply_issue_update(order, issue, *, validation_error="", transition_error="", note="", allow_reopen=False):
     history_calls = []
     result = work_order_issue_sync.apply_issue_update(
         order,
@@ -26,6 +26,7 @@ def apply_issue_update(order, issue, *, validation_error="", transition_error=""
         status_transition_error=lambda _previous, _next: transition_error,
         append_history=lambda *args: history_calls.append(args),
         calculate_field_changes=lambda _before, _after, fields: list(fields),
+        allow_reopen=allow_reopen,
     )
     return result, history_calls
 
@@ -86,6 +87,7 @@ def test_issue_sync_reopens_order_and_appends_operator_note():
         order,
         {"status": "open"},
         note="Inspect the spindle again",
+        allow_reopen=True,
     )
 
     assert result is order
@@ -94,6 +96,25 @@ def test_issue_sync_reopens_order_and_appends_operator_note():
     assert order["completed_at"] == ""
     assert order["notes"] == "Existing note\n[Operator follow-up] Inspect the spindle again"
     assert history_calls[0][3] == ["completed_at", "notes", "status", "verified_by"]
+
+
+def test_issue_sync_advances_json_revision():
+    order = {"id": "WO-1", "status": "completed", "version": 4}
+    history_calls = []
+    result = work_order_issue_sync.apply_issue_update(
+        order,
+        {"status": "verified"},
+        work_order_id="WO-1",
+        user_id="operator01",
+        note="",
+        now="2026-08-21T12:00:00",
+        validate_verification=lambda *_args: "",
+        status_transition_error=lambda *_args: "",
+        append_history=lambda *args: history_calls.append(args),
+        calculate_field_changes=lambda _before, _after, fields: list(fields),
+        increment_version=True,
+    )
+    assert result["version"] == 5
 
 
 def test_issue_sync_returns_unchanged_order_without_history():
@@ -200,6 +221,7 @@ def query_dependencies(order, *, linked_issue=None, issue_error=None):
         find_order=lambda _order_id: (-1, order),
         get_issue=get_issue,
         can_view=lambda actor, _order, issue: actor.get("role") == "admin" or issue is not None,
+        can_view_issue=lambda actor, _issue: actor.get("role") == "admin",
         history_list=lambda payload, field: list((payload or {}).get(field, [])),
         logger=logger,
     )
@@ -222,6 +244,33 @@ def test_work_order_queries_return_detail_and_combined_history():
     assert history["work_order_history"] == [{"action": "created"}]
     assert history["issue_history"] == [{"action": "linked"}]
     assert get_issue.call_count == 2
+
+
+def test_work_order_history_hides_issue_history_without_independent_issue_access():
+    order = {"id": "WO-1", "issue_id": "ISS-HIDDEN", "work_order_history": []}
+    issue = {"issue_id": "ISS-HIDDEN", "issue_history": [{"action": "secret"}]}
+    dependencies, _get_issue, _logger = query_dependencies(order, linked_issue=issue)
+
+    history = work_order_queries.get_history_response(
+        "WO-1",
+        {"role": "maintenance"},
+        dependencies,
+    )
+
+    assert history["status"] == "ok"
+    assert history["issue_id"] == ""
+    assert history["issue_history"] == []
+
+
+def test_work_order_queries_treat_soft_deleted_order_as_missing():
+    order = {"id": "WO-1", "deleted_at": "2026-09-02T00:00:00+00:00"}
+    dependencies, _get_issue, _logger = query_dependencies(order)
+
+    detail = work_order_queries.get_order_response("WO-1", {"role": "admin"}, dependencies)
+    history = work_order_queries.get_history_response("WO-1", {"role": "admin"}, dependencies)
+
+    assert detail == {"status": "error", "message": "Work order WO-1 not found"}
+    assert history == {"status": "error", "message": "Work order WO-1 not found"}
 
 
 def test_work_order_queries_fail_closed_when_linked_issue_lookup_fails():

@@ -1,5 +1,6 @@
 import asyncio
 import faulthandler
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -71,6 +72,8 @@ def patch_issue(issue_id: str, **kwargs):
 
 
 def main():
+    # This is a local JSON consistency check, even on PostgreSQL deployments.
+    os.environ["DATA_STORE"] = "json"
     tmp_path = ROOT / "alarm_db" / "__closure_sync_check__"
     shutil.rmtree(tmp_path, ignore_errors=True)
     tmp_path.mkdir(parents=True, exist_ok=True)

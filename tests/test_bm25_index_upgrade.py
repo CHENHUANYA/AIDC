@@ -1,10 +1,9 @@
-import pickle
-
 import pytest
 from rank_bm25 import BM25Okapi
 
 from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
 from scripts import bm25_index_upgrade as upgrade
+from signed_pickle import dump_signed_pickle, load_signed_pickle
 
 
 def write_legacy_index(path, sections):
@@ -12,13 +11,11 @@ def write_legacy_index(path, sections):
         "sections": sections,
         "bm25": BM25Okapi([section["text"].lower().split() for section in sections]),
     }
-    with path.open("wb") as file:
-        pickle.dump(payload, file)
+    dump_signed_pickle(path, payload)
 
 
 def read_index(path):
-    with path.open("rb") as file:
-        return pickle.load(file)
+    return load_signed_pickle(path)
 
 
 def sample_sections():
@@ -71,8 +68,7 @@ def test_current_index_is_idempotent_without_force(tmp_path):
         "sections": sections,
         "bm25": BM25Okapi([section["text"].split() for section in sections]),
     })
-    with path.open("wb") as file:
-        pickle.dump(payload, file)
+    dump_signed_pickle(path, payload)
 
     report = upgrade.upgrade_indexes([path], apply=True, force=False, backup_root=backup_root)
 
@@ -83,8 +79,10 @@ def test_current_index_is_idempotent_without_force(tmp_path):
 
 def test_invalid_index_is_rejected(tmp_path):
     path = tmp_path / "bm25_bad.pkl"
-    with path.open("wb") as file:
-        pickle.dump({"sections": [{"text": "one"}, {"text": "two"}], "bm25": BM25Okapi([["one"]])}, file)
+    dump_signed_pickle(
+        path,
+        {"sections": [{"text": "one"}, {"text": "two"}], "bm25": BM25Okapi([["one"]])},
+    )
 
     with pytest.raises(upgrade.IndexUpgradeError, match="count mismatch"):
         upgrade.load_trusted_index(path)
@@ -113,7 +111,7 @@ def test_batch_failure_restores_every_original_index(tmp_path, monkeypatch):
     assert [upgrade.sha256_file(path) for path in paths] == original_hashes
 
 
-def test_markdown_report_discloses_trusted_pickle_boundary():
+def test_markdown_report_discloses_authenticated_pickle_boundary():
     report = {
         "status": "pass",
         "mode": "dry-run",
@@ -125,8 +123,7 @@ def test_markdown_report_discloses_trusted_pickle_boundary():
 
     text = upgrade.markdown_report(report)
 
-    assert "trusted, locally generated pickle" in text
-    assert "Never use it with an untrusted pickle" in text
+    assert "HMAC-authenticated, locally generated pickle" in text
 
 
 def test_report_path_is_relative_for_repository_files():

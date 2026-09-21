@@ -16,6 +16,7 @@ EXAMPLE_PATH = ROOT / ".env.example"
 PLACEHOLDERS = {
     "ADMIN_INITIAL_PASSWORD": "change-me-now",
     "ALARM_RAG_TRIGGER_TOKEN": "replace-with-a-random-trigger-token",
+    "ALARM_RAG_INDEX_SIGNING_KEY": "replace-with-a-long-random-index-signing-key",
     "N8N_ENCRYPTION_KEY": "replace-with-a-long-random-string",
     "QDRANT_API_KEY": "replace-with-a-long-random-qdrant-api-key",
 }
@@ -85,11 +86,20 @@ def reset_password_for_users(user_ids: list[str], password: str) -> list[str]:
             continue
         user["password_hash"] = hash_password(password)
         user["active"] = True
+        try:
+            user["credential_epoch"] = max(int(user.get("credential_epoch") or 1), 1) + 1
+        except (TypeError, ValueError):
+            user["credential_epoch"] = 2
+        user["must_change_password"] = False
         updated.append(user_id)
     if not updated:
         return []
     for user_id in updated:
-        save_user(user_id, users[user_id])
+        save_user(
+            user_id,
+            users[user_id],
+            expected_updated_at=str(users[user_id].get("updated_at") or "") or None,
+        )
         revoke_user_sessions(user_id)
     return updated
 

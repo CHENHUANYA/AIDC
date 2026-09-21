@@ -8,6 +8,8 @@ MUTATION_METHODS = {"post", "patch", "delete", "put"}
 MUTATION_AUTH_EXCEPTIONS = {
     ("auth.py", "login"),
     ("auth.py", "logout"),
+    # Credential-gated enrollment endpoint intentionally precedes session issuance.
+    ("auth.py", "change_initial_password"),
 }
 PUBLIC_GET_EXCEPTIONS = {
     ("auth.py", "login_config"),

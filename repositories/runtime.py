@@ -11,7 +11,7 @@ def configured_data_store() -> str:
 
 
 def postgres_store_enabled() -> bool:
-    return configured_data_store() in POSTGRES_STORE_NAMES
+    return require_known_data_store() in POSTGRES_STORE_NAMES
 
 
 def require_known_data_store() -> str:

@@ -24,7 +24,16 @@ boundary.
 Use [../deploy/nginx/alarm-rag-postgresql-tls.conf](../../deploy/nginx/alarm-rag-postgresql-tls.conf)
 as the starting point for TLS termination. The sample listens on `443`, proxies
 only to `http://127.0.0.1:8100`, preserves forwarding headers, and includes a
-dedicated `/ready` proxy path for external uptime monitoring.
+dedicated exact-match `/ready` proxy path for external uptime monitoring. That
+path applies per-source and aggregate request and connection limits. The app
+also coalesces simultaneous deep probes and caches their result for
+`ALARM_RAG_READINESS_CACHE_SECONDS` (two seconds by default).
+
+The `limit_req_zone` and `limit_conn_zone` declarations must be loaded in the
+Nginx `http` context. When copying only the `server` block into another layout,
+copy those declarations into that deployment's `http` block as well. If a load
+balancer sits in front of Nginx, configure `real_ip` only for trusted proxy
+addresses before relying on the per-source limits.
 
 ## Boundary Change Checklist
 
@@ -35,6 +44,8 @@ dedicated `/ready` proxy path for external uptime monitoring.
   private-network exception uses HTTP, add only the exact host to
   `QDRANT_INSECURE_TRUSTED_HOSTS` and retain firewall evidence with the review.
 - Verify `/ready` returns HTTP 200 through the boundary after deployment.
+- Send a controlled burst to `/ready` and verify excess requests return HTTP
+  429 while ordinary application traffic remains healthy.
 - Confirm direct loopback checks still work:
   `curl -fsS http://127.0.0.1:8100/ready`.
 - Capture `docker compose config` output with secrets redacted.

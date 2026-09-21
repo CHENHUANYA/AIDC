@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 from config_values import env_float, env_int
 from bm25_text import expand_query_with_domain_aliases
 from rag_engine import AlarmRAGEngine, extract_alarm_codes
+from repositories.runtime import postgres_store_enabled
 from secret_values import secret_value
 from storage import (
     ALARM_LOG_PATH,
@@ -150,6 +151,7 @@ class AlarmTrigger(BaseModel):
     alarm_code: str = Field(min_length=1, max_length=128)
     manual: Optional[str] = Field(default="808d", max_length=64)
     machine_id: Optional[str] = Field(default=None, max_length=255)
+    line_id: Optional[str] = Field(default=None, max_length=128)
     source: Optional[str] = Field(default="API", max_length=128)
     external_event_id: Optional[str] = Field(default=None, max_length=255)
     severity: Optional[str] = Field(default=None, max_length=32)
@@ -184,7 +186,8 @@ class IngestTextRequest(BaseModel):
 
 engines: Dict[str, AlarmRAGEngine] = {}
 pending_alarms: list[dict] = []
-alarm_history: list[dict] = read_jsonl(ALARM_LOG_PATH, limit=1000)
+# PostgreSQL routes query alarm_events directly; legacy history is JSON-only.
+alarm_history: list[dict] = [] if postgres_store_enabled() else read_jsonl(ALARM_LOG_PATH, limit=1000)
 ingest_log: list[dict] = read_jsonl(INGEST_LOG_PATH, limit=500)
 query_log: list[dict] = read_jsonl(QUERY_LOG_PATH, limit=500)
 error_log: list[dict] = read_jsonl(ERROR_LOG_PATH, limit=500)
@@ -608,7 +611,7 @@ def retrieval_citations(collection: str, docs: list[dict]) -> list[dict]:
         text = str(doc.get("text") or "")
         identity = "\x1f".join([
             collection,
-            str(meta.get("doc_id") or ""),
+            str(meta.get("section_id") or meta.get("doc_id") or ""),
             str(meta.get("source") or meta.get("source_file") or ""),
             str(meta.get("code") or ""),
             str(meta.get("page") or ""),
@@ -622,7 +625,15 @@ def retrieval_citations(collection: str, docs: list[dict]) -> list[dict]:
             "page": meta.get("page", ""),
             "source": str(meta.get("source") or ""),
             "source_file": str(meta.get("source_file") or ""),
+            "source_hash": str(meta.get("source_hash") or ""),
             "doc_id": str(meta.get("doc_id") or ""),
+            "source_id": str(meta.get("source_id") or meta.get("doc_id") or ""),
+            "section_id": str(meta.get("section_id") or ""),
+            "locator": str(meta.get("locator") or ""),
+            "official_source": bool(meta.get("official_source", False)),
+            "publisher": str(meta.get("publisher") or ""),
+            "document_title": str(meta.get("document_title") or ""),
+            "edition": str(meta.get("edition") or ""),
             "kind": str(meta.get("kind") or meta.get("type") or ""),
             "excerpt": re.sub(r"\s+", " ", text).strip()[:300],
         })
@@ -777,4 +788,8 @@ def log_query(collection: str, query: str, source: str = "web", elapsed_ms: int 
     query_log.append(entry)
     if len(query_log) > 500:
         query_log.pop(0)
-    append_jsonl(QUERY_LOG_PATH, entry)
+    append_jsonl(
+        QUERY_LOG_PATH,
+        entry,
+        max_records=env_int("ALARM_RAG_QUERY_LOG_MAX_RECORDS", 5000, minimum=1, maximum=1_000_000),
+    )

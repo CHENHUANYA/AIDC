@@ -3,7 +3,6 @@ rag_engine.py - Multi-manual RAG engine with pluggable vector backends.
 """
 
 import os
-import pickle
 import re
 import threading
 from typing import List
@@ -19,6 +18,7 @@ from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from bm25_text import BM25_TOKENIZER_VERSION, tokenize_bm25
 from config_values import env_int
+from signed_pickle import dump_signed_pickle, load_signed_pickle, signature_path
 from vector_store import get_store
 
 ALARM_LABEL_PATTERN = re.compile(
@@ -40,10 +40,23 @@ OFFLINE_MODEL_ERROR = (
 )
 VECTOR_STORE_ERROR = (
     "Vector store is not available. Continuing with BM25-only retrieval; "
-    "start qdrant or set VECTOR_STORE=chroma to enable vector search."
+    "start qdrant to enable vector search."
 )
 VECTOR_HYDRATE_ON_LOAD = os.getenv("RAG_VECTOR_HYDRATE_ON_LOAD", "false").strip().lower() in {"1", "true", "yes", "on"}
 VECTOR_REBUILD_BATCH_SIZE = env_int("RAG_VECTOR_REBUILD_BATCH_SIZE", 64, minimum=1)
+VALID_RETRIEVAL_STRATEGIES = {"hybrid", "title_bm25"}
+
+
+def configured_retrieval_strategy() -> str:
+    value = os.getenv("RAG_RETRIEVAL_STRATEGY", "hybrid").strip().casefold()
+    return value if value in VALID_RETRIEVAL_STRATEGIES else "hybrid"
+
+
+def _section_title(section: dict) -> str:
+    title = str(section.get("title") or "").strip()
+    if title:
+        return title
+    return str(section.get("text") or "").split("\n", 1)[0].strip()
 
 
 def extract_alarm_codes(query: str) -> list[str]:
@@ -202,13 +215,17 @@ class AlarmRAGEngine:
         self.collection_name = collection_name
         self.store = get_store()
         self.bm25: BM25Okapi | None = None
+        self.title_bm25: BM25Okapi | None = None
         self.sections: List[dict] = []
+        self._code_index: dict[str, dict] = {}
+        self._code_index_size: int = 0
         self.tokenizer_version: str = "none"
         self.ready: bool = False
         self.next_id: int = 0
         self.reranker_calls: int = 0
         self.last_reranker_error: str = ""
         self.last_retrieval_mode: str = "none"
+        self.retrieval_strategy: str = configured_retrieval_strategy()
 
         self.embedder, self.reranker = _try_get_models()
         self.model_error = "" if self.embedder else OFFLINE_MODEL_ERROR
@@ -224,7 +241,24 @@ class AlarmRAGEngine:
             and not getattr(self, "last_reranker_error", ""),
             "last_reranker_error": getattr(self, "last_reranker_error", ""),
             "last_retrieval_mode": getattr(self, "last_retrieval_mode", "none"),
+            "retrieval_strategy": getattr(self, "retrieval_strategy", "hybrid"),
         }
+
+    def _refresh_title_bm25(self) -> None:
+        self.title_bm25 = (
+            BM25Okapi([tokenize_bm25(_section_title(section)) for section in self.sections])
+            if self.sections
+            else None
+        )
+
+    def _refresh_code_index(self) -> None:
+        index: dict[str, dict] = {}
+        for section in self.sections:
+            code = str(section.get("code") or "")
+            if code and code not in index and _is_manual_alarm_match(section, code):
+                index[code] = section
+        self._code_index = index
+        self._code_index_size = len(self.sections)
 
     def _try_load_index(self):
         pkl_path = f"{DB_PATH}/bm25_{self.collection_name}.pkl"
@@ -236,10 +270,11 @@ class AlarmRAGEngine:
             )
             return
         try:
-            with open(pkl_path, "rb") as f:
-                data = pickle.load(f)
+            data = load_signed_pickle(pkl_path)
             self.bm25 = data["bm25"]
             self.sections = data["sections"]
+            self._refresh_title_bm25()
+            self._refresh_code_index()
             self.tokenizer_version = str(data.get("tokenizer_version") or "legacy-whitespace-v0")
             self.next_id = len(self.sections)
             try:
@@ -279,6 +314,22 @@ class AlarmRAGEngine:
             "vector_coverage_percent": percent,
             "vector_ready": total > 0 and points >= total,
             "vector_error": error,
+        }
+
+    def traceability_coverage(self) -> dict:
+        total = len(self.sections)
+        required = ("source_id", "source_file", "section_id", "locator")
+        traceable = sum(
+            all(section.get(field) not in (None, "") for field in required)
+            for section in self.sections
+        )
+        official = sum(section.get("official_source") is True for section in self.sections)
+        return {
+            "traceable_sections": traceable,
+            "traceability_coverage_percent": 100 if total == 0 else round(traceable * 100 / total, 2),
+            "official_source_sections": official,
+            "other_source_sections": total - official,
+            "traceability_ready": total > 0 and traceable == total,
         }
 
     def _replace_vector_store(self):
@@ -327,6 +378,7 @@ class AlarmRAGEngine:
             os.remove(pkl_path)
         except FileNotFoundError:
             pass
+        signature_path(pkl_path).unlink(missing_ok=True)
         try:
             self.store.delete_collection(self.collection_name)
         except Exception:
@@ -336,7 +388,10 @@ class AlarmRAGEngine:
         except Exception as exc:
             print(f"[WARN][{self.collection_name}] {VECTOR_STORE_ERROR} Detail: {exc}")
         self.sections = []
+        self._code_index = {}
+        self._code_index_size = 0
         self.bm25 = None
+        self.title_bm25 = None
         self.tokenizer_version = "none"
         self.next_id = 0
         self.ready = False
@@ -346,31 +401,9 @@ class AlarmRAGEngine:
         code_clean = re.sub(r"\D", "", code or "")
         if not code_clean or not self.sections:
             return None
-
-        if self.embedder is not None:
-            try:
-                results = self.store.query(
-                    collection=self.collection_name,
-                    query_embeddings=self.embedder.encode([code_clean]).tolist(),
-                    n_results=min(20, len(self.sections)),
-                    where={"code": {"$eq": code_clean}},
-                )
-                docs = results.get("documents", [[]])[0]
-                metas = results.get("metadatas", [[]])[0]
-                match = next(
-                    (
-                        {"text": doc, "meta": meta}
-                        for doc, meta in zip(docs, metas)
-                        if _is_manual_alarm_match(meta, code_clean)
-                    ),
-                    None,
-                )
-                if match:
-                    return match
-            except Exception as exc:
-                print(f"Metadata query error: {exc}")
-
-        section = next((item for item in self.sections if _is_manual_alarm_match(item, code_clean)), None)
+        if getattr(self, "_code_index_size", -1) != len(self.sections):
+            self._refresh_code_index()
+        section = self._code_index.get(code_clean)
         if not section:
             return None
         return {"text": section.get("text", ""), "meta": {key: value for key, value in section.items() if key != "text"}}
@@ -389,17 +422,18 @@ class AlarmRAGEngine:
 
     def _persist_bm25_index(self, texts: List[str]):
         self.bm25 = BM25Okapi([tokenize_bm25(text) for text in texts])
+        self._refresh_title_bm25()
+        self._refresh_code_index()
         self.tokenizer_version = BM25_TOKENIZER_VERSION
         pkl_path = f"{DB_PATH}/bm25_{self.collection_name}.pkl"
-        with open(pkl_path, "wb") as f:
-            pickle.dump(
-                {
-                    "bm25": self.bm25,
-                    "sections": self.sections,
-                    "tokenizer_version": BM25_TOKENIZER_VERSION,
-                },
-                f,
-            )
+        dump_signed_pickle(
+            pkl_path,
+            {
+                "bm25": self.bm25,
+                "sections": self.sections,
+                "tokenizer_version": BM25_TOKENIZER_VERSION,
+            },
+        )
 
     def _valid_section_indexes_from_ids(self, ids: List[str]) -> List[int]:
         indexes = []
@@ -556,6 +590,20 @@ class AlarmRAGEngine:
         tokens = tokenize_bm25(query)
         bm25_scores = self.bm25.get_scores(tokens)
         bm25_top20 = np.argsort(bm25_scores)[::-1][:20].tolist()
+
+        # Keep the field-aware alarm-title strategy explicit so the general
+        # Hybrid behavior remains available for procedural/document queries.
+        if getattr(self, "retrieval_strategy", "hybrid") == "title_bm25":
+            if getattr(self, "title_bm25", None) is None:
+                self._refresh_title_bm25()
+            if self.title_bm25 is not None:
+                title_scores = self.title_bm25.get_scores(tokens)
+                title_indexes = np.argsort(title_scores)[::-1][:top_k].tolist()
+                self.last_retrieval_mode = "title-bm25"
+                return [
+                    {"text": self.sections[index]["text"], "meta": self.sections[index]}
+                    for index in title_indexes
+                ]
 
         if self.embedder is None:
             self.last_retrieval_mode = "bm25"
