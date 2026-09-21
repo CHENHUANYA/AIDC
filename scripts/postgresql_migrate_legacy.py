@@ -458,6 +458,33 @@ def import_settings(keys: list[str], settings: dict) -> None:
             session.add(SystemSetting(key=key, value=settings[key], updated_by_ref="legacy-import"))
 
 
+def import_workflow_records(issues: list[dict], orders: list[dict]) -> None:
+    """Insert legacy workflows without treating source revisions as update tokens."""
+    for records, model, key, column, repository in (
+        (issues, Issue, "issue_id", Issue.issue_no, PostgresIssueRepository()),
+        (orders, WorkOrder, "id", WorkOrder.work_order_no, PostgresWorkOrderRepository()),
+    ):
+        if not records:
+            continue
+        by_key = {str(item[key]): item for item in records}
+        with session_scope() as session:
+            if session.scalar(select(column).where(column.in_(by_key)).limit(1)) is not None:
+                raise RuntimeError("Workflow migration plan is stale; rebuild it before importing")
+            repository.save_all([
+                {field: value for field, value in item.items() if field != "version"}
+                for item in records
+            ])
+            session.flush()
+            for record in session.scalars(select(model).where(column.in_(by_key))).all():
+                payload = by_key[getattr(record, column.key)]
+                record.version = max(int(payload.get("version") or 1), 1)
+                for field in ("created_at", "updated_at"):
+                    timestamp = parse_datetime(payload.get(field))
+                    if timestamp is not None:
+                        setattr(record, field, timestamp)
+            session.flush()
+
+
 def apply_plan(source: dict, plan: dict) -> None:
     with transaction_scope():
         with session_scope() as session:
@@ -466,10 +493,7 @@ def apply_plan(source: dict, plan: dict) -> None:
         if users:
             PostgresUserRepository().save_all(users)
         import_rag_answers(plan["rag_answers"]["insert_records"])
-        if plan["issues"]["insert_records"]:
-            PostgresIssueRepository().save_all(plan["issues"]["insert_records"])
-        if plan["work_orders"]["insert_records"]:
-            PostgresWorkOrderRepository().save_all(plan["work_orders"]["insert_records"])
+        import_workflow_records(plan["issues"]["insert_records"], plan["work_orders"]["insert_records"])
         import_alarms(plan["alarms"]["insert_records"])
         import_feedback(plan["feedback"]["insert_records"])
         import_documents(plan["documents"]["insert_records"])

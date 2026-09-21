@@ -16,6 +16,10 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from env_utils import load_project_env
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from repositories.runtime import postgres_store_enabled
+
 load_project_env()
 DB_DIR = ROOT / "alarm_db"
 EXPORT_DIR = ROOT / "exports"
@@ -306,7 +310,17 @@ def cleanup_retention(retention_days: int, dry_run: bool = False) -> int:
     return removed
 
 
+def require_json_store(command: str) -> None:
+    if postgres_store_enabled():
+        raise SystemExit(
+            f"{command} only supports legacy JSON storage; DATA_STORE=postgresql. "
+            "Use the application APIs for business changes and "
+            "scripts/postgresql_maintenance.py for PostgreSQL maintenance. No files were changed."
+        )
+
+
 def reset_stats(args: argparse.Namespace) -> None:
+    require_json_store("reset-stats")
     paths = [LOG_FILES[name] for name in ["alarms", "queries", "errors", "feedback"]]
     if args.dry_run:
         print(f"Would clear: {[str(path) for path in paths]}")
@@ -318,6 +332,7 @@ def reset_stats(args: argparse.Namespace) -> None:
 
 
 def reset_demo(args: argparse.Namespace) -> None:
+    require_json_store("reset-demo")
     paths = [
         LOG_FILES["alarms"],
         LOG_FILES["queries"],
@@ -339,7 +354,12 @@ def reset_demo(args: argparse.Namespace) -> None:
 
 def export_work_orders(args: argparse.Namespace) -> None:
     ensure_dirs()
-    orders = load_json(WORK_ORDERS_FILE, [])
+    if postgres_store_enabled():
+        from repositories.postgres_workflow import PostgresWorkOrderRepository
+
+        orders = PostgresWorkOrderRepository().load_all()
+    else:
+        orders = load_json(WORK_ORDERS_FILE, [])
     if not isinstance(orders, list):
         orders = []
     output = Path(args.output) if args.output else EXPORT_DIR / f"work_orders_{timestamp()}.{args.format}"
@@ -380,6 +400,7 @@ def parse_dt(value: Any) -> datetime | None:
 
 
 def archive_work_orders(args: argparse.Namespace) -> None:
+    require_json_store("archive-work-orders")
     ensure_dirs()
     orders = load_json(WORK_ORDERS_FILE, [])
     if not isinstance(orders, list):
@@ -425,6 +446,8 @@ def backup_runtime(args: argparse.Namespace) -> None:
     ensure_dirs()
     backup_path = next_available_backup_path(product_backup_name())
     manifest = {
+        "data_store": "postgresql" if postgres_store_enabled() else "json",
+        "includes_postgresql_database": False,
         "created_at": datetime.now().isoformat(),
         "include_hf_cache": args.include_hf_cache,
         "include_mock_data": args.include_mock_data,
@@ -466,6 +489,8 @@ def backup_runtime(args: argparse.Namespace) -> None:
     write_json(backup_path / "data_manifest.json", manifest)
     removed = cleanup_retention(args.retention_days)
     print(f"Runtime backup written to {backup_path}. Retention removed {removed} old backup(s).")
+    if postgres_store_enabled():
+        print("This backup contains files only. Back up PostgreSQL with scripts/postgresql_backup.py.")
 
 
 def restore_runtime(args: argparse.Namespace) -> None:
@@ -724,11 +749,27 @@ def backup_health(args: argparse.Namespace) -> None:
 
 
 def runtime_data_report() -> dict:
-    json_files = {
+    postgres = postgres_store_enabled()
+    database = {}
+    if postgres:
+        from sqlalchemy import func, select
+        from db.base import Base
+        from db import models  # Register the application tables.
+        from db.session import session_scope
+
+        with session_scope() as session:
+            database = {
+                table.name: int(session.scalar(select(func.count()).select_from(table)) or 0)
+                for table in Base.metadata.sorted_tables
+            }
+    json_files = {} if postgres else {
         "work_orders": inspect_json_file(WORK_ORDERS_FILE, list),
         "issues": inspect_json_file(ISSUES_FILE, list),
     }
-    jsonl_files = {name: inspect_jsonl_file(path) for name, path in LOG_FILES.items()}
+    jsonl_files = {
+        name: inspect_jsonl_file(path) for name, path in LOG_FILES.items()
+        if not postgres or name not in {"alarms", "feedback"}
+    }
     archives = inspect_archive_dir(ARCHIVE_DIR)
     totals = {
         "json_records": sum(item["records"] for item in json_files.values() if item["valid"] and item["type_ok"]),
@@ -739,6 +780,8 @@ def runtime_data_report() -> dict:
         "archive_invalid_files": archives["invalid_files"],
     }
     return {
+        "data_store": "postgresql" if postgres else "json",
+        "database_tables": database,
         "json_files": json_files,
         "jsonl_files": jsonl_files,
         "archives": archives,
@@ -748,6 +791,8 @@ def runtime_data_report() -> dict:
 
 def runtime_data_checks(report: dict, max_invalid_jsonl_lines: int, max_archive_files: int) -> list[dict]:
     checks = []
+    for name, count in report.get("database_tables", {}).items():
+        checks.append({"name": f"postgresql:{name}", "status": "PASS", "detail": f"records={count}"})
     for name, item in report["json_files"].items():
         checks.append({
             "name": f"json:{name}",
@@ -800,6 +845,7 @@ def audit_runtime_data(args: argparse.Namespace) -> None:
         totals = report["totals"]
         print(
             "records="
+            f"postgresql:{sum(report.get('database_tables', {}).values())} "
             f"json:{totals['json_records']} "
             f"jsonl:{totals['jsonl_records']} "
             f"archive:{totals['archive_records']}"

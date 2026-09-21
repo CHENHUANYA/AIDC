@@ -23,6 +23,10 @@ def load_dotenv_defaults(path: str = ".env") -> None:
 
 load_dotenv_defaults()
 
+from repositories.runtime import require_known_data_store
+
+require_known_data_store()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

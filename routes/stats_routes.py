@@ -1,8 +1,10 @@
+import asyncio
 import logging
 import math
 import os
 import re
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Dict
 
 import numpy as np
@@ -43,7 +45,7 @@ from auth import (
     api_error,
     get_actor,
 )
-from config_values import env_int
+from config_values import env_float, env_int
 from db.session import get_engine
 from observability import runtime_metrics
 from rag_engine import model_cache_status
@@ -61,6 +63,9 @@ postgres_alarms = PostgresAlarmRepository()
 postgres_feedback = PostgresFeedbackRepository()
 rag_answers = RagAnswerRepository()
 feedback_usage_guard = AIUsageGuard("ALARM_RAG_FEEDBACK")
+_readiness_cache_value: tuple[str, str] | None = None
+_readiness_cache_expires_at = 0.0
+_readiness_probe_task: asyncio.Task[tuple[str, str]] | None = None
 
 
 @router.get(
@@ -480,7 +485,7 @@ async def health_details(actor: dict = Depends(get_actor)):
     responses={503: {"model": ReadyUnavailableResponse, "description": "Required dependency unavailable"}},
 )
 async def ready():
-    database_status, vector_store_status = await run_in_threadpool(_readiness_statuses)
+    database_status, vector_store_status = await _cached_readiness_statuses()
     checks = {
         "database": database_status,
         "vector_store": vector_store_status,
@@ -491,6 +496,45 @@ async def ready():
             content={"status": "unavailable", "checks": checks},
         )
     return {"status": "ok", "checks": checks}
+
+
+async def _cached_readiness_statuses() -> tuple[str, str]:
+    """Share one short-lived dependency probe between concurrent callers."""
+    global _readiness_probe_task
+
+    if _readiness_cache_value is not None and monotonic() < _readiness_cache_expires_at:
+        return _readiness_cache_value
+
+    # There is no await between inspecting and assigning the task, so callers on
+    # this worker's event loop cannot create duplicate dependency probes.
+    task = _readiness_probe_task
+    if task is None or task.done():
+        task = asyncio.create_task(_refresh_readiness_cache())
+        _readiness_probe_task = task
+
+    # A disconnected client must not cancel the shared probe for other callers.
+    return await asyncio.shield(task)
+
+
+async def _refresh_readiness_cache() -> tuple[str, str]:
+    global _readiness_cache_value, _readiness_cache_expires_at
+
+    statuses = await run_in_threadpool(_readiness_statuses)
+    ttl = env_float("ALARM_RAG_READINESS_CACHE_SECONDS", 2.0, minimum=0.1, maximum=30.0)
+    if not math.isfinite(ttl):
+        ttl = 2.0
+    _readiness_cache_value = statuses
+    _readiness_cache_expires_at = monotonic() + ttl
+    return statuses
+
+
+def _reset_readiness_cache() -> None:
+    """Clear process-local readiness state for controlled reloads and tests."""
+    global _readiness_cache_value, _readiness_cache_expires_at, _readiness_probe_task
+
+    _readiness_cache_value = None
+    _readiness_cache_expires_at = 0.0
+    _readiness_probe_task = None
 
 
 def _readiness_statuses() -> tuple[str, str]:

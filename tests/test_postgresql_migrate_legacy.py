@@ -1,17 +1,54 @@
 import json
 from pathlib import Path
 
+import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+
+from db import session as database_session
+from db.base import Base
+from db.models import Issue, WorkOrder
 from scripts.postgresql_migrate_legacy import (
     build_plan,
     occurrence_keys,
     partition_records,
     source_snapshot,
     user_projection,
+    import_workflow_records,
+    normalized_datetime,
 )
 
 
 def write_json(path: Path, payload) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_import_workflows_preserves_legacy_versions_dates_and_links(monkeypatch):
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(database_session, "_session_factory", sessionmaker(bind=engine, autoflush=False))
+    issue = {"issue_id": "ISS-OLD", "machine_id": "M1", "description": "Alarm", "version": 9,
+             "created_at": "2026-07-01T01:00:00Z", "updated_at": "2026-08-01T02:00:00Z"}
+    order = {"id": "WO-OLD", "issue_id": "ISS-OLD", "alarm_code": "3000", "version": 12,
+             "created_at": "2026-07-02T01:00:00Z", "updated_at": "2026-08-02T02:00:00Z"}
+    try:
+        with database_session.transaction_scope():
+            import_workflow_records([issue], [order])
+        with database_session.session_scope() as session:
+            saved_issue = session.scalar(select(Issue))
+            saved_order = session.scalar(select(WorkOrder))
+            assert saved_order.issue_id == saved_issue.id
+            for saved, payload in ((saved_issue, issue), (saved_order, order)):
+                assert saved.version == payload["version"]
+                for field in ("created_at", "updated_at"):
+                    assert normalized_datetime(getattr(saved, field)) == normalized_datetime(payload[field])
+        with pytest.raises(RuntimeError, match="plan is stale"):
+            with database_session.transaction_scope():
+                import_workflow_records([{**issue, "description": "must not overwrite"}], [])
+        with database_session.session_scope() as session:
+            assert session.scalar(select(Issue.description)) == "Alarm"
+    finally:
+        engine.dispose()
 
 
 def test_occurrence_keys_are_stable_and_preserve_identical_duplicates():

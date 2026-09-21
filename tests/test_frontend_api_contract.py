@@ -176,7 +176,7 @@ class FrontendApiContractTests(unittest.TestCase):
         self.assertIn("answer_id: entry.answer_id", admin)
         self.assertIn("answer_id: order.rag_answer_id", admin)
         self.assertIn("'answer_id'", admin)
-        self.assertIn("Answer ${app.esc(item.answer_id)}", admin)
+        self.assertIn("回答編號：${app.esc(item.answer_id)}", admin)
 
     def test_supervisor_and_admin_share_read_only_answer_snapshot_panel(self):
         answer_trace = (ROOT / "static" / "js" / "modules" / "answer_trace.js").read_text(encoding="utf-8")

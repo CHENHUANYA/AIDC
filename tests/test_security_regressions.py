@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -300,6 +301,7 @@ def test_postgresql_single_user_save_does_not_load_or_rewrite_other_accounts():
 
 
 def test_readiness_returns_503_when_postgresql_is_unavailable():
+    stats_routes._reset_readiness_cache()
     with (
         patch.object(stats_routes, "postgres_store_enabled", return_value=True),
         patch.object(stats_routes, "get_engine", side_effect=RuntimeError("db down")),
@@ -315,6 +317,7 @@ def test_readiness_returns_503_when_postgresql_is_unavailable():
 
 
 def test_readiness_checks_postgresql_connection():
+    stats_routes._reset_readiness_cache()
     connection = MagicMock()
     connection.scalar.return_value = 1
     engine = MagicMock()
@@ -337,6 +340,7 @@ def test_readiness_checks_postgresql_connection():
 
 
 def test_readiness_returns_503_when_required_vector_store_is_unavailable():
+    stats_routes._reset_readiness_cache()
     with (
         patch.object(stats_routes, "postgres_store_enabled", return_value=False),
         patch.object(stats_routes, "_vector_store_readiness_status", return_value="unavailable"),
@@ -348,6 +352,33 @@ def test_readiness_returns_503_when_required_vector_store_is_unavailable():
         "database": "not-required",
         "vector_store": "unavailable",
     }
+
+
+def test_concurrent_readiness_requests_share_cached_dependency_probe():
+    calls = 0
+
+    def dependency_probe():
+        nonlocal calls
+        calls += 1
+        time.sleep(0.05)
+        return "ok", "ok"
+
+    async def scenario():
+        responses = await asyncio.gather(*(stats_routes.ready() for _ in range(20)))
+        cached = await stats_routes.ready()
+        return responses, cached
+
+    stats_routes._reset_readiness_cache()
+    with (
+        patch.dict("os.environ", {"ALARM_RAG_READINESS_CACHE_SECONDS": "5"}),
+        patch.object(stats_routes, "_readiness_statuses", side_effect=dependency_probe),
+    ):
+        responses, cached = asyncio.run(scenario())
+
+    assert calls == 1
+    assert all(response["status"] == "ok" for response in responses)
+    assert cached["checks"] == {"database": "ok", "vector_store": "ok"}
+    stats_routes._reset_readiness_cache()
 
 
 def test_vector_store_readiness_pings_qdrant_only_when_configured():

@@ -310,6 +310,32 @@ function renderSupervisorReviewChanges(app, event) {
   }).join('')}</div>`;
 }
 
+function groupSupervisorReviewEvents(events) {
+  const canonical = (value) => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+    }
+    return value;
+  };
+  const groups = new Map();
+  events.forEach((event, index) => {
+    // Request IDs identify stored copies; keep every other detail in the comparison.
+    const { _request_id, ...content } = event;
+    const key = event.created_at ? JSON.stringify(canonical({
+      ...content,
+      from_status: event.from_status || '',
+      to_status: event.to_status || '',
+      fields: event.fields || [],
+      changes: event.changes || [],
+    })) : `undated:${index}`;
+    const group = groups.get(key);
+    if (group) group.count += 1;
+    else groups.set(key, { event, count: 1 });
+  });
+  return [...groups.values()];
+}
+
 function renderSupervisorReviewTimeline(app, order, issue) {
   const box = app.$('svReviewTimeline');
   if (!box) return;
@@ -320,8 +346,10 @@ function renderSupervisorReviewTimeline(app, order, issue) {
     box.innerHTML = '<div class="sv-review-section-title">處理時間線</div><div class="wo-empty">目前沒有歷程紀錄</div>';
     return;
   }
-  box.innerHTML = `<div class="sv-review-section-title">處理時間線 <span>${events.length} 筆</span></div>
-    ${events.map((event) => {
+  const groups = groupSupervisorReviewEvents(events);
+  const mergedCount = events.length - groups.length;
+  box.innerHTML = `<div class="sv-review-section-title">處理時間線 <span>${groups.length} 項事件${mergedCount ? ` · 已合併 ${mergedCount} 筆相同紀錄` : ''}</span></div>
+    ${groups.map(({ event, count }) => {
       const source = event.audit_source === 'issue' ? '問題' : '工單';
       const action = SUPERVISOR_AUDIT_ACTION_LABELS[event.action] || event.action || '更新';
       const statusText = event.from_status || event.to_status
@@ -332,6 +360,7 @@ function renderSupervisorReviewTimeline(app, order, issue) {
         <div class="audit-body">
           <div class="audit-title">${app.esc(source)} · ${app.esc(action)}${statusText ? `<span>${app.esc(statusText)}</span>` : ''}</div>
           <div class="audit-meta">${app.esc(event.user_id || 'system')} · ${app.esc(supervisorTime(event.created_at))}</div>
+          ${count > 1 ? `<div class="audit-meta">相同紀錄 × ${count}</div>` : ''}
           ${renderSupervisorReviewChanges(app, event)}
         </div>
       </div>`;

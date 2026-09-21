@@ -47,3 +47,8 @@ def test_production_boundary_runbook_and_proxy_sample_cover_phase_f():
     assert [item for item in required_checklist if item not in checklist] == []
     assert "listen 443 ssl" in proxy
     assert "proxy_pass http://127.0.0.1:8100" in proxy
+    assert "location = /ready" in proxy
+    assert "limit_req zone=ready_per_ip" in proxy
+    assert "limit_req zone=ready_global" in proxy
+    assert "limit_conn ready_conn_per_ip" in proxy
+    assert "limit_conn ready_conn_global" in proxy

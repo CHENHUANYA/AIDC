@@ -271,9 +271,9 @@ function renderAdminImportLog(entries) {
 
 function renderAdminKbSummary(app, summary) {
   return `
-    <div class="role-kpi-card"><span>文件數</span><b>${app.esc(String(summary?.documents ?? 0))}</b><small>${app.esc(activeAdminCollection().toUpperCase())}</small></div>
-    <div class="role-kpi-card"><span>片段數</span><b>${app.esc(String(summary?.sections ?? 0))}</b><small>已建立索引片段</small></div>
-    <div class="role-kpi-card"><span>狀態</span><b>${summary?.ready ? 'READY' : 'WAIT'}</b><small>collection health</small></div>`;
+    <div class="role-kpi-card"><span>📄 文件數</span><b>${app.esc(String(summary?.documents ?? 0))}</b><small>${app.esc(activeAdminCollection().toUpperCase())}</small></div>
+    <div class="role-kpi-card"><span>🧩 可搜尋的內容片段</span><b>${app.esc(String(summary?.sections ?? 0))}</b><small>文件拆分後，供 AI 查找的內容</small></div>
+    <div class="role-kpi-card"><span>${summary?.ready ? '✅' : '⏳'} 搜尋狀態</span><b>${summary?.ready ? '可查詢' : '尚未就緒'}</b><small>${summary?.ready ? '索引已建立，AI 可以查找這些資料' : '新增內容後，請按重新整理查看狀態'}</small></div>`;
 }
 
 function renderAdminKbDocument(app, doc) {
@@ -285,11 +285,12 @@ function renderAdminKbDocument(app, doc) {
     <div class="kb-doc-main">
       <div class="kb-doc-title">${app.esc(doc.filename || doc.title || docId || 'document')}</div>
       <div class="kb-doc-meta">
-        <span class="kb-doc-badge">${app.esc(String(doc.kind || 'text').toUpperCase())}</span>
+        <span class="kb-doc-badge">${app.esc(({ pdf: 'PDF 文件', text: '文字紀錄', legacy: '既有資料' })[doc.kind] || doc.kind || '文字紀錄')}</span>
         <span class="kb-doc-badge">${app.esc(String(doc.sections || 0))} 個片段</span>
         <span class="kb-doc-badge">v${app.esc(String(doc.version ?? 1))}</span>
       </div>
-      <div class="kb-doc-sub">ID: ${app.esc(docId || '-')}<br>Imported: ${app.esc(adminTime(doc.imported_at))}</div>
+      <div class="kb-doc-sub">加入時間：${app.esc(adminTime(doc.imported_at))}</div>
+      <details class="admin-item-details"><summary>文件詳細資訊</summary><div class="kb-doc-sub">文件編號：${app.esc(docId || '-')}</div></details>
     </div>
     <div class="kb-doc-actions">${deleteButton}</div>
   </div>`;
@@ -304,11 +305,22 @@ function renderAdminKb(summary, documents) {
   }
   app.setState('adminKbDocuments', documents);
   summaryEl.innerHTML = renderAdminKbSummary(app, summary);
-  if (!documents.length) {
-    docsEl.innerHTML = adminEmpty('log-empty', '這個 collection 目前沒有文件');
-    return;
-  }
-  docsEl.innerHTML = documents.map((doc) => renderAdminKbDocument(app, doc)).join('');
+  renderAdminKbDocuments();
+}
+
+function renderAdminKbDocuments() {
+  const app = adminApp();
+  const target = app?.$('adminKbDocs');
+  if (!app || !target) return;
+  const documents = app.getState('adminKbDocuments') || [];
+  const search = String(app.$('adminKbSearch')?.value || '').trim().toLowerCase();
+  const filtered = documents.filter((doc) => [doc.filename, doc.title, doc.doc_id, doc.kind]
+    .some((value) => String(value || '').toLowerCase().includes(search)));
+  const count = app.$('adminKbDocCount');
+  if (count) count.textContent = search ? `找到 ${filtered.length} / ${documents.length} 份文件` : `共 ${documents.length} 份文件`;
+  target.innerHTML = filtered.length
+    ? filtered.map((doc) => renderAdminKbDocument(app, doc)).join('')
+    : `<div class="admin-empty-friendly"><div class="empty-icon">${search ? '🔍' : '📂'}</div><div class="empty-title">${search ? '找不到符合的文件' : '這個設備還沒有文件'}</div><div class="empty-desc">${search ? '試試其他關鍵字或清除搜尋。' : '從下方上傳 PDF 或新增文字，開始建立知識庫。AI 會從這些資料中學習。'}</div></div>`;
 }
 
 function renderAdminAudit(ingestEntries, settings) {
@@ -497,43 +509,76 @@ function qualityLabel(value, fallback = '未評估') {
   return value ? labels[value] || String(value).replace(/_/g, ' ') : fallback;
 }
 
+function qualityTagClass(value) {
+  const map = {
+    correct: 'tag-correct',
+    complete: 'tag-correct',
+    good: 'tag-correct',
+    ingested: 'tag-correct',
+    partially_correct: 'tag-partial',
+    missing_steps: 'tag-partial',
+    missing_source: 'tag-partial',
+    needs_revision: 'tag-partial',
+    incorrect: 'tag-incorrect',
+    bad: 'tag-incorrect',
+    validation_failed: 'tag-incorrect',
+    rejected: 'tag-incorrect',
+    pending_review: 'tag-pending',
+    not_ready: 'tag-pending',
+  };
+  return map[value] || 'tag-default';
+}
+
 function renderAdminQualityItem(app, item) {
-  const riskClass = item.has_gap ? 'quality-risk' : item.kb_candidate ? 'quality-candidate' : '';
+  const riskClass = item.has_gap ? 'quality-row quality-risk' : item.kb_candidate ? 'quality-row quality-candidate' : 'quality-row';
+  const statusClass = item.has_gap ? 'status-risk' : ['pending_review', 'needs_revision', 'validation_failed'].includes(item.kb_review_status) ? 'status-review' : 'status-ok';
+  const typeIcon = item.type === 'work_order' ? '🔧' : '💬';
+  const typeIconClass = item.type === 'work_order' ? 'type-wo' : 'type-fb';
   const answerAction = item.answer_id
-    ? `<button class="wo-btn alt" type="button" data-on-click="AnswerTrace.open" data-action-args="[${adminJsArg(item.answer_id)}]">查看原回答</button>`
+    ? `<button class="wo-btn alt" type="button" data-on-click="AnswerTrace.open" data-action-args="[${adminJsArg(item.answer_id)}]">📋 查看原回答</button>`
     : '';
   const titleParts = [
-    item.alarm_code ? `Alarm ${item.alarm_code}` : item.type,
+    item.alarm_code ? `⚡ 警報 ${item.alarm_code}` : item.type === 'work_order' ? '🔧 維修紀錄' : '💬 使用者回饋',
     item.collection ? String(item.collection).toUpperCase() : '',
-    item.work_order_id ? `WO ${item.work_order_id}` : '',
+    item.work_order_id ? `工單 ${item.work_order_id}` : '',
   ].filter(Boolean);
   const detail = item.missing_info || item.expected_fix || item.query || '沒有詳細內容';
   const reviewActions = item.type === 'work_order' &&
     ['pending_review', 'needs_revision', 'validation_failed'].includes(item.kb_review_status)
-    ? `<button class="wo-btn" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;approve&quot;, ${Number(item.version) || 1}]">核准寫入</button>
-       <button class="wo-btn alt" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;needs_revision&quot;, ${Number(item.version) || 1}]">退回補充</button>
-       <button class="wo-btn danger" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;reject&quot;, ${Number(item.version) || 1}]">不採用</button>`
+    ? `<button class="wo-btn" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;approve&quot;, ${Number(item.version) || 1}]">✅ 核准加入知識庫</button>
+       <button class="wo-btn alt" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;needs_revision&quot;, ${Number(item.version) || 1}]">↩️ 退回補充</button>
+       <button class="wo-btn danger" type="button" data-on-click="reviewAdminKnowledge" data-action-args="[${adminJsArg(item.work_order_id)}, &quot;reject&quot;, ${Number(item.version) || 1}]">❌ 不採用</button>`
     : '';
   const action = reviewActions || (item.work_order_id
     ? `<button class="wo-btn alt" type="button" data-on-click="selectAdminSection" data-action-args="[&quot;data&quot;]">查看工單</button>`
-    : `<button class="wo-btn alt" type="button" data-on-click="selectAdminSection" data-action-args="[&quot;knowledge&quot;]">補知識庫</button>`);
-  return `<div class="role-row quality-row ${riskClass}">
+    : `<button class="wo-btn alt" type="button" data-on-click="selectAdminSection" data-action-args="[&quot;knowledge&quot;]">📚 補充知識內容</button>`);
+
+  const correctnessTag = item.correctness ? qualityTagClass(item.correctness) : 'tag-default';
+  const coverageTag = item.coverage ? qualityTagClass(item.coverage) : 'tag-default';
+
+  return `<div class="role-row ${riskClass} quality-row-humanized ${statusClass}">
     <div>
-      <div class="wo-code">${app.esc(titleParts.join(' | ') || 'RAG 回饋')}</div>
+      <div class="row-header">
+        <span class="row-type-icon ${typeIconClass}">${typeIcon}</span>
+        <span class="wo-code">${app.esc(titleParts.join(' | ') || 'RAG 回饋')}</span>
+      </div>
       <div class="wo-desc">${app.esc(detail)}</div>
       <div class="wo-meta">
-        <span class="wo-badge">${app.esc(item.type === 'work_order' ? '工單' : '回饋')}</span>
-        <span class="wo-badge">正確性 ${app.esc(qualityLabel(item.correctness))}</span>
-        <span class="wo-badge">涵蓋度 ${app.esc(qualityLabel(item.coverage))}</span>
-        <span class="wo-badge">回饋 ${app.esc(item.feedback || '-')}</span>
-        <span class="wo-badge">候選知識 ${item.kb_candidate ? '是' : '否'}</span>
-        ${item.kb_review_status ? `<span class="wo-badge">審核狀態 ${app.esc(qualityLabel(item.kb_review_status))}</span>` : ''}
-        ${item.kb_reviewed_by ? `<span class="wo-badge">審核者 ${app.esc(item.kb_reviewed_by)}</span>` : ''}
-        ${item.kb_duplicate_of ? `<span class="wo-badge">可能重複 ${app.esc(item.kb_duplicate_of)}</span>` : ''}
-        ${item.answer_id ? `<span class="wo-badge">Answer ${app.esc(item.answer_id)}</span>` : ''}
-        <span class="wo-badge">${app.esc(adminTime(item.time))}</span>
+        <span class="tag-friendly ${item.type === 'work_order' ? 'tag-info' : 'tag-pending'}">${app.esc(item.type === 'work_order' ? '工單' : '回饋')}</span>
+        <span class="tag-friendly ${correctnessTag}">正確性 ${app.esc(qualityLabel(item.correctness))}</span>
+        <span class="tag-friendly ${coverageTag}">完整度 ${app.esc(qualityLabel(item.coverage))}</span>
+        ${item.feedback ? `<span class="tag-friendly ${item.feedback === 'good' ? 'tag-correct' : 'tag-incorrect'}">${item.feedback === 'good' ? '👍' : '👎'} ${app.esc(qualityLabel(item.feedback))}</span>` : ''}
+        ${item.kb_review_status ? `<span class="tag-friendly tag-pending">審核 ${app.esc(qualityLabel(item.kb_review_status))}</span>` : ''}
+        ${item.kb_duplicate_of ? `<span class="tag-friendly tag-default">⚠️ 可能重複 ${app.esc(item.kb_duplicate_of)}</span>` : ''}
       </div>
-      ${item.kb_review_note ? `<div class="wo-note">審核備註：${app.esc(item.kb_review_note)}</div>` : ''}
+      ${item.kb_review_note ? `<div class="wo-note">💬 審核備註：${app.esc(item.kb_review_note)}</div>` : ''}
+      <details class="admin-item-details"><summary>📄 查看評估與處理詳情</summary>
+        ${item.query ? `<p class="wo-desc">❓ 問題：${app.esc(item.query)}</p>` : ''}
+        ${item.expected_fix ? `<p class="wo-desc">💡 建議補充／處理方式：${app.esc(item.expected_fix)}</p>` : ''}
+        <p class="admin-help">🕐 更新時間：${app.esc(adminTime(item.time))}</p>
+        ${item.answer_id ? `<p class="admin-help">🏷️ 回答編號：${app.esc(item.answer_id)}</p>` : ''}
+        ${item.kb_reviewed_by ? `<p class="admin-help">👤 審核者：${app.esc(item.kb_reviewed_by)}</p>` : ''}
+      </details>
     </div>
     <div class="role-row-actions">${answerAction}${action}</div>
   </div>`;
@@ -549,13 +594,13 @@ function renderAdminQualitySummary(feedbackStats, workOrders, qualityItems) {
   const candidates = qualityItems.filter((item) =>
     ['pending_review', 'needs_revision', 'validation_failed'].includes(item.kb_review_status),
   ).length;
-  const evaluatedOrders = (workOrders || []).filter((order) => order.llm_correctness || order.llm_coverage).length;
+  const rate = (value, total) => Number(total) > 0 ? app.esc(value || '0%') : '—';
   target.innerHTML = `
-    <div class="role-kpi-card"><span>有幫助比例</span><b>${app.esc(feedbackStats?.rate || '0%')}</b><small>${app.esc(String(feedbackStats?.total ?? 0))} 筆回饋</small></div>
-    <div class="role-kpi-card"><span>正確率</span><b>${app.esc(feedbackStats?.correctness_rate || '0%')}</b><small>${app.esc(String(evaluatedOrders))} 張已評估工單</small></div>
-    <div class="role-kpi-card"><span>涵蓋率</span><b>${app.esc(feedbackStats?.coverage_rate || '0%')}</b><small>${app.esc(String(feedbackStats?.coverage_total ?? 0))} 筆回饋評估</small></div>
-    <div class="role-kpi-card"><span>待處理缺口</span><b>${gaps}</b><small>需改善、錯誤、部分正確、缺漏</small></div>
-    <div class="role-kpi-card"><span>候選知識</span><b>${candidates}</b><small>待審核的工單或回饋</small></div>`;
+    <div class="quality-score-card"><div class="score-icon ${gaps > 0 ? 'warn' : 'ok'}">${gaps > 0 ? '⚠️' : '✅'}</div><span class="wo-field-label">待處理項目</span><b class="role-kpi-card b" style="font-size:28px;color:${gaps > 0 ? 'var(--org)' : 'var(--grn)'}">${gaps}</b><small class="wo-desc">需要改善或審核的紀錄</small></div>
+    <div class="quality-score-card"><div class="score-icon ${candidates > 0 ? 'info' : 'ok'}">${candidates > 0 ? '📝' : '✅'}</div><span class="wo-field-label">待審核知識</span><b class="role-kpi-card b" style="font-size:28px;color:${candidates > 0 ? 'var(--acc)' : 'var(--grn)'}">${candidates}</b><small class="wo-desc">待確認、補充或重試的工單</small></div>
+    <div class="quality-score-card"><div class="score-icon info">👍</div><span class="wo-field-label">回答有幫助</span><b class="role-kpi-card b" style="font-size:28px">${rate(feedbackStats?.rate, feedbackStats?.total)}</b><small class="wo-desc">${feedbackStats?.total ? `${Number(feedbackStats.total)} 筆使用者回饋` : '尚無使用者回饋'}</small></div>
+    <div class="quality-score-card"><div class="score-icon info">✅</div><span class="wo-field-label">回答正確率</span><b class="role-kpi-card b" style="font-size:28px">${rate(feedbackStats?.correctness_rate, feedbackStats?.correctness_total)}</b><small class="wo-desc">${feedbackStats?.correctness_total ? `${Number(feedbackStats.correctness_total)} 筆正確性評估` : '尚無正確性評估'}</small></div>
+    <div class="quality-score-card"><div class="score-icon info">📊</div><span class="wo-field-label">回答完整率</span><b class="role-kpi-card b" style="font-size:28px">${rate(feedbackStats?.coverage_rate, feedbackStats?.coverage_total)}</b><small class="wo-desc">${feedbackStats?.coverage_total ? `${Number(feedbackStats.coverage_total)} 筆完整度評估` : '尚無完整度評估'}</small></div>`;
 }
 
 function renderAdminQuality(feedbackStats, workOrders) {
@@ -570,14 +615,25 @@ function renderAdminQuality(feedbackStats, workOrders) {
   renderAdminQualitySummary(feedbackStats, workOrders, qualityItems);
 
   const filtered = adminQualityFilteredItems();
+  const filter = app.$('adminQualityFilter')?.value || 'gaps';
+  const title = app.$('adminQualityListTitle');
+  if (title) title.textContent = ({ gaps: '⚠️ 待處理項目', candidates: '📝 待審核知識', feedback: '💬 使用者回饋', all: '📊 全部品質紀錄' })[filter];
+  const count = app.$('adminQualityCount');
+  if (count) count.textContent = filtered.length > 30 ? `共 ${filtered.length} 筆，顯示最近 30 筆` : `共 ${filtered.length} 筆`;
+  const searching = Boolean(app.$('adminQualitySearch')?.value.trim());
+  const emptyIcon = { gaps: '✅', candidates: '📝', feedback: '💬', all: '📊' };
+  const emptyTitle = searching ? '找不到符合的項目'
+    : { gaps: '太棒了！目前沒有需要處理的項目', candidates: '目前沒有待審核的知識', feedback: '還沒收到使用者回饋', all: '還沒有品質紀錄' }[filter];
+  const emptyDesc = searching ? '試試其他關鍵字或清除搜尋。'
+    : { gaps: '收到需改善的回饋或待審核紀錄時，會自動出現在這裡。', candidates: '維修紀錄送審後，就可以在這裡確認內容、核准加入知識庫。', feedback: '使用者在 AI 回答下方點 👍 或 👎 後，就會顯示在這裡。', all: '收到回饋或工單評估後，就能看到品質分析結果。' }[filter];
   list.innerHTML = filtered.length
     ? filtered.slice(0, 30).map((item) => renderAdminQualityItem(app, item)).join('')
-    : adminEmpty('wo-empty', '目前沒有符合條件的 RAG 品質項目');
+    : `<div class="admin-empty-friendly"><div class="empty-icon">${searching ? '🔍' : (emptyIcon[filter] || '📋')}</div><div class="empty-title">${emptyTitle}</div><div class="empty-desc">${emptyDesc}</div></div>`;
 
   const recentFeedback = (feedbackStats?.entries || []).slice().reverse();
   feedbackList.innerHTML = recentFeedback.length
     ? recentFeedback.slice(0, 12).map((entry) => renderAdminQualityItem(app, normalizeAdminQualityItems([], [entry])[0])).join('')
-    : adminEmpty('wo-empty', '尚無 RAG 回饋');
+    : `<div class="admin-empty-friendly"><div class="empty-icon">💬</div><div class="empty-title">還沒有收到回饋</div><div class="empty-desc">使用者可以在 AI 回答下方點 👍 或 👎 來評價，回饋會即時顯示在這裡。</div></div>`;
 }
 
 function exportAdminQualityCsv() {
@@ -814,6 +870,10 @@ async function loadAdminKb() {
   const collection = activeAdminCollection();
   const requestSeq = Number(app.getState('adminKbRequestSeq') || 0) + 1;
   app.setState('adminKbRequestSeq', requestSeq);
+  app.setState('adminKbDocuments', []);
+  app.$('adminKbDocs').innerHTML = adminEmpty('log-empty', '正在載入文件…');
+  app.$('adminKbSummary').innerHTML = adminEmpty('wo-empty', '正在載入知識庫概況…');
+  if (app.$('adminKbDocCount')) app.$('adminKbDocCount').textContent = '';
   try {
     const data = await app.apiJson(`/v1/${encodeURIComponent(collection)}/documents`);
     if (app.getState('adminKbRequestSeq') !== requestSeq || activeAdminCollection() !== collection) {
@@ -822,7 +882,9 @@ async function loadAdminKb() {
     renderAdminKb(data.summary || null, data.documents || []);
   } catch (error) {
     if (app.getState('adminKbRequestSeq') === requestSeq) {
-      setAdminResult('adminKbResult', app.formatError(error, 'KB 載入失敗'), true);
+      app.$('adminKbDocs').innerHTML = adminEmpty('log-empty', '文件載入失敗，請按「重新整理」再試一次。');
+      app.$('adminKbSummary').innerHTML = '';
+      setAdminResult('adminKbResult', app.formatError(error, '知識庫載入失敗'), true);
     }
   }
 }
@@ -1165,6 +1227,7 @@ document.addEventListener('DOMContentLoaded', () => {
   app.initCommonPageBindings();
   app.$('adminUserLabel').textContent = `${app.currentUserId()} (${app.currentUserRole()})`;
   app.$('adminKbCollection')?.addEventListener('change', loadAdminKb);
+  app.$('adminKbSearch')?.addEventListener('input', renderAdminKbDocuments);
   document.querySelectorAll('[data-admin-section-target]').forEach((button) => {
     button.addEventListener('click', () => selectAdminSection(button.dataset.adminSectionTarget));
   });

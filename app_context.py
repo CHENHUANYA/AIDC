@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 from config_values import env_float, env_int
 from bm25_text import expand_query_with_domain_aliases
 from rag_engine import AlarmRAGEngine, extract_alarm_codes
+from repositories.runtime import postgres_store_enabled
 from secret_values import secret_value
 from storage import (
     ALARM_LOG_PATH,
@@ -185,7 +186,8 @@ class IngestTextRequest(BaseModel):
 
 engines: Dict[str, AlarmRAGEngine] = {}
 pending_alarms: list[dict] = []
-alarm_history: list[dict] = read_jsonl(ALARM_LOG_PATH, limit=1000)
+# PostgreSQL routes query alarm_events directly; legacy history is JSON-only.
+alarm_history: list[dict] = [] if postgres_store_enabled() else read_jsonl(ALARM_LOG_PATH, limit=1000)
 ingest_log: list[dict] = read_jsonl(INGEST_LOG_PATH, limit=500)
 query_log: list[dict] = read_jsonl(QUERY_LOG_PATH, limit=500)
 error_log: list[dict] = read_jsonl(ERROR_LOG_PATH, limit=500)

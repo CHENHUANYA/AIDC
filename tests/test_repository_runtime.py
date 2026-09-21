@@ -1,6 +1,8 @@
 import os
 from unittest.mock import patch
 
+import pytest
+
 from repositories.postgres_auth import token_digest
 from repositories.runtime import configured_data_store, postgres_store_enabled, require_known_data_store
 
@@ -26,6 +28,12 @@ def test_unknown_store_is_rejected():
             assert "Unsupported DATA_STORE" in str(exc)
         else:
             raise AssertionError("unknown store was accepted")
+
+
+def test_unknown_store_cannot_silently_select_json_repositories():
+    with patch.dict(os.environ, {"DATA_STORE": "postgressql"}, clear=True):
+        with pytest.raises(RuntimeError, match="Unsupported DATA_STORE"):
+            postgres_store_enabled()
 
 
 def test_session_token_digest_is_deterministic_and_non_reversible_value():

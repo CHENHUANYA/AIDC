@@ -18,6 +18,10 @@ Open:
 
 Set `ADMIN_INITIAL_PASSWORD` before the first startup. Existing `alarm_db/users.json` is not overwritten.
 
+For a PostgreSQL deployment, migrate existing JSON data first and persist the Compose
+selection in `.env`; see [PostgreSQL runtime storage](docs/operations/POSTGRESQL_RUNTIME_STORAGE.md).
+The PostgreSQL Compose overlay enables both the database connection and `DATA_STORE=postgresql`.
+
 ## Services
 
 - `alarm_rag`: FastAPI app and built-in HTML UI
@@ -29,7 +33,8 @@ Set `ADMIN_INITIAL_PASSWORD` before the first startup. Existing `alarm_db/users.
 
 | Path | Purpose |
 |---|---|
-| `alarm_db/` | users, sessions, logs, indexes, manifests, work orders |
+| PostgreSQL | users, sessions, login throttles, alarms, issues, work orders, audit history, RAG answers, feedback, document metadata, settings when `DATA_STORE=postgresql` |
+| `alarm_db/` | local indexes and operational logs; legacy JSON business data is used only in JSON mode |
 | `data/` | source PDFs and field documents |
 | `mock_data/` | demo seed data and importable n8n workflow |
 | `hf_cache/` | HuggingFace model cache for offline runtime |
